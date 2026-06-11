@@ -1,23 +1,40 @@
+# OS
 .DS_Store
+
+# Python
 __pycache__/
 *.pyc
+.pytest_cache/
 .env
 .venv/
 venv/
 .ipynb_checkpoints/
-models/
-outputs/
+
+# Workspace runtime metadata (root only; tests/fixtures exempt)
+/metadata/
+!/tests/fixtures/v1_workspace/metadata/
+
+# Local workspace data trees
+/raw/
+/processed/
+/previews/
+/raw_source/
+
+# Microscopy / media (local copies; not repo fixtures)
 *.tif
 *.tiff
 *.nd2
 *.czi
 *.lif
+*.oib
+*.oir
 *.png
 *.jpg
 *.jpeg
 *.mp4
 *.avi
+
+# Project-specific
+models/
+outputs/
 local_context/
-.venv/
-__pycache__/
-*.pyc

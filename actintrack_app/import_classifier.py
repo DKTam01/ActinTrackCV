@@ -12,18 +12,20 @@ from actintrack_app.utils import (
 )
 
 WIP_MESSAGE = (
-    "Only AVI and MP4 video files are supported in the current 2D workflow. "
+    "Only AVI and MP4 data files are supported in the current 2D workflow. "
     "Image sequences and 3D/raw microscopy files will be added later."
 )
 
 UNSUPPORTED_2D_MESSAGE = WIP_MESSAGE
 
 MIXED_MESSAGE = (
-    "Cannot import images and video in one step. "
-    "Import image files and video files separately."
+    "Cannot import multiple data types in one step. "
+    "Import AVI/MP4 data files separately from other formats."
 )
 
-MULTI_VIDEO_MESSAGE = "Select only one .avi or .mp4 file at a time for video import."
+MULTI_VIDEO_MESSAGE = (
+    "Select only one .avi or .mp4 data file at a time for import."
+)
 
 
 class ImportKind(str, Enum):
@@ -61,7 +63,7 @@ def classify_paths(paths: list[Path]) -> tuple[ImportKind, list[Path], str]:
     """
     files = [Path(p).resolve() for p in paths if Path(p).is_file()]
     if not files:
-        return ImportKind.EMPTY, [], "No files selected."
+        return ImportKind.EMPTY, [], "No data selected."
 
     kinds = {_per_file_kind(p) for p in files}
     if "unknown" in kinds:
@@ -89,10 +91,10 @@ def classify_paths(paths: list[Path]) -> tuple[ImportKind, list[Path], str]:
 
 def import_kind_label(kind: ImportKind) -> str:
     labels = {
-        ImportKind.IMAGE_SEQUENCE: "Image sequence (2D)",
-        ImportKind.VIDEO: "Video timelapse (one sample per file)",
-        ImportKind.WIP_RAW_3D: "Raw / 3D microscopy (WIP — not importable)",
+        ImportKind.IMAGE_SEQUENCE: "Postponed — image sequence (not importable)",
+        ImportKind.VIDEO: "Data file — AVI/MP4 timelapse (one per sample)",
+        ImportKind.WIP_RAW_3D: "Postponed — raw / 3D microscopy (not importable)",
         ImportKind.MIXED: "Mixed or invalid selection",
-        ImportKind.EMPTY: "No files selected",
+        ImportKind.EMPTY: "No data selected",
     }
     return labels.get(kind, str(kind.value))

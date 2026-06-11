@@ -47,7 +47,13 @@ PROCESSED_DIR = "processed"
 METADATA_DIR = "metadata"
 PREVIEWS_DIR = "previews"
 SAMPLES_CSV = "samples.csv"
+DATA_FILES_CSV = "data_files.csv"
+SAMPLE_REGISTRY_JSON = "sample_registry.json"
+WORKSPACE_JSON = "workspace.json"
 CROP_METADATA_JSON = "crop_metadata.json"
+
+SCHEMA_V1 = 1
+SCHEMA_V2 = 2
 
 # Sample processing statuses (samples.csv processing_status)
 STATUS_IMPORTED = "imported"
@@ -65,6 +71,29 @@ STATUS_MISSING_FILE = "missing_file"
 
 F_ACTIN_MOTION_INDEX_SUMMARY_CSV = "f_actin_motion_index_summary.csv"
 
+DATA_FILES_CSV_COLUMNS = [
+    "data_id",
+    "breed",
+    "sample_number",
+    "sample_name",
+    "sample_id",
+    "original_filename",
+    "stored_path",
+    "file_type",
+    "is_video",
+    "is_image_sequence",
+    "frame_number",
+    "auto_export_name",
+    "custom_export_name",
+    "final_export_name",
+    "import_date",
+    "processing_status",
+    "annotation_source",
+    "review_status",
+    "notes",
+]
+
+# Legacy v1 columns (data_id exposed as sample_id; registry id as batch_id).
 SAMPLES_CSV_COLUMNS = [
     "sample_id",
     "group",
@@ -89,7 +118,7 @@ SAMPLES_CSV_COLUMNS = [
 
 RECENT_WORKSPACES_JSON = "recent_workspaces.json"
 
-# Propagation scope keys (biological batch aware)
+# Propagation scope keys (legacy internal names; UI shows breed/sample)
 SCOPE_SAME_BATCH = "same_biological_batch"
 SCOPE_UNPROCESSED_IN_BATCH = "unprocessed_in_biological_batch"
 SCOPE_ALL_IN_GROUP = "all_in_condition_group"

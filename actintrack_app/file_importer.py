@@ -1,4 +1,4 @@
-"""Import microscopy files into project raw/<group>/<batch>/ folders."""
+"""Import AVI/MP4 data into project raw/<breed>/<sample>/ folders (internal batch paths)."""
 
 from __future__ import annotations
 
@@ -296,7 +296,7 @@ def set_custom_export_name(
         final,
         exclude_sample_id=sample_id,
     ):
-        raise ValueError(f"Export name already exists in batch: {final}")
+        raise ValueError(f"Export name already exists in sample: {final}")
 
     idx = df.index[mask][0]
     df.at[idx, "custom_export_name"] = custom

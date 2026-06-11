@@ -1,6 +1,8 @@
 # ActinTrackCV
 
-Desktop app for **Arabidopsis** fluorescence microscopy time-lapse data showing labeled F-actin cables near the egg apparatus / nucleus-adjacent region. Organize files by **condition group** and **biological batch**, run 2D preprocessing (orientation + rectangular ROI), and export cropped data for later analysis.
+Desktop app for **Arabidopsis** 2D fluorescence microscopy time-lapse data showing labeled F-actin cables near the egg apparatus / nucleus-adjacent region. Organize **Data** by **Breed** and **Sample**, orient frames, draw a rectangular **ROI**, preview cropped tracking, and review F-actin motion index results.
+
+**Active import formats:** AVI and MP4 only. Image sequences and 3D/raw microscopy formats are postponed.
 
 ## Install dependencies
 
@@ -42,126 +44,91 @@ python -m actintrack_app.main
 
 Launchers activate `.venv` or `venv` automatically when present. If dependencies are missing, `run_app.py` prints install instructions.
 
+## Terminology
+
+| Term | Meaning |
+|------|---------|
+| **Breed** | Biological / experimental group (e.g. `1_WT_218`, `2_WT_550`, `3_Mutant_515`, `4_Mutant_175`) |
+| **Sample** | One imported AVI/MP4 **Data** file plus derived project state (ROI, tracking/index, analysis, notes) |
+| **Data** | User-facing import wording for an AVI/MP4 file |
+| **ROI** | Rectangular region of interest around the usable actin-rich area; autosaves as you work |
+
+## Workflow
+
+1. **Open or create a workspace** — **File → New Workspace…** or **File → Open Workspace…**
+2. **Add Sample** — **Sample → Add Sample…** (or right-click a Breed/Sample row) and select an AVI/MP4 file
+3. **Select Data** — choose a Sample in the left panel to load its Data
+4. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region (ROI autosaves; there is no Save ROI button)
+5. **Preview Cropped ROI** — enter cropped ROI/tracking preview mode; playback loops continuously; use the frame slider to scrub manually; playback speeds: **0.25×, 0.5×, 1×, 1.5×, 2×**
+6. **Draft tracking / F-actin motion index** — runs automatically during cropped ROI preview; **Advanced Tracking Settings** are available in that preview mode
+7. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Breed and Sample
+
+### Sample management
+
+Right-click a Sample or Data row in the left panel:
+
+| Action | Effect |
+|--------|--------|
+| **Rename Sample…** | Change the Sample display name |
+| **Replace Data…** | Select a new AVI/MP4 file; clears derived ROI, tracking, and analysis state |
+| **Delete Sample…** | Removes project state and derived results from the workspace; does **not** delete the original external Data file unless you opt to remove the project's internal copy |
+
 ## Project layout
+
+Workspace folders are created locally when you use the app and are **not** committed to git:
 
 ```text
 ActinTrackCV/                    ← project root (workspace)
-  raw/
-    <condition_group>/
-      <biological_batch>/
-        <sample_id>.avi
-  processed/
-    <condition_group>/
-      Batch 1/
-        4_Mutant_175--01.mp4
-        4_Mutant_175--01_metadata.json
-        4_Mutant_175--01_orientation_preview.png
-        4_Mutant_175--01_roi_preview.png
-  metadata/
-    samples.csv
-    batches.json
+  raw/                           ← optional internal copies of imported Data
+    <breed>/
+      <sample_id>.avi
+  processed/                     ← cropped exports and motion-index outputs
+  metadata/                      ← runtime registry and annotations
+    data_files.csv
+    sample_registry.json
     crop_metadata.json
-  raw_source/                    ← optional read-only source tree (not modified on import)
+    draft_tracking/
 ```
 
-### Condition groups (examples)
+Opening an older workspace automatically migrates legacy v1 metadata (`samples.csv`, `batches.json`) to the current v2 schema.
 
-- `1_WT_218`
-- `2_WT_550`
-- `3_Mutant_515`
-- `4_Mutant_175`
-
-### Biological batches
-
-Within each condition group, a **biological batch** is one Arabidopsis sample (default names `Batch 1`, `Batch 2`, …; renamable while keeping `batch_number` in metadata). Videos usually get their own batch on import; multiple still images may share one batch.
-
-Hierarchy:
-
-```text
-condition / group
-  └── biological batch
-        └── individual videos or images
-```
-
-Create and rename batches in the app under **Biological Batch**. Imports go into `raw/<group>/<batch_name>/`.
-
-### Where raw files go
-
-- **Import in the app:** copies into `raw/<condition>/<biological_batch>/` (original paths unchanged).
-- **Optional source tree:** `raw_source/<condition>/` or `raw_source/<condition>/<batch>/` for bulk import.
-
-### Where processed outputs are saved
-
-After **Process Sample** or **Process Approved Samples in Biological Batch**:
-
-`processed/<condition>/<biological_batch>/` using export names such as `4_Mutant_175--01.mp4` or `1_WT_218--07--00.png`.
-
-## Application menu (macOS menu bar)
+## Application menu
 
 | Menu | Actions |
 |------|---------|
-| **File** | New/Open workspace, recent workspaces, **Import Data…**, exit |
-| **Workspace** | Refresh workspace, open folder, purge & cleanup |
-| **Batch** | Create/rename/delete empty batch |
-| **Help** | How to run, about |
+| **File** | New/Open workspace, recent workspaces, exit |
+| **Workspace** | Refresh workspace, open folder, remove missing files, purge/cleanup |
+| **Sample** | Add Sample, Rename Sample |
+| **Analysis** | View Analysis |
+| **Help** | How to Run App, About |
 
-Purge options keep **raw** files unless you explicitly remove a workspace raw copy when deleting a single file.
+Context menu (right-click Sample or Data row): Rename Sample, Replace Data, Delete Sample.
 
-### Import Data dialog (**File → Import Data…**)
+## Tests
 
-1. **Select files** (images, one video, or raw formats).
-2. Review **detected import type** (image sequence, video, or WIP raw/3D).
-3. Choose **condition group** and **biological batch** (create/rename batch in the dialog).
-4. Optional **notes**, then **Import**.
+```bash
+python -m unittest discover -s tests -v
+```
 
-Rules: multiple images per batch; one `.avi`/`.mp4` at a time; no mixed image+video; raw `.oib`/`.oir`/multi-page TIFF stacks show a WIP message and are not imported.
+## User documentation
 
-## Workflow (GUI)
+See [`ActinTrackCV_User_Documentation_Refined.docx`](ActinTrackCV_User_Documentation_Refined.docx) for the full user guide.
 
-1. Open or create the workspace (**File → New/Open Workspace**).
-2. Import data (**File → Import Data…**) — select files, then condition group and biological batch.
-3. Filter the sample list by condition group and batch in the left panel.
-4. Open a file → orient manually → draw a rectangle around the **usable actin-rich region**.
-5. **Save Annotation** → optional **Apply Annotation to Batch** (defaults to the **same biological batch only**).
-6. Review propagated files: **Approve ROI** / adjust / **Reject ROI**.
-7. **Process Approved Samples in Biological Batch** to write cropped exports.
+Regenerate the DOCX from Markdown (if pandoc is installed):
 
-Velocity estimation is not implemented yet.
+```bash
+bash scripts/build_refined_user_documentation.sh
+```
 
-## Batch annotation propagation
+## Not implemented
 
-**Apply Annotation to Batch** copies orientation + rectangle ROI from the current file to other targets. Scopes:
-
-| Scope | Meaning |
-|--------|---------|
-| **Same biological batch** (default) | Other files in the same `batch_name` under the same condition |
-| **Unprocessed files in batch** | Same batch, only `imported` / unmarked files |
-| **All files in condition** | Entire condition group (explicit opt-in; crosses biological batches) |
-| **Selected files** | Multi-select in the sample list |
-
-Conservative rules:
-
-- Propagated rows are marked `roi_propagated_needs_review` in `samples.csv`.
-- Approved/processed annotations are not overwritten unless you enable overwrite (they are still skipped if already approved/processed).
-- Propagation metadata records `source_batch`, `target_batch`, `roi_scaling_method`, and `review_status: pending`.
-- Only **approved** samples are bulk-exported.
-
-## Metadata
-
-`samples.csv` includes batch/export fields: `batch_number`, `batch_name`, `auto_export_name`, `custom_export_name`, `final_export_name`, `is_video`, `frame_number`, `annotation_source`, `review_status`, etc. Opening a workspace runs **migration** to add missing columns without deleting existing rows.
-
-`metadata/batches.json` stores per-batch registry (`batch_number`, `contains_video`, file counts, dates). `metadata/crop_metadata.json` holds per-sample orientation/ROI annotations.
-
-### Export naming
-
-- Video: `<condition>--<batch_2digit>` → `4_Mutant_175--01`
-- Still image: `<condition>--<batch>--<frame_2digit>` → `1_WT_218--07--14`
-
-Edit **Export / annotated output name** in the GUI to set a custom name (stored in metadata; `final_export_name` is used on disk).
+- Optical flow motion index (planned for a future release)
+- Image sequence import
+- 3D / raw microscopy format import (`.oib`, `.oir`, multi-page TIFF stacks, etc.)
 
 ## Other scripts
 
-- `extract_2d_frames.py` — extract PNG frames from videos (Roboflow / legacy pipeline)
+- `extract_2d_frames.py` — extract PNG frames from videos (legacy pipeline)
 - `preprocess_ab_regions.py` — CLI crop using actin-signal ROI detection
 - `python -m actintrack_app.main` — same GUI as `run_app.py`
 

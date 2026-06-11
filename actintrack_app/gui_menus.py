@@ -58,7 +58,8 @@ class PurgeFilteredDialog(QDialog):
         ):
             self.combo_status.addItem(s, s)
         self.combo_file_type = QComboBox()
-        self.combo_file_type.addItems(["(any)", "video", "image", "tiff"])
+        self.combo_file_type.addItem("(any data type)", "")
+        self.combo_file_type.addItem("AVI/MP4 data", "video")
         self.combo_annotation = QComboBox()
         self.combo_annotation.addItems(
             ["(any)", "manual", "propagated", "automatic"]
@@ -68,13 +69,13 @@ class PurgeFilteredDialog(QDialog):
         form.addRow("Breed:", self.combo_group)
         form.addRow("Sample name/number:", self.edit_batch)
         form.addRow("Processing status:", self.combo_status)
-        form.addRow("File type:", self.combo_file_type)
+        form.addRow("Data type:", self.combo_file_type)
         form.addRow("Annotation source:", self.combo_annotation)
         form.addRow("Review status:", self.combo_review)
         layout.addLayout(form)
 
         self.list_preview = QListWidget()
-        layout.addWidget(QLabel("Affected videos (annotations/processed will be purged):"))
+        layout.addWidget(QLabel("Affected data files (annotations/processed will be purged):"))
         layout.addWidget(self.list_preview)
 
         btn_row = QHBoxLayout()
@@ -106,8 +107,9 @@ class PurgeFilteredDialog(QDialog):
         status = self.combo_status.currentData() or None
         if status == "":
             status = None
-        ft = self.combo_file_type.currentText()
-        file_type = None if ft.startswith("(") else ft
+        file_type = self.combo_file_type.currentData() or None
+        if file_type == "":
+            file_type = None
         ann = self.combo_annotation.currentText()
         annotation_source = None if ann.startswith("(") else ann
         rev = self.combo_review.currentText()
@@ -133,7 +135,7 @@ class PurgeFilteredDialog(QDialog):
                 f"[{row.get('processing_status', '')}]  {row.get('original_filename', '')}"
             )
         if df.empty:
-            self.list_preview.addItem("(no videos match filters)")
+            self.list_preview.addItem("(no data files match filters)")
 
     def selected_sample_ids(self) -> list[str]:
         from actintrack_app.purge_manager import filter_samples_for_purge
@@ -192,11 +194,6 @@ def setup_application_menus(window: "MainWindow") -> None:
     window._refresh_recent_menu()
 
     file_menu.addSeparator()
-    act_import = QAction("Import &Video…", window)
-    act_import.triggered.connect(window._menu_import_data)
-    file_menu.addAction(act_import)
-
-    file_menu.addSeparator()
     act_exit = QAction("E&xit", window)
     act_exit.triggered.connect(window.close)
     file_menu.addAction(act_exit)
@@ -237,21 +234,10 @@ def setup_application_menus(window: "MainWindow") -> None:
     act_rename.triggered.connect(window._on_rename_batch)
     sample_menu.addAction(act_rename)
 
-    act_delete_empty = QAction("Delete &Empty Sample…", window)
-    act_delete_empty.triggered.connect(window._menu_delete_empty_batch)
-    sample_menu.addAction(act_delete_empty)
-
-    sample_menu.addSeparator()
-    act_delete_file = QAction("Delete Selected Video from &Sample…", window)
-    act_delete_file.triggered.connect(window._menu_delete_file_from_batch)
-    sample_menu.addAction(act_delete_file)
-
     analysis_menu = mb.addMenu("&Analysis")
-    act_motion_index = QAction(
-        "Generate F-actin Motion Index (Draft)…", window
-    )
-    act_motion_index.triggered.connect(window._menu_generate_motion_index)
-    analysis_menu.addAction(act_motion_index)
+    act_view_analysis = QAction("View &Analysis…", window)
+    act_view_analysis.triggered.connect(window.show_analysis_view)
+    analysis_menu.addAction(act_view_analysis)
 
     help_menu = mb.addMenu("&Help")
     act_how = QAction("How to Run App", window)

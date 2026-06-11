@@ -1,4 +1,4 @@
-"""Propagate orientation + ROI within biological batches and condition groups."""
+"""Propagate orientation + ROI within samples and breeds (legacy batch/group storage)."""
 
 from __future__ import annotations
 

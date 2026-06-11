@@ -1,4 +1,4 @@
-"""Live cropped ROI preview (video playback and image sequences) — preview only, no disk writes."""
+"""Live cropped ROI preview for AVI/MP4 data — preview only, no disk writes."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def load_video_frame_at(video_path: Path, frame_index: int) -> np.ndarray:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         cap.release()
-        raise MediaLoadError(f"Cannot open video: {path}")
+        raise MediaLoadError(f"Cannot open data file: {path}")
     try:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         idx = max(0, int(frame_index))
@@ -125,7 +125,7 @@ def get_cropped_image_sequence_frame(
 ) -> np.ndarray:
     """Load one image from a sorted sequence and return cropped ROI."""
     if not image_paths:
-        raise MediaLoadError("Image sequence is empty.")
+        raise MediaLoadError("Postponed image-sequence format is not supported yet.")
     idx = max(0, min(int(index), len(image_paths) - 1))
     path = image_paths[idx]
     if not path.is_file():
@@ -338,7 +338,7 @@ class CroppedROIPreviewDialog(QDialog):
             if not self._video_cap.isOpened():
                 self._video_cap.release()
                 self._video_cap = None
-                raise MediaLoadError(f"Cannot open video: {context.video_path}")
+                raise MediaLoadError(f"Cannot open data file: {context.video_path}")
 
         self._show_frame(0)
 
@@ -396,7 +396,7 @@ class CroppedROIPreviewDialog(QDialog):
             self._video_cap.set(cv2.CAP_PROP_POS_FRAMES, index)
             ok, frame = self._video_cap.read()
             if not ok or frame is None:
-                raise MediaLoadError(f"Cannot read video frame {index}")
+                raise MediaLoadError(f"Cannot read data frame {index}")
             oriented = apply_orientation(frame, self._ctx.orientation)
             cropped = crop_frame_to_roi(oriented, self._ctx.roi_oriented)
         elif self._ctx.image_paths:
@@ -439,9 +439,9 @@ class CroppedROIPreviewDialog(QDialog):
         )
         self.lbl_image.setPixmap(scaled)
         mode_lbl = {
-            "video": "Video",
-            "sequence": "Image sequence",
-            "single_image": "Still image",
+            "video": "Data",
+            "sequence": "Postponed format",
+            "single_image": "Postponed format",
         }.get(self._ctx.mode, "Preview")
         self.lbl_frame.setText(
             f"{mode_lbl} — frame {index + 1} / {self._ctx.frame_count}  "

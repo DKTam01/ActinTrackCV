@@ -1,0 +1,2 @@
+sample_id,group,batch_number,batch_name,batch_id,original_filename,stored_path,file_type,is_video,is_image_sequence,frame_number,auto_export_name,custom_export_name,final_export_name,import_date,processing_status,annotation_source,review_status,notes
+WT218_0001,1_WT_218,1,Batch 1,1_WT_218_B001,test.avi,raw/1_WT_218/Batch 1/test.avi,video,true,false,0,1_WT_218--01,,1_WT_218--01,2026-01-01T00:00:00+00:00,raw_imported,,pending,

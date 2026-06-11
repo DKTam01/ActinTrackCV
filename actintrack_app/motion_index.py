@@ -270,7 +270,7 @@ def discover_processed_inputs(
         if video_path.is_file():
             options.append(
                 ProcessedInputOption(
-                    label=f"Processed video ({video_path.name})",
+                    label=f"Processed data file ({video_path.name})",
                     path=video_path,
                     input_kind="video",
                 )
@@ -282,7 +282,7 @@ def discover_processed_inputs(
         options.append(
             ProcessedInputOption(
                 label=(
-                    f"Processed image sequence ({len(seq_paths)} frames, "
+                    f"Postponed image sequence ({len(seq_paths)} frames, "
                     f"{seq_paths[0].name} …)"
                 ),
                 path=seq_paths[0],
@@ -297,11 +297,15 @@ def discover_processed_inputs(
 def load_frames_from_paths(frame_paths: Sequence[Path]) -> tuple[list[np.ndarray], dict[str, Any]]:
     """Load an explicit ordered list of image frames."""
     if len(frame_paths) < 2:
-        raise MediaLoadError("Image sequence must contain at least 2 frames.")
+        raise MediaLoadError(
+            "Postponed image-sequence format is not supported in the current workflow."
+        )
     frames = [cv2.imread(str(p), cv2.IMREAD_COLOR) for p in frame_paths]
     frames = [f for f in frames if f is not None]
     if len(frames) < 2:
-        raise MediaLoadError("Need at least 2 readable frames in the image sequence.")
+        raise MediaLoadError(
+            "Postponed image-sequence format is not supported in the current workflow."
+        )
     return frames, {
         "source_path": str(frame_paths[0].parent),
         "loader": "image_sequence",
@@ -327,7 +331,9 @@ def load_frame_sequence(source: str | Path) -> tuple[list[np.ndarray], dict[str,
     if path.is_dir():
         frame_paths = _sorted_image_paths(path)
         if len(frame_paths) < 2:
-            raise MediaLoadError(f"Directory does not contain an image sequence: {path}")
+            raise MediaLoadError(
+                "Postponed image-sequence format is not supported in the current workflow."
+            )
         frames = [cv2.imread(str(p), cv2.IMREAD_COLOR) for p in frame_paths]
         frames = [f for f in frames if f is not None]
         if len(frames) < 2:
@@ -342,7 +348,7 @@ def load_frame_sequence(source: str | Path) -> tuple[list[np.ndarray], dict[str,
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
             cap.release()
-            raise MediaLoadError(f"Cannot open video: {path}")
+            raise MediaLoadError(f"Cannot open data file: {path}")
         frames: list[np.ndarray] = []
         try:
             while True:
@@ -353,7 +359,7 @@ def load_frame_sequence(source: str | Path) -> tuple[list[np.ndarray], dict[str,
         finally:
             cap.release()
         if len(frames) < 2:
-            raise MediaLoadError(f"Video must contain at least 2 frames: {path}")
+            raise MediaLoadError(f"Data file must contain at least 2 frames: {path}")
         meta["loader"] = "video"
         meta["reported_frame_count"] = count
         return frames, meta
@@ -389,7 +395,8 @@ def load_frame_sequence(source: str | Path) -> tuple[list[np.ndarray], dict[str,
             raise MediaLoadError(f"Cannot open image: {path}")
         meta["loader"] = "single_image"
         raise MediaLoadError(
-            "Single image provided; motion-index analysis needs a video or image sequence."
+            "Single image provided; motion-index analysis needs AVI/MP4 data "
+            "with at least 2 frames."
         )
 
     raise MediaLoadError(f"Unsupported motion-index input: {path}")

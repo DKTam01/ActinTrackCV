@@ -1,0 +1,18 @@
+{
+  "1_WT_218": [
+    {
+      "group": "1_WT_218",
+      "batch_number": 1,
+      "batch_name": "Batch 1",
+      "batch_id": "1_WT_218_B001",
+      "contains_video": true,
+      "video_file_count": 1,
+      "image_file_count": 0,
+      "data_file_count": 1,
+      "contains_data": true,
+      "created_date": "2026-01-01T00:00:00+00:00",
+      "renamed_date": null,
+      "notes": ""
+    }
+  ]
+}

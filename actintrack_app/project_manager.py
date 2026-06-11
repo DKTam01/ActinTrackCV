@@ -7,12 +7,14 @@ from pathlib import Path
 
 from actintrack_app.utils import (
     CROP_METADATA_JSON,
+    DATA_FILES_CSV,
     GROUPS,
     METADATA_DIR,
     PREVIEWS_DIR,
     PROCESSED_DIR,
     RAW_DIR,
     SAMPLES_CSV,
+    SCHEMA_V2,
 )
 
 
@@ -30,17 +32,26 @@ def create_project_structure(root_dir: Path) -> None:
         (root / PREVIEWS_DIR / group).mkdir(parents=True, exist_ok=True)
 
     metadata_dir = root / METADATA_DIR
-    samples_path = metadata_dir / SAMPLES_CSV
     crop_meta_path = metadata_dir / CROP_METADATA_JSON
+    data_files_path = metadata_dir / DATA_FILES_CSV
 
-    if not samples_path.exists():
-        from actintrack_app.metadata import create_empty_samples_csv
+    if not data_files_path.exists() and not (metadata_dir / SAMPLES_CSV).exists():
+        import pandas as pd
 
-        create_empty_samples_csv(samples_path)
+        from actintrack_app.schema_compat import (
+            save_data_files,
+            save_sample_registry,
+            write_workspace_json,
+        )
+        from actintrack_app.utils import SAMPLES_CSV_COLUMNS
+
+        write_workspace_json(root, schema_version=SCHEMA_V2)
+        save_data_files(root, pd.DataFrame(columns=SAMPLES_CSV_COLUMNS))
+        save_sample_registry(root, {g: [] for g in GROUPS})
 
     if not crop_meta_path.exists():
         crop_meta_path.write_text(
-            json.dumps({"samples": {}}, indent=2),
+            json.dumps({"schema_version": SCHEMA_V2, "data_files": {}}, indent=2),
             encoding="utf-8",
         )
 
@@ -75,10 +86,11 @@ def is_valid_project(root: Path) -> bool:
     root = Path(root).resolve()
     if not root.is_dir():
         return False
+    meta = root / METADATA_DIR
+    has_data_index = (meta / DATA_FILES_CSV).exists() or (meta / SAMPLES_CSV).exists()
     required = [
         root / RAW_DIR,
         root / PROCESSED_DIR,
-        root / METADATA_DIR,
-        root / METADATA_DIR / SAMPLES_CSV,
+        meta,
     ]
-    return all(p.exists() for p in required)
+    return all(p.exists() for p in required) and has_data_index
