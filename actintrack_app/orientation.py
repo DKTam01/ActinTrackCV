@@ -75,12 +75,14 @@ class RectROI:
 class OrientationState:
     rotation_angle_degrees: float = 0.0
     flipped_180: bool = False
+    mirror_y_axis: bool = False
     manual_rotation_steps: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "rotation_angle_degrees": float(self.rotation_angle_degrees),
             "flipped_180": bool(self.flipped_180),
+            "mirror_y_axis": bool(self.mirror_y_axis),
             "manual_rotation_steps": list(self.manual_rotation_steps),
         }
 
@@ -92,19 +94,21 @@ class OrientationState:
         return cls(
             rotation_angle_degrees=float(data.get("rotation_angle_degrees") or 0.0),
             flipped_180=bool(data.get("flipped_180")),
+            mirror_y_axis=bool(data.get("mirror_y_axis")),
             manual_rotation_steps=[str(s) for s in steps],
         )
 
-    def add_step(self, step: str) -> None:
-        self.manual_rotation_steps.append(step)
-
 
 def apply_orientation(image: np.ndarray, state: OrientationState) -> np.ndarray:
-    """Apply cumulative rotation then optional 180° flip."""
+    """Apply current rotation, optional y-axis mirror, then optional 180° flip."""
+    import cv2
+
     out = image
     angle = float(state.rotation_angle_degrees)
     if abs(angle) > 1e-6:
         out, _ = rotate_image_and_mask(out, None, angle)
+    if state.mirror_y_axis:
+        out = cv2.flip(out, 1)
     if state.flipped_180:
         out = apply_flip(out, True)
     return out

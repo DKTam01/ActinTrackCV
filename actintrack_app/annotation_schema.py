@@ -58,6 +58,7 @@ def build_sample_annotation(
         "reference_frame_index": int(reference_frame_index),
         "rotation_angle_degrees": float(orientation.rotation_angle_degrees),
         "flipped_180": bool(orientation.flipped_180),
+        "mirror_y_axis": bool(orientation.mirror_y_axis),
         "manual_rotation_steps": list(orientation.manual_rotation_steps),
         "rectangle_roi": roi_oriented_as_dict(roi),
         "roi_method": roi_method,

@@ -36,11 +36,11 @@ class PurgeFilteredDialog(QDialog):
 
         form = QFormLayout()
         self.combo_group = QComboBox()
-        self.combo_group.addItem("(any condition)", "")
+        self.combo_group.addItem("(any breed)", "")
         for g in GROUPS:
             self.combo_group.addItem(g, g)
         self.edit_batch = QLineEdit()
-        self.edit_batch.setPlaceholderText("Batch name or number (optional)")
+        self.edit_batch.setPlaceholderText("Sample name or number (optional)")
         self.combo_status = QComboBox()
         self.combo_status.addItem("(any status)", "")
         for s in (
@@ -51,6 +51,8 @@ class PurgeFilteredDialog(QDialog):
             "roi_propagated_needs_review",
             "roi_approved",
             "processed",
+            "motion_index_generated",
+            "motion_index_failed",
             "failed",
             "missing_file",
         ):
@@ -63,8 +65,8 @@ class PurgeFilteredDialog(QDialog):
         )
         self.combo_review = QComboBox()
         self.combo_review.addItems(["(any)", "pending", "approved", "rejected"])
-        form.addRow("Condition group:", self.combo_group)
-        form.addRow("Batch name/number:", self.edit_batch)
+        form.addRow("Breed:", self.combo_group)
+        form.addRow("Sample name/number:", self.edit_batch)
         form.addRow("Processing status:", self.combo_status)
         form.addRow("File type:", self.combo_file_type)
         form.addRow("Annotation source:", self.combo_annotation)
@@ -72,7 +74,7 @@ class PurgeFilteredDialog(QDialog):
         layout.addLayout(form)
 
         self.list_preview = QListWidget()
-        layout.addWidget(QLabel("Affected samples (annotations/processed will be purged):"))
+        layout.addWidget(QLabel("Affected videos (annotations/processed will be purged):"))
         layout.addWidget(self.list_preview)
 
         btn_row = QHBoxLayout()
@@ -131,7 +133,7 @@ class PurgeFilteredDialog(QDialog):
                 f"[{row.get('processing_status', '')}]  {row.get('original_filename', '')}"
             )
         if df.empty:
-            self.list_preview.addItem("(no samples match filters)")
+            self.list_preview.addItem("(no videos match filters)")
 
     def selected_sample_ids(self) -> list[str]:
         from actintrack_app.purge_manager import filter_samples_for_purge
@@ -174,7 +176,7 @@ class GlobalPurgeConfirmDialog(QDialog):
 
 
 def setup_application_menus(window: "MainWindow") -> None:
-    """File / Workspace / Batch / Help — native menu bar on macOS and Windows."""
+    """File / Workspace / Sample / Analysis / Help — native menu bar."""
     mb = window.menuBar()
 
     file_menu = mb.addMenu("&File")
@@ -190,7 +192,7 @@ def setup_application_menus(window: "MainWindow") -> None:
     window._refresh_recent_menu()
 
     file_menu.addSeparator()
-    act_import = QAction("Import &Data…", window)
+    act_import = QAction("Import &Video…", window)
     act_import.triggered.connect(window._menu_import_data)
     file_menu.addAction(act_import)
 
@@ -226,35 +228,30 @@ def setup_application_menus(window: "MainWindow") -> None:
     act_purge_filtered.triggered.connect(window._menu_purge_filtered)
     ws_menu.addAction(act_purge_filtered)
 
-    batch_menu = mb.addMenu("&Batch")
-    act_create = QAction("&Create Batch…", window)
-    act_create.triggered.connect(window._on_new_batch)
-    batch_menu.addAction(act_create)
+    sample_menu = mb.addMenu("&Sample")
+    act_create = QAction("&Add Sample…", window)
+    act_create.triggered.connect(window._on_add_sample)
+    sample_menu.addAction(act_create)
 
-    act_rename = QAction("&Rename Batch…", window)
+    act_rename = QAction("&Rename Sample…", window)
     act_rename.triggered.connect(window._on_rename_batch)
-    batch_menu.addAction(act_rename)
+    sample_menu.addAction(act_rename)
 
-    act_delete_empty = QAction("Delete &Empty Batch…", window)
+    act_delete_empty = QAction("Delete &Empty Sample…", window)
     act_delete_empty.triggered.connect(window._menu_delete_empty_batch)
-    batch_menu.addAction(act_delete_empty)
+    sample_menu.addAction(act_delete_empty)
 
-    batch_menu.addSeparator()
-    act_propagate = QAction("Apply Annotation to &Batch…", window)
-    act_propagate.triggered.connect(window._on_propagate_batch)
-    batch_menu.addAction(act_propagate)
-
-    act_process_batch = QAction("Process Approved Samples in &Batch…", window)
-    act_process_batch.triggered.connect(window._on_process_approved_batch)
-    batch_menu.addAction(act_process_batch)
-
-    act_delete_file = QAction("Delete Selected File from &Batch…", window)
+    sample_menu.addSeparator()
+    act_delete_file = QAction("Delete Selected Video from &Sample…", window)
     act_delete_file.triggered.connect(window._menu_delete_file_from_batch)
-    batch_menu.addAction(act_delete_file)
+    sample_menu.addAction(act_delete_file)
 
-    act_review = QAction("Review Batch Annotations", window)
-    act_review.triggered.connect(window._menu_review_batch)
-    batch_menu.addAction(act_review)
+    analysis_menu = mb.addMenu("&Analysis")
+    act_motion_index = QAction(
+        "Generate F-actin Motion Index (Draft)…", window
+    )
+    act_motion_index.triggered.connect(window._menu_generate_motion_index)
+    analysis_menu.addAction(act_motion_index)
 
     help_menu = mb.addMenu("&Help")
     act_how = QAction("How to Run App", window)

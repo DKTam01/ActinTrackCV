@@ -60,6 +60,8 @@ class ImageCanvas(QLabel):
         self._drag_start_img: Optional[tuple[int, int]] = None
         self._roi_at_drag_start: Optional[RectROI] = None
         self._cell_mask_overlay: Optional[np.ndarray] = None
+        self._interactive = True
+        self._draw_roi = True
 
     def clear_preview(self) -> None:
         self._frame = None
@@ -68,7 +70,17 @@ class ImageCanvas(QLabel):
         self._cell_mask_overlay = None
         self.clear()
 
+    def set_interactive(self, enabled: bool) -> None:
+        self._interactive = enabled
+
+    def set_preview_frame(self, frame: np.ndarray) -> None:
+        """Display a read-only preview frame without ROI handles."""
+        self._frame = frame
+        self._draw_roi = False
+        self._update_pixmap()
+
     def set_frame(self, frame: np.ndarray, *, keep_roi: bool = False) -> None:
+        self._draw_roi = True
         self._frame = frame
         if not keep_roi:
             self._roi = None
@@ -176,7 +188,7 @@ class ImageCanvas(QLabel):
         painter = QPainter(composite)
         painter.drawPixmap(self._offset_x, self._offset_y, scaled)
 
-        if self._roi is not None and self._frame is not None:
+        if self._draw_roi and self._roi is not None and self._frame is not None:
             r = self._roi
             x0, y0 = self._image_to_widget(r.x, r.y)
             x1, y1 = self._image_to_widget(r.x1, r.y1)
@@ -206,6 +218,8 @@ class ImageCanvas(QLabel):
         self._redraw()
 
     def mousePressEvent(self, event):
+        if not self._interactive:
+            return
         if event.button() != Qt.MouseButton.LeftButton or self._frame is None:
             return
         wx, wy = int(event.position().x()), int(event.position().y())
@@ -238,6 +252,8 @@ class ImageCanvas(QLabel):
         self._redraw()
 
     def mouseMoveEvent(self, event):
+        if not self._interactive:
+            return
         if self._drag_mode == DragMode.NONE or self._frame is None:
             return
         wx, wy = int(event.position().x()), int(event.position().y())
@@ -289,8 +305,11 @@ class ImageCanvas(QLabel):
             self._main_window.on_roi_changed(self._roi)
 
     def mouseReleaseEvent(self, event):
+        had_drag = self._drag_mode != DragMode.NONE
         self._drag_mode = DragMode.NONE
         self._resize_handle = None
         if self._roi is not None and self._roi.width < 4 and self._roi.height < 4:
             self._roi = None
             self._redraw()
+        if had_drag:
+            self._main_window.on_roi_edit_finished()

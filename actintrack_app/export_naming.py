@@ -92,3 +92,33 @@ def processed_sample_metadata_path(batch_dir: Path, final_name: str) -> Path:
 
 def batch_metadata_base_name(group: str, batch_number: int) -> str:
     return f"{group}--{format_padded_number(batch_number)}"
+
+
+def motion_index_trajectory_csv_path(batch_dir: Path, final_name: str) -> Path:
+    return batch_dir / f"{final_name}_point_tracks.csv"
+
+
+def motion_index_summary_json_path(batch_dir: Path, final_name: str) -> Path:
+    return batch_dir / f"{final_name}_motion_index.json"
+
+
+def motion_index_starting_points_path(batch_dir: Path, final_name: str) -> Path:
+    return batch_dir / f"{final_name}_starting_points.png"
+
+
+def motion_index_track_overlay_path(batch_dir: Path, final_name: str) -> Path:
+    return batch_dir / f"{final_name}_track_overlay.png"
+
+
+def motion_index_track_preview_path(batch_dir: Path, final_name: str) -> Path:
+    return batch_dir / f"{final_name}_track_preview.mp4"
+
+
+def motion_index_output_paths(batch_dir: Path, final_name: str) -> dict[str, Path]:
+    return {
+        "trajectory_csv": motion_index_trajectory_csv_path(batch_dir, final_name),
+        "summary_json": motion_index_summary_json_path(batch_dir, final_name),
+        "starting_points": motion_index_starting_points_path(batch_dir, final_name),
+        "track_overlay": motion_index_track_overlay_path(batch_dir, final_name),
+        "track_preview": motion_index_track_preview_path(batch_dir, final_name),
+    }

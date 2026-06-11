@@ -12,9 +12,11 @@ from actintrack_app.utils import (
 )
 
 WIP_MESSAGE = (
-    "This file type appears to be a raw or 3D microscopy format. "
-    "3D/raw import is planned but not supported in the current 2D workflow."
+    "Only AVI and MP4 video files are supported in the current 2D workflow. "
+    "Image sequences and 3D/raw microscopy files will be added later."
 )
+
+UNSUPPORTED_2D_MESSAGE = WIP_MESSAGE
 
 MIXED_MESSAGE = (
     "Cannot import images and video in one step. "
@@ -80,9 +82,9 @@ def classify_paths(paths: list[Path]) -> tuple[ImportKind, list[Path], str]:
         return ImportKind.VIDEO, files, ""
 
     if "image" in kinds:
-        return ImportKind.IMAGE_SEQUENCE, files, ""
+        return ImportKind.MIXED, [], UNSUPPORTED_2D_MESSAGE
 
-    return ImportKind.MIXED, [], "Could not determine import type for the selected files."
+    return ImportKind.MIXED, [], UNSUPPORTED_2D_MESSAGE
 
 
 def import_kind_label(kind: ImportKind) -> str:

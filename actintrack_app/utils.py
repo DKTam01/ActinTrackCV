@@ -58,8 +58,12 @@ STATUS_ROI_MARKED = "roi_marked"
 STATUS_ROI_PROPAGATED = "roi_propagated_needs_review"
 STATUS_ROI_APPROVED = "roi_approved"
 STATUS_PROCESSED = "processed"
+STATUS_MOTION_INDEX_GENERATED = "motion_index_generated"
+STATUS_MOTION_INDEX_FAILED = "motion_index_failed"
 STATUS_FAILED = "failed"
 STATUS_MISSING_FILE = "missing_file"
+
+F_ACTIN_MOTION_INDEX_SUMMARY_CSV = "f_actin_motion_index_summary.csv"
 
 SAMPLES_CSV_COLUMNS = [
     "sample_id",

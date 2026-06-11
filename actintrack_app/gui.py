@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -34,10 +35,12 @@ from PyQt6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
+    QSizePolicy,
     QWidget,
 )
 
@@ -58,6 +61,7 @@ from actintrack_app.batch_manager import (
     create_batch,
     delete_empty_batch,
     display_batch_name,
+    display_sample_label,
     ensure_default_batch,
     get_batch_by_name,
     list_batches,
@@ -77,7 +81,9 @@ from actintrack_app.gui_menus import (
 )
 from actintrack_app.gui_canvas import ImageCanvas
 from actintrack_app.image_processing import TrackingCrop, detect_tracking_crop
+from actintrack_app.export_naming import motion_index_summary_json_path
 from actintrack_app.metadata import (
+    load_samples_csv,
     get_sample_annotation,
     load_crop_metadata,
     migrate_workspace_schema,
@@ -102,8 +108,19 @@ from actintrack_app.orientation import (
     apply_orientation,
     tracking_crop_to_rect,
 )
-from actintrack_app.project_manager import create_project_structure, is_valid_project
-from actintrack_app.cropped_roi_preview import open_cropped_roi_preview
+from actintrack_app.project_manager import (
+    create_project_structure,
+    get_processed_batch_dir,
+    is_valid_project,
+)
+from actintrack_app.motion_index import MotionIndexParams
+from actintrack_app.preview_workflow import (
+    CroppedPreviewAnalysis,
+    analyze_cropped_preview,
+    is_supported_video_path,
+    load_cropped_frames_from_video,
+    render_cropped_tracking_frame,
+)
 from actintrack_app.roi_workflow import (
     RoiValidationResult,
     is_wip_sample_path,
@@ -120,6 +137,8 @@ from actintrack_app.utils import (
     RAW_DIR,
     SAMPLES_CSV,
     STATUS_IMPORTED,
+    STATUS_MOTION_INDEX_FAILED,
+    STATUS_MOTION_INDEX_GENERATED,
     STATUS_PROCESSED,
     STATUS_RAW_IMPORTED,
     STATUS_ROI_APPROVED,
@@ -134,6 +153,46 @@ from actintrack_app.video_processing import MediaLoadError, load_media_frame
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE_ROOT = APP_ROOT / "raw_source"
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
+DRAFT_TRACKING_DIR = "draft_tracking"
+TRACKING_DEBOUNCE_MS = 3000
+
+_ADVANCED_SAMPLE_STATUSES = frozenset(
+    {
+        STATUS_PROCESSED,
+        STATUS_MOTION_INDEX_GENERATED,
+        STATUS_MOTION_INDEX_FAILED,
+    }
+)
+_ROI_STATUS_UPGRADE_FROM = frozenset(
+    {
+        STATUS_RAW_IMPORTED,
+        STATUS_IMPORTED,
+        STATUS_UNANNOTATED,
+    }
+)
+
+
+@dataclass(frozen=True)
+class _TrackingRunSnapshot:
+    sample_id: str
+    roi_key: tuple[int, int, int, int]
+    params_key: tuple[tuple[str, Any], ...]
+    orientation_key: tuple[float, bool, bool]
+    video_path: str
+    run_token: int
+
+
+@dataclass
+class SampleTrackingResultView:
+    """Display-ready tracking/index values for one sample."""
+
+    status: str  # success, failed, none
+    downward_velocity: float = 0.0
+    general_movement: float = 0.0
+    tracks_used: int = 0
+    tracks_requested: int = 0
+    valid_steps: int = 0
+    failure_reason: str = ""
 
 STATUS_COLORS = {
     STATUS_IMPORTED: QColor("#bbbbbb"),
@@ -144,6 +203,8 @@ STATUS_COLORS = {
     STATUS_ROI_PROPAGATED: QColor("#ff9944"),
     STATUS_ROI_APPROVED: QColor("#66dd88"),
     STATUS_PROCESSED: QColor("#3ddc84"),
+    STATUS_MOTION_INDEX_GENERATED: QColor("#2ec4b6"),
+    STATUS_MOTION_INDEX_FAILED: QColor("#e07070"),
     "missing_file": QColor("#cc6666"),
 }
 
@@ -217,6 +278,7 @@ class MainWindow(QMainWindow):
 
         self._project_root: Optional[Path] = None
         self._current_sample: Optional[dict] = None
+        self._current_sample_id: Optional[str] = None
         self._base_frame: Optional[np.ndarray] = None
         self._frame_index = 0
         self._total_frames = 1
@@ -229,8 +291,34 @@ class MainWindow(QMainWindow):
         self._last_import_dir = self._default_source_root
         self._roi_user_adjusted = False
         self._loaded_annotation_source = "manual"
+        self._last_motion_index_result: Optional[Any] = None
+        self._preview_mode = "full"
+        self._preview_playing = False
+        self._preview_frame_index = 0
+        self._cropped_preview: Optional[CroppedPreviewAnalysis] = None
+        self._preview_timer = QTimer(self)
+        self._preview_timer.timeout.connect(self._on_preview_timer_tick)
+        self._roi_autosave_pending = False
+        self._tracking_results_by_sample: dict[str, CroppedPreviewAnalysis] = {}
+        self._tracking_result_stale_by_sample: dict[str, bool] = {}
+        self._tracking_refresh_timer = QTimer(self)
+        self._tracking_refresh_timer.setSingleShot(True)
+        self._tracking_refresh_timer.setInterval(TRACKING_DEBOUNCE_MS)
+        self._tracking_refresh_timer.timeout.connect(
+            self._on_settings_tracking_debounce_fired
+        )
+        self._roi_tracking_debounce_timer = QTimer(self)
+        self._roi_tracking_debounce_timer.setSingleShot(True)
+        self._roi_tracking_debounce_timer.setInterval(TRACKING_DEBOUNCE_MS)
+        self._roi_tracking_debounce_timer.timeout.connect(
+            self._on_roi_tracking_debounce_fired
+        )
+        self._pending_tracking_snapshot: Optional[_TrackingRunSnapshot] = None
+        self._tracking_run_token = 0
+        self._tracking_job_running = False
 
         self._build_ui()
+        self._set_tracking_settings_editable(False)
         setup_application_menus(self)
         self._load_project(self._workspace_root, "Workspace project loaded")
 
@@ -242,15 +330,71 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._build_left_sidebar())
         center = QWidget()
         center_layout = QVBoxLayout(center)
-        center_layout.addWidget(
-            QLabel(
-                "Preview — orient the Arabidopsis sample and draw a rectangle "
-                "around the usable actin-rich region (exclude the blurry "
-                "nucleus-adjacent area)"
-            )
+        self.lbl_preview_mode = QLabel(
+            "Full Sample Preview — orient the video and draw a rectangle around "
+            "the usable actin-rich region."
         )
+        self.lbl_preview_mode.setWordWrap(True)
+        center_layout.addWidget(self.lbl_preview_mode)
+
         self.canvas = ImageCanvas(self)
         center_layout.addWidget(self.canvas, stretch=1)
+
+        preview_crop_row = QHBoxLayout()
+        preview_crop_row.addStretch()
+        self.btn_preview_crop = self._tool_button(
+            "Preview Cropped ROI",
+            "Show cropped ROI with draft tracking overlay in the main preview window.",
+            self._on_preview_crop,
+        )
+        self.btn_preview_crop.hide()
+        preview_crop_row.addWidget(self.btn_preview_crop)
+        preview_crop_row.addStretch()
+        center_layout.addLayout(preview_crop_row)
+
+        preview_controls = QHBoxLayout()
+        self.btn_preview_play = QPushButton("Play")
+        self.btn_preview_play.clicked.connect(self._preview_play)
+        self.btn_preview_pause = QPushButton("Pause")
+        self.btn_preview_pause.clicked.connect(self._preview_pause)
+        self.lbl_cropped_frame = QLabel("Frame 1 / 1")
+        self.slider_cropped_frame = QSlider(Qt.Orientation.Horizontal)
+        self.slider_cropped_frame.setMinimumWidth(180)
+        self.slider_cropped_frame.valueChanged.connect(self._on_cropped_preview_frame_slider)
+        self.lbl_preview_speed = QLabel("Speed:")
+        self.combo_preview_speed = QComboBox()
+        self.combo_preview_speed.addItems(["0.25×", "0.5×", "1×", "1.5×", "2×"])
+        self.combo_preview_speed.setCurrentText("1×")
+        self.btn_return_full_preview = QPushButton("Return to Full Preview")
+        self.btn_return_full_preview.clicked.connect(self._exit_cropped_preview_mode)
+        for widget in (
+            self.btn_preview_play,
+            self.btn_preview_pause,
+            self.lbl_cropped_frame,
+            self.slider_cropped_frame,
+            self.lbl_preview_speed,
+            self.combo_preview_speed,
+            self.btn_return_full_preview,
+        ):
+            widget.hide()
+        preview_controls.addWidget(self.btn_preview_play)
+        preview_controls.addWidget(self.btn_preview_pause)
+        preview_controls.addWidget(self.lbl_cropped_frame)
+        preview_controls.addWidget(self.slider_cropped_frame, stretch=1)
+        preview_controls.addWidget(self.lbl_preview_speed)
+        preview_controls.addWidget(self.combo_preview_speed)
+        preview_controls.addStretch()
+        preview_controls.addWidget(self.btn_return_full_preview)
+        center_layout.addLayout(preview_controls)
+        self._preview_control_widgets = (
+            self.btn_preview_play,
+            self.btn_preview_pause,
+            self.lbl_cropped_frame,
+            self.slider_cropped_frame,
+            self.lbl_preview_speed,
+            self.combo_preview_speed,
+            self.btn_return_full_preview,
+        )
         splitter.addWidget(center)
         splitter.addWidget(self._build_right_sidebar())
         splitter.setSizes([260, 740, 280])
@@ -270,36 +414,40 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_samples_panel(), stretch=1)
         return panel
 
-    def _build_right_sidebar(self) -> QTabWidget:
-        """Frame, ROI, and batch controls on separate tabs."""
-        tabs = QTabWidget()
-        tabs.setMinimumWidth(280)
-        tabs.setMaximumWidth(380)
+    def _build_right_sidebar(self) -> QStackedWidget:
+        """Normal tabbed controls, or full-column Advanced Tracking Settings."""
+        stack = QStackedWidget()
+        stack.setMinimumWidth(300)
+        stack.setMaximumWidth(440)
 
+        self._right_tabs = QTabWidget()
         preview = QWidget()
         preview_layout = QVBoxLayout(preview)
         preview_layout.setContentsMargins(6, 6, 6, 6)
         preview_layout.addWidget(self._build_frame_panel())
         preview_layout.addWidget(self._build_selected_panel())
         preview_layout.addStretch()
-        tabs.addTab(preview, "Frame")
+        self._right_tabs.addTab(preview, "Frame")
 
         roi_tab = QWidget()
         roi_layout = QVBoxLayout(roi_tab)
         roi_layout.setContentsMargins(6, 6, 6, 6)
-        roi_layout.addWidget(self._build_orientation_panel())
-        roi_layout.addWidget(self._build_roi_panel())
+        roi_layout.addWidget(self._build_unified_orient_roi_panel())
         roi_layout.addStretch()
-        tabs.addTab(roi_tab, "Orient && ROI")
+        self._right_tabs.addTab(roi_tab, "Orient && ROI")
 
-        batch_tab = QWidget()
-        batch_layout = QVBoxLayout(batch_tab)
-        batch_layout.setContentsMargins(6, 6, 6, 6)
-        batch_layout.addWidget(self._build_batch_panel())
-        batch_layout.addWidget(self._build_notes_panel())
-        batch_layout.addStretch()
-        tabs.addTab(batch_tab, "Batch")
-        return tabs
+        sample_tab = QWidget()
+        sample_layout = QVBoxLayout(sample_tab)
+        sample_layout.setContentsMargins(6, 6, 6, 6)
+        sample_layout.addWidget(self._build_tracking_result_panel())
+        sample_layout.addWidget(self._build_notes_panel())
+        sample_layout.addStretch()
+        self._right_tabs.addTab(sample_tab, "Sample")
+
+        stack.addWidget(self._right_tabs)
+        stack.addWidget(self._build_tracking_settings_page())
+        self._right_stack = stack
+        return stack
 
     def _build_samples_panel(self) -> QGroupBox:
         box = QGroupBox("Arabidopsis samples")
@@ -311,7 +459,7 @@ class MainWindow(QMainWindow):
         self.combo_filter_group = QComboBox()
         self.combo_filter_group.addItems(list(GROUPS))
         self.combo_filter_group.currentTextChanged.connect(self._on_filter_group_changed)
-        layout.addWidget(QLabel("Condition group:"))
+        layout.addWidget(QLabel("Breed:"))
         layout.addWidget(self.combo_filter_group)
         self.list_samples = QListWidget()
         self.list_samples.setSelectionMode(
@@ -346,8 +494,8 @@ class MainWindow(QMainWindow):
         nav.addWidget(self.btn_next_sample)
         layout.addLayout(nav)
         hint = QLabel(
-            "All batches for the selected condition are listed together. "
-            "Batch menu actions use the selected sample's batch when applicable."
+            "All samples for the selected breed are listed together. "
+            "Right-click to add a sample or import a video."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888; font-size: 11px;")
@@ -387,9 +535,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_auto_export_name)
         return box
 
-    def _build_orientation_panel(self) -> QGroupBox:
-        box = QGroupBox("Orientation")
+    def _build_unified_orient_roi_panel(self) -> QGroupBox:
+        box = QGroupBox("Orient and ROI")
         layout = QVBoxLayout(box)
+        layout.setSpacing(8)
+
         row1 = QHBoxLayout()
         self.btn_rot_left = QPushButton("Rotate 90° Left")
         self.btn_rot_right = QPushButton("Rotate 90° Right")
@@ -398,90 +548,252 @@ class MainWindow(QMainWindow):
         row1.addWidget(self.btn_rot_left)
         row1.addWidget(self.btn_rot_right)
         layout.addLayout(row1)
+
         custom = QHBoxLayout()
-        custom.addWidget(QLabel("Custom °:"))
+        custom.addWidget(QLabel("Rotation Angle:"))
         self.spin_custom_angle = QDoubleSpinBox()
         self.spin_custom_angle.setRange(-180, 180)
         self.spin_custom_angle.setDecimals(1)
-        self.btn_apply_custom = QPushButton("Apply")
+        self.btn_apply_custom = QPushButton("Apply Angle")
         self.btn_apply_custom.clicked.connect(self._on_apply_custom_angle)
         custom.addWidget(self.spin_custom_angle)
         custom.addWidget(self.btn_apply_custom)
         layout.addLayout(custom)
+
+        self.chk_mirror_y = QCheckBox("Mirror Y-Axis")
+        self.chk_mirror_y.setToolTip("Mirror the video left-right before ROI and tracking.")
+        self.chk_mirror_y.toggled.connect(self._on_mirror_y_axis)
+        layout.addWidget(self.chk_mirror_y)
+
+        orient_extras = QHBoxLayout()
         self.btn_flip = QPushButton("Flip 180°")
         self.btn_flip.clicked.connect(self._on_flip_180)
         self.btn_reset_orientation = QPushButton("Reset Orientation")
         self.btn_reset_orientation.clicked.connect(self._on_reset_orientation)
+        orient_extras.addWidget(self.btn_flip)
+        orient_extras.addWidget(self.btn_reset_orientation)
+        layout.addLayout(orient_extras)
+
         self.lbl_orientation = QLabel("Angle: 0°  Flip: no")
         self.lbl_orientation.setWordWrap(True)
-        layout.addWidget(self.btn_flip)
-        layout.addWidget(self.btn_reset_orientation)
+        self.lbl_orientation.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self.lbl_orientation)
-        return box
 
-    def _build_roi_panel(self) -> QGroupBox:
-        box = QGroupBox("Analysis ROI")
-        layout = QVBoxLayout(box)
         self.lbl_roi_info = QLabel("Draw a rectangle on the preview.")
         self.lbl_roi_info.setWordWrap(True)
+        layout.addWidget(self.lbl_roi_info)
+
         self.btn_auto_roi = QPushButton("Suggest ROI from F-actin Signal")
         self.btn_auto_roi.setToolTip(
-            "Suggest ROI from F-actin Signal estimates a rectangular region with strong "
-            "visible F-actin signal. It uses image intensity/contrast patterns to find a "
-            "likely actin-rich area for annotation. This is only a starting suggestion, "
-            "not a final biological decision. Review, adjust, and approve the ROI before "
-            "processing."
+            "Suggest a rectangular region with strong visible F-actin signal. "
+            "Review and adjust before export."
         )
         self.btn_auto_roi.clicked.connect(self._on_auto_suggest_roi)
+        layout.addWidget(self.btn_auto_roi)
+
         self.btn_clear_roi = QPushButton("Clear ROI")
+        self.btn_clear_roi.setToolTip("Remove the current ROI rectangle from the preview.")
         self.btn_clear_roi.clicked.connect(self._on_clear_roi)
-        self.btn_preview_crop = self._tool_button(
-            "Preview Cropped ROI",
-            "Play or scrub through the cropped ROI over time (video or image sequence). "
-            "Preview only — does not write files.",
-            self._on_preview_crop,
-        )
-        self.btn_save_annotation = self._tool_button(
-            "Save ROI",
-            "Save the rectangular ROI annotation to workspace metadata.",
-            self._on_save_annotation,
-        )
+        layout.addWidget(self.btn_clear_roi)
+
         self.btn_process = self._tool_button(
             "Export ROI",
             "Crop and export processed outputs to the processed/ folder.",
             self._on_process_sample,
         )
-        layout.addWidget(self.lbl_roi_info)
-        layout.addWidget(self.btn_auto_roi)
-        layout.addWidget(self.btn_clear_roi)
-        layout.addWidget(self.btn_preview_crop)
-        layout.addWidget(self.btn_save_annotation)
         layout.addWidget(self.btn_process)
-        return box
 
-    def _build_batch_panel(self) -> QGroupBox:
-        box = QGroupBox("Batch Annotation & Review")
-        layout = QVBoxLayout(box)
+        self.lbl_roi_save_status = QLabel("—")
+        self.lbl_roi_save_status.setWordWrap(True)
+        self._set_roi_save_status("No ROI saved yet", saved=False)
+        layout.addWidget(self.lbl_roi_save_status)
+
         review = QHBoxLayout()
         self.btn_approve = self._tool_button(
-            "Approve",
+            "Approve ROI",
             "Mark the current ROI as approved for export.",
             self._on_approve_roi,
         )
         self.btn_reject = self._tool_button(
-            "Reject",
+            "Reject ROI",
             "Remove the ROI annotation and reset sample status.",
             self._on_reject_roi,
         )
         review.addWidget(self.btn_approve)
         review.addWidget(self.btn_reject)
         layout.addLayout(review)
-        batch_hint = QLabel(
-            "Apply to batch, process batch, delete file: Batch menu."
+        return box
+
+    @staticmethod
+    def _configure_tracking_field(widget: QWidget, *, full_column: bool = False) -> None:
+        widget.setMinimumWidth(160 if full_column else 140)
+        widget.setMinimumHeight(36 if full_column else 30)
+        policy = QSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
         )
-        batch_hint.setWordWrap(True)
-        batch_hint.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(batch_hint)
+        widget.setSizePolicy(policy)
+
+    def _create_tracking_setting_widgets(self) -> None:
+        defaults = MotionIndexParams()
+        self.spin_track_points = QSpinBox()
+        self.spin_track_points.setRange(1, 50)
+        self.spin_track_points.setValue(defaults.num_starting_points)
+        self.spin_track_points.setToolTip(
+            "Number of bright F-actin signal points selected in the first frame."
+        )
+
+        self.spin_track_spacing = QSpinBox()
+        self.spin_track_spacing.setRange(1, 200)
+        self.spin_track_spacing.setValue(defaults.min_point_spacing_px)
+        self.spin_track_spacing.setToolTip(
+            "Minimum pixel distance between starting points so they are spread out."
+        )
+
+        self.spin_track_search = QSpinBox()
+        self.spin_track_search.setRange(1, 100)
+        self.spin_track_search.setValue(defaults.search_radius_px)
+        self.spin_track_search.setToolTip(
+            "Maximum pixel distance a point can move between frames."
+        )
+
+        self.spin_track_patch = QSpinBox()
+        self.spin_track_patch.setRange(3, 101)
+        self.spin_track_patch.setSingleStep(2)
+        self.spin_track_patch.setValue(defaults.template_patch_size_px)
+        self.spin_track_patch.setToolTip(
+            "Size of the square image patch used for template matching. Must be odd."
+        )
+
+        self.spin_track_confidence = QDoubleSpinBox()
+        self.spin_track_confidence.setRange(0.0, 1.0)
+        self.spin_track_confidence.setDecimals(2)
+        self.spin_track_confidence.setSingleStep(0.05)
+        self.spin_track_confidence.setValue(defaults.min_template_confidence)
+        self.spin_track_confidence.setToolTip(
+            "Lowest accepted template-matching score."
+        )
+
+        self.spin_track_lookahead = QSpinBox()
+        self.spin_track_lookahead.setRange(0, 3)
+        self.spin_track_lookahead.setValue(defaults.lookahead_frames)
+        self.spin_track_lookahead.setToolTip(
+            "Number of future frames to check if a point is temporarily lost."
+        )
+
+        self.spin_track_mpp = QDoubleSpinBox()
+        self.spin_track_mpp.setRange(0.001, 10.0)
+        self.spin_track_mpp.setDecimals(4)
+        self.spin_track_mpp.setValue(defaults.microns_per_pixel)
+        self.spin_track_mpp.setToolTip(
+            "Physical image scale used to convert pixels to microns."
+        )
+
+        self.spin_track_spf = QDoubleSpinBox()
+        self.spin_track_spf.setRange(0.001, 60.0)
+        self.spin_track_spf.setDecimals(4)
+        self.spin_track_spf.setValue(defaults.seconds_per_frame)
+        self.spin_track_spf.setToolTip(
+            "Time interval between frames used to convert displacement to velocity."
+        )
+
+        self._tracking_setting_widgets = (
+            self.spin_track_points,
+            self.spin_track_spacing,
+            self.spin_track_search,
+            self.spin_track_patch,
+            self.spin_track_confidence,
+            self.spin_track_lookahead,
+            self.spin_track_mpp,
+            self.spin_track_spf,
+        )
+        for widget in self._tracking_setting_widgets:
+            self._configure_tracking_field(widget, full_column=True)
+            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.valueChanged.connect(self._on_tracking_setting_changed)
+
+    @staticmethod
+    def _add_tracking_setting_row(
+        layout: QVBoxLayout,
+        label_text: str,
+        widget: QWidget,
+        tooltip: str,
+    ) -> None:
+        label = QLabel(label_text)
+        label.setWordWrap(True)
+        label.setToolTip(tooltip)
+        widget.setToolTip(tooltip)
+        layout.addWidget(label)
+        layout.addWidget(widget)
+
+    def _build_tracking_settings_form(self) -> QGroupBox:
+        box = QGroupBox("Advanced Tracking Settings")
+        box.setToolTip(
+            "Draft point-tracking parameters used when Preview Cropped ROI runs."
+        )
+        layout = QVBoxLayout(box)
+        layout.setSpacing(10)
+        layout.setContentsMargins(8, 12, 8, 8)
+        rows: list[tuple[str, QWidget, str]] = [
+            ("Starting Points", self.spin_track_points, self.spin_track_points.toolTip()),
+            (
+                "Minimum Point Spacing (px)",
+                self.spin_track_spacing,
+                self.spin_track_spacing.toolTip(),
+            ),
+            (
+                "Search Radius (px)",
+                self.spin_track_search,
+                self.spin_track_search.toolTip(),
+            ),
+            (
+                "Template Patch Size (px)",
+                self.spin_track_patch,
+                self.spin_track_patch.toolTip(),
+            ),
+            (
+                "Minimum Match Confidence",
+                self.spin_track_confidence,
+                self.spin_track_confidence.toolTip(),
+            ),
+            (
+                "Lookahead Frames",
+                self.spin_track_lookahead,
+                self.spin_track_lookahead.toolTip(),
+            ),
+            ("Microns per Pixel", self.spin_track_mpp, self.spin_track_mpp.toolTip()),
+            ("Seconds per Frame", self.spin_track_spf, self.spin_track_spf.toolTip()),
+        ]
+        for label_text, widget, tooltip in rows:
+            self._add_tracking_setting_row(layout, label_text, widget, tooltip)
+        layout.addStretch()
+        return box
+
+    def _build_tracking_settings_page(self) -> QWidget:
+        self._create_tracking_setting_widgets()
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        hint = QLabel(
+            "Edit tracking parameters below while previewing the cropped ROI. "
+            "Changes auto-refresh tracking for the current sample."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(hint)
+        layout.addWidget(self._build_tracking_settings_form(), stretch=1)
+        return page
+
+    def _build_tracking_result_panel(self) -> QGroupBox:
+        box = QGroupBox("Tracking Result: No sample selected")
+        self.grp_tracking_result = box
+        layout = QVBoxLayout(box)
+        self.lbl_tracking_result = QLabel("Not generated yet")
+        self.lbl_tracking_result.setWordWrap(True)
+        self.lbl_tracking_result.setStyleSheet("font-size: 12px;")
+        layout.addWidget(self.lbl_tracking_result)
         return box
 
     def _build_notes_panel(self) -> QGroupBox:
@@ -502,12 +814,517 @@ class MainWindow(QMainWindow):
     def _status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 8000)
 
+    _FULL_PREVIEW_HINT = (
+        "Full Sample Preview — orient the video and draw a rectangle around "
+        "the usable actin-rich region."
+    )
+    _SELECT_SAMPLE_HINT = "Select a sample to preview."
+
+    def reset_preview_state(
+        self,
+        *,
+        clear_image: bool = True,
+        placeholder: Optional[str] = None,
+        reset_roi_controls: bool = True,
+    ) -> None:
+        """Stop playback and clear cropped/tracking preview when context changes."""
+        self._preview_pause()
+        self._tracking_refresh_timer.stop()
+        self._roi_tracking_debounce_timer.stop()
+        self._cancel_pending_debounced_tracking()
+        self._preview_frame_index = 0
+        self._cropped_preview = None
+        self._preview_playing = False
+        self.canvas.set_interactive(True)
+        self._set_preview_controls_visible(False)
+        if reset_roi_controls:
+            self._set_tracking_settings_editable(False)
+            self._show_roi_controls_view()
+        if clear_image:
+            self._base_frame = None
+            self._total_frames = 1
+            self._frame_index = 0
+            self._reference_frame_index = 0
+            self.canvas.clear_preview()
+            self.lbl_frame_info.setText("—")
+            self.slider_frame.setMaximum(0)
+            self.spin_frame.setMaximum(0)
+            self.slider_frame.setValue(0)
+            self.spin_frame.setValue(0)
+            self._preview_mode = "no_sample"
+        else:
+            self._preview_mode = "full"
+        if placeholder is not None:
+            self.lbl_preview_mode.setText(placeholder)
+        elif clear_image and self._current_sample is None:
+            self.lbl_preview_mode.setText(self._SELECT_SAMPLE_HINT)
+        elif not clear_image and self._current_sample is not None:
+            self.lbl_preview_mode.setText(self._FULL_PREVIEW_HINT)
+        if self._current_sample_id is None:
+            self.update_tracking_result_panel()
+        self._update_preview_crop_button_visibility()
+
+    def _show_tracking_settings_view(self) -> None:
+        self._right_stack.setCurrentIndex(1)
+
+    def _show_roi_controls_view(self) -> None:
+        self._right_stack.setCurrentIndex(0)
+        for i in range(self._right_tabs.count()):
+            if self._right_tabs.tabText(i) == "Orient && ROI":
+                self._right_tabs.setCurrentIndex(i)
+                break
+
+    def _set_tracking_settings_editable(self, editable: bool) -> None:
+        widgets = getattr(self, "_tracking_setting_widgets", ())
+        for widget in widgets:
+            widget.setEnabled(editable)
+
+    def _sample_display_title(self, sample: Optional[dict[str, Any]] = None) -> str:
+        sample = sample or self._current_sample
+        if not sample:
+            return ""
+        group = str(sample.get("group", "")).strip()
+        batch_num = int(sample.get("batch_number", 1) or 1)
+        batch_name = str(sample.get("batch_name", "")).strip()
+        sample_label = display_sample_label(batch_num, batch_name)
+        if group:
+            return f"{group} / {sample_label}"
+        return sample_label
+
+    def _tracking_result_group_title(self, sample_id: Optional[str] = None) -> str:
+        if sample_id is None:
+            return "Tracking Result: No sample selected"
+        sample = self._sample_row_for_id(sample_id) or self._current_sample
+        title = self._sample_display_title(sample)
+        if title:
+            return f"{title}'s Tracking Result"
+        return f"{sample_id}'s Tracking Result"
+
+    def _update_preview_crop_button_visibility(self) -> None:
+        show = (
+            self._current_sample_id is not None
+            and self._preview_mode != "cropped_tracking"
+            and self._base_frame is not None
+        )
+        self.btn_preview_crop.setVisible(show)
+
+    def _set_active_sample(self, sample: Optional[dict[str, Any]]) -> None:
+        self._cancel_pending_debounced_tracking()
+        self._current_sample = sample
+        sid = str(sample.get("sample_id", "")).strip() if sample else ""
+        self._current_sample_id = sid or None
+
+    def _on_tracking_setting_changed(self, *_args: object) -> None:
+        if self._current_sample_id:
+            self._tracking_result_stale_by_sample[self._current_sample_id] = True
+            self.update_tracking_result_panel()
+        if self._preview_mode == "cropped_tracking":
+            self._schedule_settings_tracking_refresh()
+
+    @staticmethod
+    def _status_after_roi_autosave(current_status: str) -> Optional[str]:
+        current = str(current_status).strip()
+        if current in _ADVANCED_SAMPLE_STATUSES:
+            return None
+        if current == STATUS_ROI_MARKED:
+            return None
+        if current in _ROI_STATUS_UPGRADE_FROM:
+            return STATUS_ROI_MARKED
+        if current in (STATUS_ROI_PROPAGATED, STATUS_ROI_APPROVED):
+            return None
+        return STATUS_ROI_MARKED
+
+    def _cancel_pending_debounced_tracking(self) -> None:
+        self._roi_tracking_debounce_timer.stop()
+        self._tracking_refresh_timer.stop()
+        self._tracking_run_token += 1
+        self._pending_tracking_snapshot = None
+
+    def _capture_tracking_snapshot(self) -> Optional[_TrackingRunSnapshot]:
+        if self._current_sample_id is None or self._current_sample is None:
+            return None
+        roi = self.canvas.rect_roi()
+        if roi is None:
+            return None
+        path = self._sample_file_path()
+        if path is None or not path.exists() or not is_supported_video_path(path):
+            return None
+        check = self._validate_current_roi()
+        if not check.ok or check.roi_oriented is None:
+            return None
+        try:
+            params = self._tracking_params_from_ui()
+        except ValueError:
+            return None
+        return _TrackingRunSnapshot(
+            sample_id=self._current_sample_id,
+            roi_key=(roi.x, roi.y, roi.width, roi.height),
+            params_key=tuple(sorted(asdict(params).items())),
+            orientation_key=(
+                float(self._orientation.rotation_angle_degrees),
+                bool(self._orientation.mirror_y_axis),
+                bool(self._orientation.flipped_180),
+            ),
+            video_path=str(path.resolve()),
+            run_token=self._tracking_run_token,
+        )
+
+    def _snapshot_matches_current(self, snapshot: _TrackingRunSnapshot) -> bool:
+        if snapshot.run_token != self._tracking_run_token:
+            return False
+        current = self._capture_tracking_snapshot()
+        if current is None:
+            return False
+        return (
+            current.sample_id == snapshot.sample_id
+            and current.roi_key == snapshot.roi_key
+            and current.params_key == snapshot.params_key
+            and current.orientation_key == snapshot.orientation_key
+            and current.video_path == snapshot.video_path
+        )
+
+    def _schedule_debounced_tracking(self, *, show_scheduled: bool = False) -> None:
+        snapshot = self._capture_tracking_snapshot()
+        if snapshot is None:
+            return
+        self._pending_tracking_snapshot = snapshot
+        self._roi_tracking_debounce_timer.start()
+        if show_scheduled:
+            self._set_roi_save_status("Tracking scheduled…", saved=True)
+
+    def _schedule_settings_tracking_refresh(self) -> None:
+        snapshot = self._capture_tracking_snapshot()
+        if snapshot is None:
+            return
+        self._pending_tracking_snapshot = snapshot
+        self._tracking_refresh_timer.start()
+
+    def _run_draft_tracking_for_snapshot(
+        self,
+        snapshot: _TrackingRunSnapshot,
+        *,
+        update_cropped_preview: bool,
+        quiet_skip: bool = True,
+    ) -> bool:
+        if self._tracking_job_running:
+            return False
+        if snapshot.sample_id != self._current_sample_id:
+            return False
+        if not self._snapshot_matches_current(snapshot):
+            if not quiet_skip:
+                self._set_roi_save_status("Tracking skipped: ROI changed", saved=True)
+            return False
+        check = self._validate_current_roi()
+        if not check.ok or check.roi_oriented is None:
+            return False
+        path = Path(snapshot.video_path)
+        if not path.is_file() or not is_supported_video_path(path):
+            return False
+        try:
+            params = self._tracking_params_from_ui()
+        except ValueError:
+            return False
+        crop_w = int(check.roi_oriented.width)
+        crop_h = int(check.roi_oriented.height)
+        min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
+        if min(crop_w, crop_h) < min_dim:
+            return False
+
+        self._tracking_job_running = True
+        self._set_roi_save_status("Tracking…", saved=True)
+        QApplication.processEvents()
+        try:
+            frames = load_cropped_frames_from_video(
+                path, self._orientation, check.roi_oriented
+            )
+            analysis = analyze_cropped_preview(frames, params=params)
+        except Exception:
+            if not quiet_skip:
+                self._set_roi_save_status("Tracking failed", saved=False)
+            return False
+        finally:
+            self._tracking_job_running = False
+
+        if not self._snapshot_matches_current(snapshot):
+            if not quiet_skip:
+                self._set_roi_save_status("Tracking skipped: ROI changed", saved=True)
+            return False
+
+        self._commit_tracking_result(snapshot.sample_id, analysis, params)
+        if update_cropped_preview and self._preview_mode == "cropped_tracking":
+            self._cropped_preview = analysis
+            max_index = max(0, len(analysis.frames) - 1)
+            self.slider_frame.setMaximum(max_index)
+            self.spin_frame.setMaximum(max_index)
+            self.slider_cropped_frame.setMaximum(max_index)
+            frame_idx = min(self._preview_frame_index, max_index)
+            self._show_cropped_preview_frame(frame_idx)
+        self._set_roi_save_status("Tracking updated", saved=True)
+        self._status("Tracking updated")
+        return True
+
+    def _on_roi_tracking_debounce_fired(self) -> None:
+        snapshot = self._pending_tracking_snapshot
+        if snapshot is None:
+            return
+        self._run_draft_tracking_for_snapshot(
+            snapshot,
+            update_cropped_preview=self._preview_mode == "cropped_tracking",
+            quiet_skip=True,
+        )
+
+    def _on_settings_tracking_debounce_fired(self) -> None:
+        snapshot = self._pending_tracking_snapshot
+        if snapshot is None:
+            return
+        if self._preview_mode != "cropped_tracking":
+            return
+        self._run_draft_tracking_for_snapshot(
+            snapshot,
+            update_cropped_preview=True,
+            quiet_skip=True,
+        )
+
+    def _update_sample_list_row_for_id(self, sample_id: str) -> None:
+        for i in range(self.list_samples.count()):
+            item = self.list_samples.item(i)
+            data = self._list_item_meta(item)
+            if not data or data.get("item_type") != "sample":
+                continue
+            if str(data.get("sample_id")) != str(sample_id):
+                continue
+            if (
+                self._current_sample is not None
+                and str(self._current_sample.get("sample_id")) == str(sample_id)
+            ):
+                data = dict(self._current_sample)
+                data["item_type"] = "sample"
+            status = str(data.get("processing_status", ""))
+            export_name = str(
+                data.get("final_export_name") or data.get("auto_export_name") or ""
+            ).strip()
+            if not export_name:
+                export_name = str(data.get("sample_id", sample_id))
+            original = str(data.get("original_filename", ""))
+            item.setText(f"    [{status}] {export_name} — {original}")
+            item.setData(Qt.ItemDataRole.UserRole, data)
+            color = STATUS_COLORS.get(status)
+            if color:
+                item.setForeground(QBrush(color))
+            return
+
+    def _is_tracking_failed(self, analysis: CroppedPreviewAnalysis) -> bool:
+        return analysis.num_tracks_with_valid_steps == 0
+
+    def _draft_tracking_json_path(self, sample_id: str) -> Path:
+        assert self._project_root is not None
+        return (
+            self._project_root
+            / METADATA_DIR
+            / DRAFT_TRACKING_DIR
+            / f"{sample_id}.json"
+        )
+
+    def _sample_row_for_id(self, sample_id: str) -> Optional[dict[str, Any]]:
+        if (
+            self._current_sample is not None
+            and str(self._current_sample.get("sample_id", "")) == sample_id
+        ):
+            return self._current_sample
+        if self._project_root is None:
+            return None
+        df = load_samples_csv(self._project_root / METADATA_DIR / SAMPLES_CSV)
+        rows = df[df["sample_id"].astype(str) == str(sample_id)]
+        if rows.empty:
+            return None
+        return rows.iloc[0].to_dict()
+
+    def _motion_index_json_path_for_sample(self, sample: dict[str, Any]) -> Optional[Path]:
+        if self._project_root is None:
+            return None
+        group = str(sample.get("group", "")).strip()
+        batch_name = str(sample.get("batch_name", "")).strip()
+        final_name = str(sample.get("final_export_name", "")).strip()
+        if not group or not batch_name or not final_name:
+            return None
+        batch_dir = get_processed_batch_dir(self._project_root, group, batch_name)
+        path = motion_index_summary_json_path(batch_dir, final_name)
+        return path if path.is_file() else None
+
+    @staticmethod
+    def _view_from_tracking_dict(data: dict[str, Any]) -> SampleTrackingResultView:
+        tracks_used = int(data.get("num_tracks_with_valid_steps", 0) or 0)
+        tracks_started = int(
+            data.get("num_tracks_started", data.get("num_tracks_requested", tracks_used))
+            or 0
+        )
+        if tracks_used <= 0:
+            reason = str(
+                data.get("tracking_warning")
+                or data.get("track_preview_error")
+                or data.get("failure_reason")
+                or ""
+            ).strip()
+            return SampleTrackingResultView(status="failed", failure_reason=reason)
+        return SampleTrackingResultView(
+            status="success",
+            downward_velocity=float(data.get("downward_velocity_index_um_per_s", 0.0)),
+            general_movement=float(data.get("general_movement_index_um_per_s", 0.0)),
+            tracks_used=tracks_used,
+            tracks_requested=max(tracks_started, tracks_used),
+            valid_steps=int(data.get("total_valid_steps", 0) or 0),
+        )
+
+    def _view_from_preview_analysis(
+        self, analysis: CroppedPreviewAnalysis
+    ) -> SampleTrackingResultView:
+        if self._is_tracking_failed(analysis):
+            return SampleTrackingResultView(
+                status="failed",
+                failure_reason=analysis.tracking_warning,
+            )
+        requested = len(analysis.starting_points)
+        if analysis.params is not None:
+            requested = max(requested, analysis.params.num_starting_points)
+        return SampleTrackingResultView(
+            status="success",
+            downward_velocity=analysis.downward_velocity_index_um_per_s,
+            general_movement=analysis.general_movement_index_um_per_s,
+            tracks_used=analysis.num_tracks_with_valid_steps,
+            tracks_requested=max(requested, analysis.num_tracks_started),
+            valid_steps=analysis.total_valid_steps,
+        )
+
+    def load_latest_tracking_result_for_sample(
+        self, sample_id: str
+    ) -> Optional[SampleTrackingResultView]:
+        sample = self._sample_row_for_id(sample_id)
+        if self._project_root is not None:
+            if sample is not None:
+                summary_path = self._motion_index_json_path_for_sample(sample)
+                if summary_path is not None:
+                    try:
+                        data = json.loads(summary_path.read_text(encoding="utf-8"))
+                        return self._view_from_tracking_dict(data)
+                    except (OSError, json.JSONDecodeError):
+                        pass
+            draft_path = self._draft_tracking_json_path(sample_id)
+            if draft_path.is_file():
+                try:
+                    data = json.loads(draft_path.read_text(encoding="utf-8"))
+                    return self._view_from_tracking_dict(data)
+                except (OSError, json.JSONDecodeError):
+                    pass
+        cached = self._tracking_results_by_sample.get(sample_id)
+        if cached is not None:
+            return self._view_from_preview_analysis(cached)
+        if sample is not None:
+            proc_status = str(sample.get("processing_status", ""))
+            if proc_status == STATUS_MOTION_INDEX_FAILED:
+                return SampleTrackingResultView(
+                    status="failed",
+                    failure_reason="Motion index generation failed.",
+                )
+        return None
+
+    def _render_tracking_result_panel(self, view: Optional[SampleTrackingResultView]) -> None:
+        if view is None or view.status == "none":
+            self.lbl_tracking_result.setText("Not generated yet")
+            return
+        if view.status == "failed":
+            text = "Failed"
+            if view.failure_reason:
+                text += f"\n{view.failure_reason}"
+            self.lbl_tracking_result.setText(text)
+            return
+        tracks_line = f"Tracks Used: {view.tracks_used}"
+        if view.tracks_requested > view.tracks_used:
+            tracks_line = f"Tracks Used: {view.tracks_used} / {view.tracks_requested}"
+        self.lbl_tracking_result.setText(
+            f"Downward Velocity: {view.downward_velocity:.4f} µm/sec\n"
+            f"General Movement: {view.general_movement:.4f} µm/sec\n"
+            f"{tracks_line}\n"
+            f"Valid Steps: {view.valid_steps}"
+        )
+
+    def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
+        sid = sample_id or self._current_sample_id
+        if sid is None:
+            self.grp_tracking_result.setTitle("Tracking Result: No sample selected")
+            self.lbl_tracking_result.setText("")
+            return
+        if sid != self._current_sample_id:
+            return
+        self.grp_tracking_result.setTitle(self._tracking_result_group_title(sid))
+        if self._tracking_result_stale_by_sample.get(sid):
+            self.lbl_tracking_result.setText(
+                "Existing result may not match current settings.\n"
+                "Re-run Preview Cropped ROI to update."
+            )
+            return
+        self._render_tracking_result_panel(
+            self.load_latest_tracking_result_for_sample(sid)
+        )
+
+    def _save_draft_tracking_result(
+        self,
+        sample_id: str,
+        analysis: CroppedPreviewAnalysis,
+        params: MotionIndexParams,
+    ) -> None:
+        if self._project_root is None:
+            return
+        path = self._draft_tracking_json_path(sample_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "sample_id": sample_id,
+            "downward_velocity_index_um_per_s": analysis.downward_velocity_index_um_per_s,
+            "general_movement_index_um_per_s": analysis.general_movement_index_um_per_s,
+            "num_tracks_with_valid_steps": analysis.num_tracks_with_valid_steps,
+            "num_tracks_started": analysis.num_tracks_started,
+            "num_tracks_requested": params.num_starting_points,
+            "total_valid_steps": analysis.total_valid_steps,
+            "tracking_warning": analysis.tracking_warning,
+            "parameters": asdict(params),
+        }
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def _invalidate_tracking_result_for_sample(self, sample_id: str) -> None:
+        self._tracking_results_by_sample.pop(sample_id, None)
+        self._tracking_result_stale_by_sample.pop(sample_id, None)
+        if self._project_root is not None:
+            draft_path = self._draft_tracking_json_path(sample_id)
+            if draft_path.is_file():
+                try:
+                    draft_path.unlink()
+                except OSError:
+                    pass
+
+    def _commit_tracking_result(
+        self,
+        sample_id: str,
+        analysis: CroppedPreviewAnalysis,
+        params: MotionIndexParams,
+    ) -> None:
+        if sample_id != self._current_sample_id:
+            return
+        self._tracking_results_by_sample[sample_id] = analysis
+        self._tracking_result_stale_by_sample.pop(sample_id, None)
+        self._save_draft_tracking_result(sample_id, analysis, params)
+        self.update_tracking_result_panel(sample_id)
+
     def _update_orientation_label(self) -> None:
         self.lbl_orientation.setText(
             f"Angle: {self._orientation.rotation_angle_degrees:.1f}°  "
-            f"Flip: {'yes' if self._orientation.flipped_180 else 'no'}\n"
-            f"Steps: {', '.join(self._orientation.manual_rotation_steps) or '—'}"
+            f"Mirror Y: {'yes' if self._orientation.mirror_y_axis else 'no'}  "
+            f"Flip 180°: {'yes' if self._orientation.flipped_180 else 'no'}"
         )
+        self.chk_mirror_y.blockSignals(True)
+        self.chk_mirror_y.setChecked(self._orientation.mirror_y_axis)
+        self.chk_mirror_y.blockSignals(False)
+        self.spin_custom_angle.blockSignals(True)
+        self.spin_custom_angle.setValue(self._orientation.rotation_angle_degrees)
+        self.spin_custom_angle.blockSignals(False)
 
     def _oriented_frame(self) -> Optional[np.ndarray]:
         if self._base_frame is None:
@@ -523,25 +1340,96 @@ class MainWindow(QMainWindow):
         if roi is not None:
             self.canvas.set_rect_roi(roi.clamp(oriented.shape[1], oriented.shape[0]))
         self._update_orientation_label()
+        if keep_roi and roi is not None:
+            self._autosave_roi(quiet=True)
+
+    def _set_roi_save_status(self, text: str, *, saved: bool = True) -> None:
+        color = "#9ad4c8" if saved else "#ccaa66"
+        self.lbl_roi_save_status.setText(text)
+        self.lbl_roi_save_status.setStyleSheet(
+            f"color: {color}; font-size: 12px; padding: 2px 0;"
+        )
+
+    def _autosave_roi(self, *, quiet: bool = True) -> bool:
+        if self._project_root is None or self._current_sample is None:
+            return False
+        if self.canvas.rect_roi() is None:
+            self._set_roi_save_status("No ROI to save", saved=False)
+            return False
+        try:
+            ann = self._current_annotation_dict(status=STATUS_ROI_MARKED)
+        except ValueError as exc:
+            self._set_roi_save_status("Unsaved changes", saved=False)
+            if not quiet:
+                QMessageBox.warning(self, "Save ROI", str(exc))
+            return False
+
+        sid = ann["sample_id"]
+        current_status = str(self._current_sample.get("processing_status", ""))
+        new_status = self._status_after_roi_autosave(current_status)
+        try:
+            crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
+            save_sample_crop_annotation(crop_path, sid, ann)
+            csv_update: dict[str, Any] = {
+                "sample_id": sid,
+                "notes": ann["notes"],
+                "annotation_source": ann["annotation_source"],
+                "review_status": ann.get("review_status", "approved"),
+            }
+            if new_status is not None:
+                csv_update["processing_status"] = new_status
+            update_samples_csv(
+                self._project_root / METADATA_DIR / SAMPLES_CSV,
+                csv_update,
+            )
+        except OSError as exc:
+            self._set_roi_save_status(f"ROI autosave failed: {exc}", saved=False)
+            self._status(f"ROI autosave failed: {exc}")
+            if not quiet:
+                QMessageBox.warning(self, "ROI Autosave", f"Could not save ROI:\n{exc}")
+            return False
+
+        if new_status is not None:
+            self._current_sample["processing_status"] = new_status
+            self._update_sample_list_row_for_id(sid)
+        self._loaded_annotation_source = ann["annotation_source"]
+        self._roi_user_adjusted = False
+        self._roi_autosave_pending = False
+        self._set_roi_save_status("ROI autosaved", saved=True)
+        self._schedule_debounced_tracking(show_scheduled=True)
+        return True
 
     def _rotate_by(self, delta: float) -> None:
-        self._orientation.rotation_angle_degrees += delta
-        step = "rotate_left_90" if delta > 0 else "rotate_right_90"
-        self._orientation.add_step(step)
+        self._exit_cropped_preview_mode()
+        angle = self._orientation.rotation_angle_degrees + delta
+        while angle > 180:
+            angle -= 360
+        while angle < -180:
+            angle += 360
+        self._orientation.rotation_angle_degrees = angle
+        self._orientation.manual_rotation_steps = []
         self._refresh_display()
 
     def _on_apply_custom_angle(self) -> None:
-        angle = self.spin_custom_angle.value()
-        self._orientation.rotation_angle_degrees = angle
-        self._orientation.add_step(f"custom_angle_{angle:.1f}")
+        self._exit_cropped_preview_mode()
+        self._orientation.rotation_angle_degrees = float(self.spin_custom_angle.value())
+        self._orientation.manual_rotation_steps = []
+        self._refresh_display()
+
+    def _on_mirror_y_axis(self, checked: bool) -> None:
+        self._exit_cropped_preview_mode()
+        self._orientation.mirror_y_axis = bool(checked)
+        self._orientation.manual_rotation_steps = []
         self._refresh_display()
 
     def _on_flip_180(self) -> None:
+        self._exit_cropped_preview_mode()
         self._orientation.flipped_180 = not self._orientation.flipped_180
-        self._orientation.add_step("flip_180")
+        self._orientation.manual_rotation_steps = []
         self._refresh_display()
 
     def _on_reset_orientation(self) -> None:
+        self._exit_cropped_preview_mode()
         self._orientation = OrientationState()
         self._refresh_display(keep_roi=True)
 
@@ -550,6 +1438,8 @@ class MainWindow(QMainWindow):
             self.lbl_roi_info.setText("No ROI selected.")
             return
         self._roi_user_adjusted = True
+        self._roi_autosave_pending = True
+        self._set_roi_save_status("Unsaved changes", saved=False)
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
         if self._base_frame is not None:
@@ -566,41 +1456,233 @@ class MainWindow(QMainWindow):
         self.lbl_roi_info.setText(
             f"ROI x={roi.x} y={roi.y} w={roi.width} h={roi.height}"
         )
+        self._schedule_debounced_tracking(show_scheduled=False)
+
+    def on_roi_edit_finished(self) -> None:
+        self._autosave_roi(quiet=True)
 
     def _on_clear_roi(self) -> None:
+        self._cancel_pending_debounced_tracking()
+        self._exit_cropped_preview_mode()
         self.canvas.set_rect_roi(None)
         self.lbl_roi_info.setText("ROI cleared.")
         self._roi_user_adjusted = True
+        self._roi_autosave_pending = False
+        self._set_roi_save_status("ROI cleared", saved=False)
+
+    def _tracking_params_from_ui(self) -> MotionIndexParams:
+        patch = int(self.spin_track_patch.value())
+        if patch % 2 == 0:
+            raise ValueError("Template patch size must be an odd integer.")
+        if patch < 3:
+            raise ValueError("Template patch size must be at least 3 px.")
+        search_radius = int(self.spin_track_search.value())
+        if search_radius < 1:
+            raise ValueError("Search radius must be at least 1 px.")
+        min_spacing = int(self.spin_track_spacing.value())
+        if min_spacing < 1:
+            raise ValueError("Minimum point spacing must be at least 1 px.")
+        return MotionIndexParams(
+            num_starting_points=int(self.spin_track_points.value()),
+            min_point_spacing_px=min_spacing,
+            search_radius_px=search_radius,
+            template_patch_size_px=patch,
+            min_template_confidence=float(self.spin_track_confidence.value()),
+            lookahead_frames=int(self.spin_track_lookahead.value()),
+            microns_per_pixel=float(self.spin_track_mpp.value()),
+            seconds_per_frame=float(self.spin_track_spf.value()),
+            downward_direction="increasing_y",
+        )
 
     def _on_preview_crop(self) -> None:
         if self._project_root is None or self._current_sample is None:
-            QMessageBox.warning(self, "Preview Cropped ROI", "Select a sample first.")
+            QMessageBox.warning(self, "Preview Cropped ROI", "Select a video first.")
             return
+
+        self._cancel_pending_debounced_tracking()
+        self._autosave_roi(quiet=True)
         check = self._validate_current_roi()
-        if not check.ok:
-            QMessageBox.warning(self, "Preview Cropped ROI", check.message)
+        if not check.ok or check.roi_oriented is None:
+            QMessageBox.warning(
+                self,
+                "Preview Cropped ROI",
+                check.message or "Please draw or load a rectangular ROI first.",
+            )
             return
         path = self._sample_file_path()
         if path is None or not path.exists():
-            QMessageBox.warning(self, "Preview Cropped ROI", "Sample file not found.")
+            QMessageBox.warning(
+                self,
+                "Preview Cropped ROI",
+                "Import a video into this sample before previewing the cropped ROI.",
+            )
             return
-        if is_wip_sample_path(path):
+        if not is_supported_video_path(path):
             QMessageBox.information(
                 self,
                 "Unsupported",
-                "Raw or 3D formats are not supported in the 2D crop workflow.",
+                "Only AVI and MP4 video files are supported in the current 2D workflow. "
+                "Image sequences and 3D/raw microscopy files will be added later.",
             )
             return
-        ann = get_sample_annotation(
-            self._project_root, str(self._current_sample["sample_id"])
-        )
-        open_cropped_roi_preview(
-            self,
-            sample_row=self._current_sample,
-            source_path=path,
-            orientation=self._orientation,
-            roi_validation=check,
-            annotation=ann,
+
+        try:
+            params = self._tracking_params_from_ui()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Tracking Settings", str(exc))
+            return
+
+        crop_w = int(check.roi_oriented.width)
+        crop_h = int(check.roi_oriented.height)
+        min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
+        if min(crop_w, crop_h) < min_dim:
+            QMessageBox.warning(
+                self,
+                "Preview Cropped ROI",
+                f"The ROI ({crop_w}×{crop_h} px) is too small for patch size "
+                f"{params.template_patch_size_px} and search radius "
+                f"{params.search_radius_px}.",
+            )
+            return
+
+        self._status("Building cropped ROI preview and running draft tracking…")
+        QApplication.processEvents()
+        try:
+            frames = load_cropped_frames_from_video(
+                path,
+                self._orientation,
+                check.roi_oriented,
+            )
+            analysis = analyze_cropped_preview(frames, params=params)
+        except Exception as exc:
+            QMessageBox.warning(self, "Preview Cropped ROI", str(exc))
+            return
+
+        self._enter_cropped_preview_mode(analysis, params=params)
+
+    def _set_preview_controls_visible(self, visible: bool) -> None:
+        for widget in self._preview_control_widgets:
+            widget.setVisible(visible)
+
+    def _enter_cropped_preview_mode(
+        self,
+        analysis: CroppedPreviewAnalysis,
+        *,
+        params: Optional[MotionIndexParams] = None,
+    ) -> None:
+        self._preview_pause()
+        self._preview_mode = "cropped_tracking"
+        self._cropped_preview = analysis
+        self._preview_frame_index = 0
+        self.canvas.set_interactive(False)
+        self.btn_preview_crop.hide()
+        self._set_preview_controls_visible(True)
+        self._set_tracking_settings_editable(True)
+        self._show_tracking_settings_view()
+        if self._current_sample_id:
+            commit_params = params or analysis.params
+            if commit_params is None:
+                try:
+                    commit_params = self._tracking_params_from_ui()
+                except ValueError:
+                    commit_params = MotionIndexParams()
+            self._commit_tracking_result(
+                self._current_sample_id, analysis, commit_params
+            )
+        self.lbl_preview_mode.setText("Cropped ROI preview")
+        count = max(1, len(analysis.frames))
+        max_index = max(0, count - 1)
+        self.slider_frame.setMaximum(max_index)
+        self.spin_frame.setMaximum(max_index)
+        self.slider_cropped_frame.setMaximum(max_index)
+        self._show_cropped_preview_frame(0)
+        if analysis.tracking_warning:
+            self._status(
+                f"Cropped ROI preview ready. {analysis.tracking_warning}"
+            )
+        else:
+            self._status("Cropped ROI preview ready. Press Play to loop.")
+
+    def _exit_cropped_preview_mode(self) -> None:
+        if self._preview_mode != "cropped_tracking":
+            self._set_tracking_settings_editable(False)
+            self._show_roi_controls_view()
+            return
+        self._set_tracking_settings_editable(False)
+        self.reset_preview_state(clear_image=False, reset_roi_controls=True)
+        self.lbl_preview_mode.setText(self._FULL_PREVIEW_HINT)
+        self._update_preview_crop_button_visibility()
+        if self._base_frame is not None:
+            self.slider_frame.setMaximum(max(0, self._total_frames - 1))
+            self.spin_frame.setMaximum(max(0, self._total_frames - 1))
+            self.slider_frame.setValue(self._frame_index)
+            self.spin_frame.setValue(self._frame_index)
+            self._refresh_display(keep_roi=True)
+
+    def _preview_playback_interval_ms(self) -> int:
+        speed_map = {
+            "0.25×": 0.25,
+            "0.5×": 0.5,
+            "1×": 1.0,
+            "1.5×": 1.5,
+            "2×": 2.0,
+        }
+        mult = speed_map.get(self.combo_preview_speed.currentText(), 1.0)
+        fps = max(1.0, 5.0 * mult)
+        return max(20, int(1000.0 / fps))
+
+    def _preview_play(self) -> None:
+        if self._preview_mode != "cropped_tracking" or self._cropped_preview is None:
+            return
+        self._preview_playing = True
+        self._preview_timer.start(self._preview_playback_interval_ms())
+
+    def _preview_pause(self) -> None:
+        self._preview_playing = False
+        self._preview_timer.stop()
+
+    def _on_preview_timer_tick(self) -> None:
+        if self._cropped_preview is None:
+            self._preview_pause()
+            return
+        count = len(self._cropped_preview.frames)
+        if count <= 1:
+            self._preview_pause()
+            return
+        next_index = self._preview_frame_index + 1
+        if next_index >= count:
+            next_index = 0
+        self._show_cropped_preview_frame(next_index)
+
+    def _on_cropped_preview_frame_slider(self, value: int) -> None:
+        if self._preview_mode != "cropped_tracking" or self._cropped_preview is None:
+            return
+        if self._preview_playing:
+            self._preview_pause()
+        self._show_cropped_preview_frame(value)
+
+    def _show_cropped_preview_frame(self, index: int) -> None:
+        if self._cropped_preview is None:
+            return
+        count = len(self._cropped_preview.frames)
+        index = max(0, min(index, count - 1))
+        frame = render_cropped_tracking_frame(self._cropped_preview, index)
+        self._preview_frame_index = index
+        self.canvas.set_preview_frame(frame)
+        self.slider_frame.blockSignals(True)
+        self.spin_frame.blockSignals(True)
+        self.slider_cropped_frame.blockSignals(True)
+        self.slider_frame.setValue(index)
+        self.spin_frame.setValue(index)
+        self.slider_cropped_frame.setValue(index)
+        self.slider_frame.blockSignals(False)
+        self.spin_frame.blockSignals(False)
+        self.slider_cropped_frame.blockSignals(False)
+        h, w = frame.shape[:2]
+        frame_text = f"Frame {index + 1} / {count}"
+        self.lbl_cropped_frame.setText(frame_text)
+        self.lbl_frame_info.setText(
+            f"Cropped preview {frame_text} ({w}×{h} px)"
         )
 
     def _on_auto_suggest_roi(self) -> None:
@@ -615,6 +1697,7 @@ class MainWindow(QMainWindow):
             self.lbl_roi_info.setText(
                 f"Suggested ROI (confidence {crop.confidence:.2f}) — review and adjust."
             )
+            self._autosave_roi(quiet=True)
         except ValueError as e:
             QMessageBox.warning(self, "ROI Suggestion", str(e))
 
@@ -709,29 +1792,11 @@ class MainWindow(QMainWindow):
         if self._project_root is None or self._current_sample is None:
             QMessageBox.warning(self, "Save ROI", "Select a sample first.")
             return
-        try:
-            ann = self._current_annotation_dict(status=STATUS_ROI_MARKED)
-        except ValueError as e:
-            QMessageBox.warning(self, "Save ROI", str(e))
+        if not self._autosave_roi(quiet=False):
             return
-        sid = ann["sample_id"]
-        crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
-        save_sample_crop_annotation(crop_path, sid, ann)
-        update_samples_csv(
-            self._project_root / METADATA_DIR / SAMPLES_CSV,
-            {
-                "sample_id": sid,
-                "processing_status": STATUS_ROI_MARKED,
-                "notes": ann["notes"],
-                "annotation_source": ann["annotation_source"],
-                "review_status": ann.get("review_status", "approved"),
-            },
-        )
-        self._loaded_annotation_source = ann["annotation_source"]
-        self._roi_user_adjusted = False
+        sid = str(self._current_sample["sample_id"])
         self._refresh_sample_list()
         self._status(f"Saved ROI for {sid}")
-        QMessageBox.information(self, "Saved", f"ROI annotation saved for {sid}.")
 
     def _process_kwargs_from_sample(self) -> dict[str, Any]:
         assert self._current_sample is not None
@@ -1149,16 +2214,50 @@ class MainWindow(QMainWindow):
             self._refresh_recent_menu()
             self.btn_refresh_samples.setEnabled(True)
             self._update_workspace_label()
+            self._set_active_sample(None)
+            self.reset_preview_state(
+                clear_image=True,
+                placeholder=self._SELECT_SAMPLE_HINT,
+            )
             self._refresh_sample_list()
             self._status(f"{status_msg}: {root}")
         except OSError as e:
             QMessageBox.critical(self, "Project Error", str(e))
 
     def _on_filter_group_changed(self) -> None:
+        self._set_active_sample(None)
+        self.reset_preview_state(
+            clear_image=True,
+            placeholder=self._SELECT_SAMPLE_HINT,
+        )
         self._refresh_sample_list()
+        self.update_tracking_result_panel()
 
-    def _after_import_refresh(self) -> None:
+    def _after_import_refresh(
+        self,
+        *,
+        group: str | None = None,
+        batch_name: str | None = None,
+    ) -> None:
+        if group and group in GROUPS:
+            self.combo_filter_group.setCurrentText(group)
         self._refresh_sample_list()
+        if group and batch_name:
+            self._select_first_video_in_batch(group, batch_name)
+
+    def _select_first_video_in_batch(self, group: str, batch_name: str) -> None:
+        safe = sanitize_batch_name(batch_name)
+        for i in range(self.list_samples.count()):
+            item = self.list_samples.item(i)
+            meta = self._list_item_meta(item)
+            if not meta or meta.get("item_type") != "sample":
+                continue
+            if str(meta.get("group")) != group:
+                continue
+            if sanitize_batch_name(str(meta.get("batch_name", ""))) != safe:
+                continue
+            self.list_samples.setCurrentItem(item)
+            break
 
     def _ensure_filter_group_valid(self) -> str:
         """Keep a valid condition group selected; fall back to the first."""
@@ -1182,10 +2281,10 @@ class MainWindow(QMainWindow):
     def _batch_list_header_text(group: str, batch: dict[str, Any]) -> str:
         num = int(batch.get("batch_number", 1) or 1)
         name = str(batch.get("batch_name", "")).strip()
-        canonical = display_batch_name(num)
-        if sanitize_batch_name(name) == sanitize_batch_name(canonical):
-            return f"──── {group} / {canonical} ────"
-        return f"──── {group} / {canonical}: {name} ────"
+        sample_label = display_sample_label(num, name)
+        if sanitize_batch_name(name) == sanitize_batch_name(display_batch_name(num)):
+            return f"──── {group} / {sample_label} ────"
+        return f"──── {group} / {sample_label}: {name} ────"
 
     def _context_batch_name(self, group: str | None = None) -> str | None:
         """Batch for menu actions: current sample's batch, or ask if ambiguous."""
@@ -1237,30 +2336,42 @@ class MainWindow(QMainWindow):
             return None
         return names[labels.index(picked)]
 
-    def _on_new_batch(self) -> None:
+    def _on_add_sample(self, group: str | None = None) -> None:
         if self._project_root is None:
             return
-        group = self.combo_filter_group.currentText()
-        _num, default_name = allocate_next_batch(self._project_root, group)
-        name, ok = QInputDialog.getText(
-            self,
-            "New Biological Batch",
-            f"Batch name for condition {group}:",
-            text=default_name,
-        )
-        if not ok or not name.strip():
-            return
+        breed = group or self.combo_filter_group.currentText()
         try:
-            num, _ = allocate_next_batch(
-                self._project_root, group, preferred_name=name.strip()
-            )
+            num, default_name = allocate_next_batch(self._project_root, breed)
             batch = create_batch(
-                self._project_root, group, name.strip(), batch_number=num
+                self._project_root, breed, default_name, batch_number=num
             )
+            if self.combo_filter_group.currentText() != breed:
+                self.combo_filter_group.setCurrentText(breed)
             self._refresh_sample_list()
-            self._status(f"Created biological batch {batch['batch_name']}")
-        except ValueError as e:
-            QMessageBox.warning(self, "New Batch", str(e))
+            self._select_sample_header(breed, str(batch["batch_name"]))
+            label = display_sample_label(
+                int(batch.get("batch_number", num) or num),
+                str(batch.get("batch_name", "")),
+            )
+            self._status(f"Added {label} under {breed}")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Add Sample", str(exc))
+
+    def _select_sample_header(self, group: str, batch_name: str) -> None:
+        safe = sanitize_batch_name(batch_name)
+        for i in range(self.list_samples.count()):
+            item = self.list_samples.item(i)
+            meta = self._list_item_meta(item)
+            if not meta or meta.get("item_type") != "batch_header":
+                continue
+            if str(meta.get("group")) == group and sanitize_batch_name(
+                str(meta.get("batch_name", ""))
+            ) == safe:
+                self.list_samples.setCurrentItem(item)
+                break
+
+    def _on_new_batch(self) -> None:
+        self._on_add_sample()
 
     def _on_rename_batch(self) -> None:
         if self._project_root is None:
@@ -1370,9 +2481,9 @@ class MainWindow(QMainWindow):
 
         if not batches:
             self._add_sample_list_message(
-                "No batches available for this condition group."
+                "No samples available for this breed. Right-click to Add Sample."
             )
-            self._current_sample = None
+            self._set_active_sample(None)
             self._clear_preview_pane()
             return
 
@@ -1445,7 +2556,7 @@ class MainWindow(QMainWindow):
             if first_sample is not None:
                 self.list_samples.setCurrentItem(first_sample)
             else:
-                self._current_sample = None
+                self._set_active_sample(None)
                 self._clear_preview_pane()
 
     def _on_refresh_samples(self) -> None:
@@ -1475,9 +2586,11 @@ class MainWindow(QMainWindow):
         self.lbl_selected_file.setText("No file selected.")
         self.lbl_auto_export_name.setText("Auto name: —")
         self.edit_export_name.clear()
-        self.lbl_frame_info.setText("—")
         self.lbl_roi_info.setText("Select a file in the sample list.")
-        self.canvas.clear_preview()
+        self.reset_preview_state(
+            clear_image=True,
+            placeholder=self._SELECT_SAMPLE_HINT,
+        )
 
     def _on_sample_selected(
         self,
@@ -1485,11 +2598,17 @@ class MainWindow(QMainWindow):
         _previous: Optional[QListWidgetItem],
     ) -> None:
         if current is None:
+            self._set_active_sample(None)
+            self.reset_preview_state(
+                clear_image=True,
+                placeholder=self._SELECT_SAMPLE_HINT,
+            )
+            self.update_tracking_result_panel()
             return
         data = self._list_item_meta(current)
         if not data or data.get("item_type") != "sample":
             return
-        self._current_sample = data
+        self._set_active_sample(data)
         group = str(data.get("group", ""))
         if group and group in GROUPS and self.combo_filter_group.currentText() != group:
             self.combo_filter_group.blockSignals(True)
@@ -1499,6 +2618,9 @@ class MainWindow(QMainWindow):
             self.combo_filter_group.blockSignals(False)
         if data.get("processing_status") == "missing_file":
             return
+        self.reset_preview_state(clear_image=True)
+        sid = str(data.get("sample_id", ""))
+        self.update_tracking_result_panel(sid)
         self._load_sample_preview()
 
     def _sample_file_path(self) -> Optional[Path]:
@@ -1520,6 +2642,10 @@ class MainWindow(QMainWindow):
         src = self._loaded_annotation_source
         self.lbl_roi_info.setText(f"Loaded annotation ({src}).")
         self._update_orientation_label()
+        if self.canvas.rect_roi() is not None:
+            self._set_roi_save_status("ROI autosaved", saved=True)
+        else:
+            self._set_roi_save_status("No ROI saved yet", saved=False)
 
     def _load_sample_preview(self) -> None:
         path = self._sample_file_path()
@@ -1574,6 +2700,11 @@ class MainWindow(QMainWindow):
                 except ValueError:
                     pass
 
+        self._preview_mode = "full"
+        self.lbl_preview_mode.setText(self._FULL_PREVIEW_HINT)
+        self.update_tracking_result_panel()
+        self._update_preview_crop_button_visibility()
+
     def _on_frame_slider(self, value: int) -> None:
         self.spin_frame.blockSignals(True)
         self.spin_frame.setValue(value)
@@ -1587,6 +2718,11 @@ class MainWindow(QMainWindow):
         self._load_frame_index(value)
 
     def _load_frame_index(self, index: int) -> None:
+        if self._preview_mode == "cropped_tracking" and self._cropped_preview is not None:
+            if self._preview_playing:
+                self._preview_pause()
+            self._show_cropped_preview_frame(index)
+            return
         path = self._sample_file_path()
         if path is None:
             return
@@ -1677,8 +2813,12 @@ class MainWindow(QMainWindow):
         if self._project_root is not None:
             prune_all_groups_without_samples(self._project_root)
         if prefer_sample_id:
-            self._current_sample = {"sample_id": prefer_sample_id}
+            row = self._sample_row_for_id(prefer_sample_id)
+            self._set_active_sample(row or {"sample_id": prefer_sample_id})
+        else:
+            self._set_active_sample(None)
         self._refresh_sample_list()
+        self.update_tracking_result_panel()
 
     def _ask_remove_workspace_raw(self, title: str, text: str) -> bool | None:
         """Return True to remove raw copy, False to keep, None if cancelled."""
@@ -1752,25 +2892,23 @@ class MainWindow(QMainWindow):
             group = str(meta.get("group", self._ensure_filter_group_valid()))
             batch_name = str(meta.get("batch_name", ""))
             menu.addAction(
-                "Import Data Into This Batch",
+                "Add Sample",
+                lambda: self._on_add_sample(group),
+            )
+            menu.addAction(
+                "Import Video Into This Sample",
                 lambda: self._ctx_import_into_batch(group, batch_name),
             )
             menu.addSeparator()
             menu.addAction(
-                "Delete Batch",
+                "Delete Sample",
                 lambda: self._ctx_delete_batch(group, batch_name),
             )
-            menu.addSeparator()
-            menu.addAction(
-                "Purge Batch Annotations Only",
-                lambda: self._ctx_purge_batch_annotations(group, batch_name),
-            )
-            menu.addAction(
-                "Complete Batch Purge",
-                lambda: self._ctx_complete_batch_purge(group, batch_name),
-            )
         else:
-            menu.addAction("Create Batch…", self._on_new_batch)
+            menu.addAction(
+                "Add Sample",
+                lambda: self._on_add_sample(self._ensure_filter_group_valid()),
+            )
 
         if not menu.isEmpty():
             menu.exec(self.list_samples.mapToGlobal(pos))
@@ -1778,7 +2916,7 @@ class MainWindow(QMainWindow):
     def _ctx_import_into_batch(self, group: str, batch_name: str) -> None:
         if not group or not batch_name:
             QMessageBox.warning(
-                self, "Import Data", "Could not determine the batch for import."
+                self, "Import Video", "Could not determine the sample for import."
             )
             return
         open_import_data_dialog(
@@ -1801,6 +2939,7 @@ class MainWindow(QMainWindow):
             return
         try:
             stats = purge_sample_annotations_only(self._project_root, sample_id)
+            self._invalidate_tracking_result_for_sample(sample_id)
             self._after_purge_refresh(prefer_sample_id=sample_id)
             self._show_purge_summary("Purge Complete", stats)
         except (ValueError, OSError) as e:
@@ -1835,7 +2974,8 @@ class MainWindow(QMainWindow):
             )
             group = str(meta.get("group", ""))
             batch_name = str(meta.get("batch_name", ""))
-            self._current_sample = None
+            self._invalidate_tracking_result_for_sample(sample_id)
+            self._set_active_sample(None)
             self._after_purge_refresh()
             self._show_purge_summary("Purge Complete", stats)
             if group and batch_name and not batch_has_samples(
@@ -1883,7 +3023,8 @@ class MainWindow(QMainWindow):
             )
             group = str(meta.get("group", ""))
             batch_name = str(meta.get("batch_name", ""))
-            self._current_sample = None
+            self._invalidate_tracking_result_for_sample(sample_id)
+            self._set_active_sample(None)
             self._after_purge_refresh()
             self._status(f"Deleted {sample_id} from batch")
             if group and batch_name and not batch_has_samples(
@@ -2079,6 +3220,14 @@ class MainWindow(QMainWindow):
         self._status(
             "Review propagated annotations using Approve / Reject on each file."
         )
+
+    def _menu_generate_motion_index(self) -> None:
+        from actintrack_app.motion_index_gui import run_motion_index_for_sample
+
+        run_motion_index_for_sample(self)
+
+    def _on_generate_motion_index(self) -> None:
+        self._menu_generate_motion_index()
 
     def _menu_how_to_run(self) -> None:
         readme = APP_ROOT / "README.md"

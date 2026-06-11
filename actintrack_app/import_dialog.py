@@ -38,6 +38,7 @@ from actintrack_app.file_importer import import_files
 from actintrack_app.import_classifier import (
     ImportKind,
     MIXED_MESSAGE,
+    UNSUPPORTED_2D_MESSAGE,
     WIP_MESSAGE,
     classify_paths,
     import_kind_label,
@@ -50,10 +51,7 @@ if TYPE_CHECKING:
 
 NEW_VIDEO_BATCH_TOKEN = "__new_video_batch__"
 
-ALL_IMPORT_FILTER = (
-    "Microscopy files (*.png *.jpg *.jpeg *.tif *.tiff *.avi *.mp4 "
-    "*.oib *.oif *.oir);;All files (*)"
-)
+VIDEO_IMPORT_FILTER = "Video files (*.avi *.mp4);;All files (*)"
 
 
 class ImportDataDialog(QDialog):
@@ -68,7 +66,7 @@ class ImportDataDialog(QDialog):
         preset_batch_name: str | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle("Import Data")
+        self.setWindowTitle("Import Video")
         self.resize(520, 520)
         self._root = Path(project_root).resolve()
         self._last_dir = last_dir
@@ -81,9 +79,8 @@ class ImportDataDialog(QDialog):
         layout = QVBoxLayout(self)
 
         intro = QLabel(
-            "Import Arabidopsis fluorescence microscopy time-lapse data showing "
-            "labeled F-actin cables near the egg apparatus / nucleus-adjacent region. "
-            "Select files first, then choose a condition group and biological batch."
+            "Import one AVI or MP4 video showing labeled F-actin cables. "
+            "Select the video, choose a breed, then choose the target sample."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -112,19 +109,19 @@ class ImportDataDialog(QDialog):
         self.combo_group = QComboBox()
         self.combo_group.addItems(list(GROUPS))
         self.combo_group.currentTextChanged.connect(self._on_group_changed)
-        form.addRow("Condition group:", self.combo_group)
+        form.addRow("Breed:", self.combo_group)
 
         batch_row = QHBoxLayout()
         self.combo_batch = QComboBox()
         self.combo_batch.setMinimumWidth(180)
         batch_row.addWidget(self.combo_batch, stretch=1)
-        self.btn_new_batch = QPushButton("New Batch")
+        self.btn_new_batch = QPushButton("Add Sample")
         self.btn_new_batch.clicked.connect(self._on_new_batch)
         self.btn_rename_batch = QPushButton("Rename")
         self.btn_rename_batch.clicked.connect(self._on_rename_batch)
         batch_row.addWidget(self.btn_new_batch)
         batch_row.addWidget(self.btn_rename_batch)
-        form.addRow("Biological batch:", batch_row)
+        form.addRow("Sample:", batch_row)
 
         self.lbl_batch_hint = QLabel("")
         self.lbl_batch_hint.setWordWrap(True)
@@ -171,7 +168,7 @@ class ImportDataDialog(QDialog):
         self.combo_batch.clear()
         if self._kind == ImportKind.VIDEO:
             self.combo_batch.addItem(
-                "(Create new batch for this video)", NEW_VIDEO_BATCH_TOKEN
+                "(Create new sample for this video)", NEW_VIDEO_BATCH_TOKEN
             )
         for b in batches:
             self.combo_batch.addItem(str(b["batch_name"]), b)
@@ -197,7 +194,7 @@ class ImportDataDialog(QDialog):
             self,
             "Select files to import",
             str(self._last_dir),
-            ALL_IMPORT_FILTER,
+            VIDEO_IMPORT_FILTER,
         )
         if not paths:
             return
@@ -224,32 +221,22 @@ class ImportDataDialog(QDialog):
                 "One .avi or .mp4 file = one complete Arabidopsis sample timelapse. "
                 "Default: create a new biological batch."
             )
-        elif self._kind == ImportKind.IMAGE_SEQUENCE:
-            n = len(self._paths)
-            self.lbl_type.setText(
-                f"{import_kind_label(self._kind)}\n\n"
-                f"{n} image(s) will be added to the selected biological batch."
-            )
         else:
             self.lbl_type.setText(import_kind_label(self._kind))
-        can_import = self._kind in (ImportKind.IMAGE_SEQUENCE, ImportKind.VIDEO)
+        can_import = self._kind == ImportKind.VIDEO
         self.btn_import.setEnabled(can_import and bool(self._paths))
         self._update_batch_hint()
 
     def _update_batch_hint(self) -> None:
         if self._kind == ImportKind.VIDEO:
             self.lbl_batch_hint.setText(
-                "Default: new batch for this video. Choose an existing batch only "
-                "if needed; you will be warned if it already contains a video or other files."
-            )
-        elif self._kind == ImportKind.IMAGE_SEQUENCE:
-            self.lbl_batch_hint.setText(
-                "Multiple 2D images can share one biological batch (image/frame collection)."
+                "Default: create a new sample for this video. Choose an existing sample "
+                "only if it does not already contain a video."
             )
         elif self._kind == ImportKind.WIP_RAW_3D:
             self.lbl_batch_hint.setText(WIP_MESSAGE)
         else:
-            self.lbl_batch_hint.setText("Select supported 2D image or video files.")
+            self.lbl_batch_hint.setText("Select one AVI or MP4 video file.")
 
     def _on_new_batch(self) -> None:
         group = self.combo_group.currentText()
@@ -259,21 +246,21 @@ class ImportDataDialog(QDialog):
             self._on_group_changed()
             self.combo_batch.setCurrentText(batch["batch_name"])
         except ValueError as e:
-            QMessageBox.warning(self, "New Batch", str(e))
+            QMessageBox.warning(self, "Add Sample", str(e))
 
     def _on_rename_batch(self) -> None:
         batch = self._selected_batch()
         if not batch:
             QMessageBox.information(
                 self,
-                "Rename Batch",
-                "Select an existing batch to rename (not the new-video placeholder).",
+                "Rename Sample",
+                "Select an existing sample to rename (not the new-video placeholder).",
             )
             return
         group = self.combo_group.currentText()
         old = batch["batch_name"]
         new_name, ok = QInputDialog.getText(
-            self, "Rename Biological Batch", "New batch name:", text=old
+            self, "Rename Sample", "New sample name:", text=old
         )
         if not ok or not new_name.strip():
             return
@@ -305,11 +292,11 @@ class ImportDataDialog(QDialog):
 
     def _do_import(self) -> None:
         kind, paths, msg = classify_paths(self._paths)
-        if kind not in (ImportKind.IMAGE_SEQUENCE, ImportKind.VIDEO):
-            if kind == ImportKind.WIP_RAW_3D:
-                QMessageBox.information(self, "Import Not Available", WIP_MESSAGE)
+        if kind != ImportKind.VIDEO:
+            if kind in (ImportKind.WIP_RAW_3D, ImportKind.IMAGE_SEQUENCE):
+                QMessageBox.information(self, "Import Not Available", UNSUPPORTED_2D_MESSAGE)
             else:
-                QMessageBox.warning(self, "Cannot Import", msg or MIXED_MESSAGE)
+                QMessageBox.warning(self, "Cannot Import", msg or UNSUPPORTED_2D_MESSAGE)
             return
 
         group = self.combo_group.currentText()
@@ -327,9 +314,9 @@ class ImportDataDialog(QDialog):
                 elif batch_has_video(self._root, group, batch["batch_name"]):
                     warn = QMessageBox.warning(
                         self,
-                        "Video in Batch",
-                        "This batch already contains a video. One video per biological "
-                        "batch is strongly recommended.\n\nContinue anyway?",
+                        "Video in Sample",
+                        "This sample already contains a video. One video per sample is "
+                        "strongly recommended.\n\nContinue anyway?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
                     if warn != QMessageBox.StandardButton.Yes:
@@ -337,8 +324,8 @@ class ImportDataDialog(QDialog):
                 elif self._batch_has_any_files(group, batch["batch_name"]):
                     warn2 = QMessageBox.warning(
                         self,
-                        "Batch Has Files",
-                        "This batch already contains imported files. "
+                        "Sample Has Files",
+                        "This sample already contains imported files. "
                         "Continue adding the video?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     )
@@ -353,24 +340,10 @@ class ImportDataDialog(QDialog):
                 batch_number=int(batch["batch_number"]),
                 notes=notes,
             )
-        else:
-            batch = self._selected_batch()
-            if batch is None:
-                batch = ensure_default_batch(self._root, group)
-            created = import_files(
-                paths,
-                group,
-                batch["batch_name"],
-                batch["batch_id"],
-                self._root,
-                batch_number=int(batch["batch_number"]),
-                notes=notes,
-            )
-
         QMessageBox.information(
             self,
             "Import Complete",
-            f"Imported {len(created)} file(s) into {group} / {batch['batch_name']}.",
+            f"Imported video into {group} / {batch['batch_name']}.",
         )
         self.accept()
 
@@ -400,7 +373,7 @@ def open_import_data_dialog(
     preset_batch_name: str | None = None,
 ) -> None:
     if window._project_root is None:
-        QMessageBox.warning(window, "Import Data", "Open or create a workspace first.")
+        QMessageBox.warning(window, "Import Video", "Open or create a workspace first.")
         return
 
     dlg = ImportDataDialog(
@@ -413,6 +386,8 @@ def open_import_data_dialog(
     )
     if dlg.exec() == QDialog.DialogCode.Accepted:
         window._last_import_dir = dlg.last_import_dir()
-        window._after_import_refresh()
-        window.combo_filter_group.setCurrentText(dlg.selected_group)
+        window._after_import_refresh(
+            group=dlg.selected_group,
+            batch_name=dlg.selected_batch_name,
+        )
         window._status("Import finished")

@@ -53,7 +53,15 @@ def sanitize_batch_name(name: str) -> str:
 
 
 def display_batch_name(batch_number: int) -> str:
+    """Internal/registry batch folder name (kept for backward compatibility)."""
     return f"Batch {int(batch_number)}"
+
+
+def display_sample_label(batch_number: int, batch_name: str = "") -> str:
+    """User-facing sample label mapped from internal batch numbering."""
+    parsed = _canonical_batch_number_from_name(batch_name)
+    num = int(batch_number or 0) or parsed or 1
+    return f"Sample {num}"
 
 
 def parse_batch_number_from_name(name: str) -> int | None:
