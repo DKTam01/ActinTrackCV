@@ -60,7 +60,7 @@ def iter_sample_frames(path: Path) -> Iterator[tuple[int, np.ndarray]]:
     if ext in VIDEO_EXTENSIONS:
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
-            raise MediaLoadError(f"Cannot open video: {path}")
+            raise MediaLoadError(f"Cannot open data file: {path}")
         try:
             idx = 0
             while True:
@@ -70,7 +70,7 @@ def iter_sample_frames(path: Path) -> Iterator[tuple[int, np.ndarray]]:
                 yield idx, frame
                 idx += 1
             if idx == 0:
-                raise MediaLoadError(f"Video has no readable frames: {path}")
+                raise MediaLoadError(f"Data file has no readable frames: {path}")
         finally:
             cap.release()
         return
@@ -131,7 +131,7 @@ def crop_video_to_roi(
             if not video_writer.isOpened():
                 video_writer.release()
                 raise MediaLoadError(
-                    "Failed to create cropped video (codec mp4v). "
+                    "Failed to create cropped data file (codec mp4v). "
                     "Try a different output location or check disk permissions."
                 )
         video_writer.write(cropped)

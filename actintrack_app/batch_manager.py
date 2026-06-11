@@ -1,4 +1,8 @@
-"""Biological batch management within condition groups."""
+"""Legacy sample-registry module (v1 filenames/keys).
+
+Prefer ``actintrack_app.sample_registry`` for new code. Load/save routes through
+``schema_compat`` (v2: ``sample_registry.json``, ``data_files.csv``).
+"""
 
 from __future__ import annotations
 
@@ -25,24 +29,15 @@ def _batches_path(root: Path) -> Path:
 
 
 def _load_batches_registry(root: Path) -> dict[str, list[dict[str, Any]]]:
-    path = _batches_path(root)
-    if not path.exists():
-        return {}
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict):
-            return {str(k): list(v) for k, v in data.items() if isinstance(v, list)}
-    except (json.JSONDecodeError, OSError):
-        pass
-    return {}
+    from actintrack_app.schema_compat import load_sample_registry_as_v1
+
+    return load_sample_registry_as_v1(root)
 
 
 def _save_batches_registry(root: Path, data: dict[str, list[dict[str, Any]]]) -> None:
-    path = _batches_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    from actintrack_app.schema_compat import save_sample_registry
+
+    save_sample_registry(root, data)
 
 
 def sanitize_batch_name(name: str) -> str:
@@ -124,11 +119,13 @@ def _batch_id(group: str, batch_number: int) -> str:
     return f"{group}_B{int(batch_number):03d}"
 
 
-def _empty_batch_stats() -> dict[str, int]:
+def _empty_batch_stats() -> dict[str, int | bool]:
     return {
         "video_file_count": 0,
         "image_file_count": 0,
         "contains_video": False,
+        "data_file_count": 0,
+        "contains_data": False,
     }
 
 
@@ -155,10 +152,30 @@ def _normalize_batch_record(entry: dict[str, Any], group: str) -> dict[str, Any]
         "contains_video": bool(entry.get("contains_video", False)),
         "video_file_count": int(entry.get("video_file_count", 0) or 0),
         "image_file_count": int(entry.get("image_file_count", 0) or 0),
+        "data_file_count": int(
+            entry.get(
+                "data_file_count",
+                int(entry.get("video_file_count", 0) or 0)
+                + int(entry.get("image_file_count", 0) or 0),
+            )
+            or 0
+        ),
+        "contains_data": bool(
+            entry.get(
+                "contains_data",
+                int(entry.get("video_file_count", 0) or 0)
+                + int(entry.get("image_file_count", 0) or 0)
+                > 0,
+            )
+        ),
         "created_date": str(entry.get("created_date", entry.get("created", _utc_now_iso()))),
         "renamed_date": entry.get("renamed_date"),
         "notes": str(entry.get("notes", "")),
     }
+    if entry.get("auto_generated_name") is not None:
+        out["auto_generated_name"] = bool(entry.get("auto_generated_name"))
+    if entry.get("source_filename"):
+        out["source_filename"] = str(entry.get("source_filename"))
     return out
 
 
@@ -202,11 +219,11 @@ def create_batch(
     group_batches = list(registry.get(group, []))
     num = int(batch_number) if batch_number is not None else _next_batch_number(registry, group)
     if any(int(b.get("batch_number", -1)) == num for b in group_batches):
-        raise ValueError(f"Batch number {num} already exists in {group}")
+        raise ValueError(f"Sample number {num} already exists in {group}")
 
     name = sanitize_batch_name(batch_name or display_batch_name(num))
     if any(sanitize_batch_name(b.get("batch_name", "")) == name for b in group_batches):
-        raise ValueError(f"Batch name already exists in {group}: {name}")
+        raise ValueError(f"Sample name already exists in {group}: {name}")
 
     record = {
         "group": group,
@@ -241,10 +258,10 @@ def rename_batch(
         batch = get_batch_by_name(root, group, old_safe)
         if batch:
             return batch
-        raise ValueError(f"Batch not found: {old_name}")
+        raise ValueError(f"Sample not found: {old_name}")
 
     if get_batch_by_name(root, group, new_safe):
-        raise ValueError(f"Another batch already uses the name: {new_safe}")
+        raise ValueError(f"Another sample already uses the name: {new_safe}")
 
     registry = _load_batches_registry(root)
     group_batches = list(registry.get(group, []))
@@ -254,9 +271,10 @@ def rename_batch(
             found = _normalize_batch_record(entry, group)
             entry["batch_name"] = new_safe
             entry["renamed_date"] = _utc_now_iso()
+            entry["auto_generated_name"] = False
             break
     if found is None:
-        raise ValueError(f"Batch not found in registry: {old_name}")
+        raise ValueError(f"Sample not found in registry: {old_name}")
 
     _save_batches_registry(root, registry)
 
@@ -374,12 +392,41 @@ def refresh_batch_stats(root: Path, group: str, batch_name: str) -> None:
             image_n += 1
 
     registry = _load_batches_registry(root)
+    updated = False
     for entry in registry.get(group, []):
         if sanitize_batch_name(entry.get("batch_name", "")) == safe:
             entry["video_file_count"] = video_n
             entry["image_file_count"] = image_n
             entry["contains_video"] = video_n > 0
+            entry["data_file_count"] = video_n + image_n
+            entry["contains_data"] = (video_n + image_n) > 0
+            updated = True
             break
+    if not updated and not sub.empty:
+        row = sub.iloc[0]
+        batch_id = str(row.get("batch_id", "")).strip()
+        batch_number = None
+        try:
+            batch_number = int(row.get("batch_number", 0) or 0) or None
+        except (TypeError, ValueError):
+            pass
+        if batch_id:
+            register_batch_from_samples(
+                root,
+                group,
+                batch_name,
+                batch_id,
+                batch_number=batch_number,
+            )
+            registry = _load_batches_registry(root)
+            for entry in registry.get(group, []):
+                if sanitize_batch_name(entry.get("batch_name", "")) == safe:
+                    entry["video_file_count"] = video_n
+                    entry["image_file_count"] = image_n
+                    entry["contains_video"] = video_n > 0
+                    entry["data_file_count"] = video_n + image_n
+                    entry["contains_data"] = (video_n + image_n) > 0
+                    break
     _save_batches_registry(root, registry)
 
 
@@ -435,7 +482,11 @@ def reset_batches_registry_workspace(root: Path) -> None:
 def prune_registry_batches_without_samples(
     root: Path, group: str, *, remove_empty_folders: bool = True
 ) -> int:
-    """Remove batch registry entries (and empty raw/processed dirs) with no samples.csv rows."""
+    """Explicit repair only: remove registry entries with no samples.csv rows.
+
+    Do not call during normal refresh or import — empty samples are intentional
+    registry entries and must remain visible until the user deletes them.
+    """
     root = Path(root).resolve()
     removed = 0
     for batch in list(list_batches(root, group)):
@@ -452,7 +503,11 @@ def prune_registry_batches_without_samples(
 
 
 def prune_all_groups_without_samples(root: Path) -> dict[str, int]:
-    """Prune empty batch labels for every condition group with no sample rows."""
+    """Explicit repair only: prune registry entries with no samples.csv rows.
+
+    Not used during routine workspace operations. Empty user-created samples
+    are stored in batches.json without samples.csv rows by design.
+    """
     from actintrack_app.metadata import load_samples_csv
     from actintrack_app.utils import SAMPLES_CSV
 
@@ -536,12 +591,12 @@ def delete_empty_batch(
     ]
     if not sub.empty:
         raise ValueError(
-            f"Batch '{safe}' still has {len(sub)} file(s). "
-            "Use Complete Batch Purge to remove the batch and all its files."
+            f"Sample '{safe}' still has {len(sub)} data file(s). "
+            "Use Complete Sample Purge to remove the sample and all its data."
         )
 
     if not remove_batch_from_registry(root, group, safe):
-        raise ValueError(f"Batch not found in registry: {batch_name}")
+        raise ValueError(f"Sample not found in registry: {batch_name}")
     remove_batch_folders(
         root,
         group,
@@ -549,6 +604,59 @@ def delete_empty_batch(
         remove_raw=remove_raw_folder,
         remove_processed=True,
     )
+
+
+def sync_registry_from_samples(root: Path) -> int:
+    """Add missing batches.json entries from samples.csv; never removes entries."""
+    from actintrack_app.metadata import load_samples_csv
+    from actintrack_app.utils import GROUP_PREFIX, SAMPLES_CSV
+
+    root = Path(root).resolve()
+    df = load_samples_csv(root / METADATA_DIR / SAMPLES_CSV)
+    if df.empty:
+        return 0
+
+    registry = _load_batches_registry(root)
+    existing = {
+        (str(g), sanitize_batch_name(str(b.get("batch_name", ""))))
+        for g, batches in registry.items()
+        for b in batches
+        if isinstance(b, dict)
+    }
+    added = 0
+    seen: set[tuple[str, str]] = set()
+    for _, row in df.iterrows():
+        group = str(row.get("group", "")).strip()
+        batch_name = str(row.get("batch_name", "")).strip()
+        if not group or not batch_name:
+            continue
+        safe = sanitize_batch_name(batch_name)
+        key = (group, safe)
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in existing:
+            continue
+        batch_number = None
+        try:
+            batch_number = int(row.get("batch_number", 0) or 0) or None
+        except (TypeError, ValueError):
+            pass
+        batch_id = str(row.get("batch_id", "")).strip()
+        if not batch_id:
+            prefix = GROUP_PREFIX.get(group, "B")
+            num = batch_number or parse_batch_number_from_name(safe) or 1
+            batch_id = f"{prefix}_B{num:03d}"
+        register_batch_from_samples(
+            root,
+            group,
+            batch_name,
+            batch_id,
+            batch_number=batch_number,
+        )
+        existing.add(key)
+        added += 1
+    return added
 
 
 def register_batch_from_samples(

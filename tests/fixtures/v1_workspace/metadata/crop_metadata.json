@@ -1,0 +1,11 @@
+{
+  "samples": {
+    "WT218_0001": {
+      "sample_id": "WT218_0001",
+      "group": "1_WT_218",
+      "batch_name": "Batch 1",
+      "batch_id": "1_WT_218_B001",
+      "processing_status": "roi_marked"
+    }
+  }
+}

@@ -20,14 +20,18 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-from actintrack_app.batch_manager import list_batches, list_empty_batches
+from actintrack_app.sample_registry import (
+    display_sample_label,
+    list_empty_samples,
+    list_samples,
+)
 from actintrack_app.purge_manager import (
-    complete_batch_purge,
-    complete_condition_purge,
+    complete_breed_purge,
+    complete_sample_purge,
     complete_workspace_purge,
     purge_all_annotations_only,
-    purge_batch_annotations,
-    purge_condition_annotations,
+    purge_breed_annotations,
+    purge_sample_annotations,
     purge_sample_annotations_only,
     purge_sample_completely,
 )
@@ -48,24 +52,24 @@ PURGE_ACTIONS: list[tuple[str, str, str | None]] = [
         None,
     ),
     (
-        "purge_annotations_batch",
-        "3. Purge Batch Annotations Only",
+        "purge_annotations_sample",
+        "3. Purge Sample Annotations Only",
         None,
     ),
     (
-        "purge_complete_batch",
-        "4. Complete Batch Purge",
-        "PURGE BATCH",
+        "purge_complete_sample",
+        "4. Complete Sample Purge",
+        "PURGE SAMPLE",
     ),
     (
-        "purge_annotations_condition",
-        "5. Purge Condition Annotations Only",
+        "purge_annotations_breed",
+        "5. Purge Breed Annotations Only",
         None,
     ),
     (
-        "purge_complete_condition",
-        "6. Complete Condition Purge",
-        "PURGE CONDITION",
+        "purge_complete_breed",
+        "6. Complete Breed Purge",
+        "PURGE BREED",
     ),
     (
         "purge_annotations_workspace",
@@ -82,36 +86,36 @@ PURGE_ACTIONS: list[tuple[str, str, str | None]] = [
 ACTION_DESCRIPTIONS = {
     "purge_annotations_file": (
         "Removes ROI annotations, crop metadata, previews, and processed outputs "
-        "for the selected file. Keeps the file entry, batch, and workspace raw copy."
+        "for the selected data file. Keeps the file entry, sample, and workspace raw copy."
     ),
     "purge_complete_file": (
-        "Removes the selected file from the app database plus all annotations, "
+        "Removes the selected data file from the app database plus all annotations, "
         "previews, and processed outputs. Workspace raw copy can be removed if you "
         "check the option below. Original external files are never deleted."
     ),
-    "purge_annotations_batch": (
-        "Clears annotations and processed outputs for every file in the chosen batch. "
-        "Keeps batch label, file entries, and workspace raw copies."
+    "purge_annotations_sample": (
+        "Clears annotations and processed outputs for every data file in the chosen sample. "
+        "Keeps the sample label, file entries, and workspace raw copies."
     ),
-    "purge_complete_batch": (
-        "Completely removes the batch from the workspace: batch label, all file "
+    "purge_complete_sample": (
+        "Completely removes the sample from the workspace: sample label, all data "
         "entries (including unannotated), annotations, previews, and processed outputs. "
         "Workspace raw copies optional. Original external files are not touched."
     ),
-    "purge_annotations_condition": (
-        "Clears annotations and processed outputs for all batches in the selected "
-        "condition group. Keeps batches and imported file entries."
+    "purge_annotations_breed": (
+        "Clears annotations and processed outputs for all samples in the selected "
+        "breed. Keeps samples and imported data entries."
     ),
-    "purge_complete_condition": (
-        "Removes all batches and file entries for the selected condition group from "
+    "purge_complete_breed": (
+        "Removes all samples and data entries for the selected breed from "
         "the app database, plus all annotations and processed outputs."
     ),
     "purge_annotations_workspace": (
         "Clears all annotations and processed outputs across the workspace. "
-        "Keeps all batches and imported file entries."
+        "Keeps all samples and imported data entries."
     ),
     "purge_complete_workspace": (
-        "Removes all workspace metadata: every condition, batch, file entry, "
+        "Removes all workspace metadata: every breed, sample, data entry, "
         "annotation, preview, and processed output."
     ),
 }
@@ -139,8 +143,8 @@ class PurgeCleanupDialog(QDialog):
         layout = QVBoxLayout(self)
 
         intro = QLabel(
-            "Choose a cleanup level. “Annotations only” keeps files and batches in the "
-            "database. “Complete” removes file or batch entries from the app. "
+            "Choose a cleanup level. “Annotations only” keeps data files and samples in the "
+            "database. “Complete” removes data or sample entries from the app. "
             "Original files outside the workspace are never deleted."
         )
         intro.setWordWrap(True)
@@ -166,8 +170,8 @@ class PurgeCleanupDialog(QDialog):
             self.combo_group.setCurrentIndex(idx)
         self.combo_batch = QComboBox()
         self._refresh_batch_combo()
-        scope_layout.addRow("Condition group:", self.combo_group)
-        scope_layout.addRow("Batch:", self.combo_batch)
+        scope_layout.addRow("Breed:", self.combo_group)
+        scope_layout.addRow("Sample:", self.combo_batch)
         layout.addWidget(scope_box)
 
         self.chk_remove_raw = QCheckBox(
@@ -216,8 +220,8 @@ class PurgeCleanupDialog(QDialog):
         self.lbl_description.setText(ACTION_DESCRIPTIONS.get(key, ""))
         phrase = PURGE_ACTIONS[row][2]
         needs_batch = key in (
-            "purge_annotations_batch",
-            "purge_complete_batch",
+            "purge_annotations_sample",
+            "purge_complete_sample",
         )
         needs_file = key in (
             "purge_annotations_file",
@@ -234,14 +238,19 @@ class PurgeCleanupDialog(QDialog):
 
     def _refresh_batch_combo(self) -> None:
         group = self.combo_group.currentText()
-        batches = list_batches(self._root, group)
+        batches = list_samples(self._root, group)
         self.combo_batch.clear()
         for batch in batches:
-            self.combo_batch.addItem(str(batch["batch_name"]), batch)
+            num = int(batch.get("batch_number", 1) or 1)
+            label = display_sample_label(num, str(batch.get("batch_name", "")))
+            self.combo_batch.addItem(label, batch)
         if self._current_batch_name:
-            idx = self.combo_batch.findText(self._current_batch_name)
-            if idx >= 0:
-                self.combo_batch.setCurrentIndex(idx)
+            safe = str(self._current_batch_name).strip()
+            for i in range(self.combo_batch.count()):
+                data = self.combo_batch.itemData(i)
+                if isinstance(data, dict) and str(data.get("batch_name", "")) == safe:
+                    self.combo_batch.setCurrentIndex(i)
+                    break
 
     def _on_run(self) -> None:
         key = self._action_key()
@@ -255,7 +264,12 @@ class PurgeCleanupDialog(QDialog):
             return
 
         group = self.combo_group.currentText()
-        batch_name = self.combo_batch.currentText().strip()
+        batch_data = self.combo_batch.currentData()
+        batch_name = (
+            str(batch_data.get("batch_name", "")).strip()
+            if isinstance(batch_data, dict)
+            else ""
+        )
         remove_raw = self.chk_remove_raw.isChecked()
 
         try:
@@ -289,18 +303,18 @@ class PurgeCleanupDialog(QDialog):
             return purge_sample_completely(
                 self._root, sid, remove_workspace_raw=remove_raw
             )
-        if key == "purge_annotations_batch":
+        if key == "purge_annotations_sample":
             batch = self._require_batch_name(group, batch_name)
-            return purge_batch_annotations(self._root, group, batch)
-        if key == "purge_complete_batch":
+            return purge_sample_annotations(self._root, group, batch)
+        if key == "purge_complete_sample":
             batch = self._require_batch_name(group, batch_name)
-            return complete_batch_purge(
+            return complete_sample_purge(
                 self._root, group, batch, remove_workspace_raw=remove_raw
             )
-        if key == "purge_annotations_condition":
-            return purge_condition_annotations(self._root, group)
-        if key == "purge_complete_condition":
-            return complete_condition_purge(
+        if key == "purge_annotations_breed":
+            return purge_breed_annotations(self._root, group)
+        if key == "purge_complete_breed":
+            return complete_breed_purge(
                 self._root, group, remove_workspace_raw=remove_raw
             )
         if key == "purge_annotations_workspace":
@@ -312,12 +326,12 @@ class PurgeCleanupDialog(QDialog):
     def _require_sample_id(self) -> str:
         if self._current_sample_id:
             return self._current_sample_id
-        raise ValueError("Select a file in the sample list first.")
+        raise ValueError("Select a data file in the sample list first.")
 
     def _require_batch_name(self, group: str, batch_name: str) -> str:
         if batch_name:
             return batch_name
-        raise ValueError("Select a batch in the Scope section.")
+        raise ValueError("Select a sample in the Scope section.")
 
 
 def open_purge_cleanup_dialog(window: "MainWindow") -> None:
@@ -341,21 +355,21 @@ def open_purge_cleanup_dialog(window: "MainWindow") -> None:
 
 
 def pick_empty_batch_name(parent: "MainWindow", root: Path, group: str) -> str | None:
-    """List all empty batches in a condition group (fixes biased batch picker)."""
-    empty = list_empty_batches(root, group)
+    """List all empty samples in a breed."""
+    empty = list_empty_samples(root, group)
     if not empty:
         QMessageBox.information(
             parent,
-            "Delete Empty Batch",
-            "No empty batches in this condition group.",
+            "Delete Empty Sample",
+            "No empty samples in this breed.",
         )
         return None
     labels = [parent._batch_list_header_text(group, b) for b in empty]
     names = [str(b["batch_name"]) for b in empty]
     picked, ok = QInputDialog.getItem(
         parent,
-        "Delete Empty Batch",
-        f"Empty batches in {group} (select one to delete):",
+        "Delete Empty Sample",
+        f"Empty samples in {group} (select one to delete):",
         labels,
         0,
         False,

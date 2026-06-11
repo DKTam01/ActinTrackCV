@@ -51,8 +51,8 @@ def _coerce_samples_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def migrate_workspace_schema(root: Path) -> None:
-    """Upgrade samples.csv and batches.json for batch numbers and export naming."""
+def _migrate_workspace_schema_v1(root: Path) -> None:
+    """Upgrade samples.csv and batches.json for batch numbers and export naming (v1)."""
     from actintrack_app.batch_manager import (
         list_batches,
         parse_batch_number_from_name,
@@ -155,7 +155,14 @@ def migrate_workspace_schema(root: Path) -> None:
         )
 
     if changed:
-        save_samples_csv(samples_path, df)
+        save_samples_csv(root, df)
+
+
+def migrate_workspace_schema(root: Path) -> None:
+    """Run v1 repairs then migrate to schema v2 when needed."""
+    from actintrack_app.schema_compat import migrate_workspace_schema as _migrate
+
+    _migrate(root)
 
 
 def migrate_samples_batch_columns(root: Path) -> None:
@@ -219,28 +226,29 @@ def migrate_samples_batch_columns(root: Path) -> None:
             df.at[idx, "batch_number"] = "1"
 
     if changed:
-        save_samples_csv(samples_path, df)
+        save_samples_csv(root, df)
 
 
 def load_samples_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
+    """Load data-file table; returns legacy v1 column names for compatibility."""
+    from actintrack_app.schema_compat import load_data_files_as_v1_df
+
+    root = path.parent.parent if path.parent.name == METADATA_DIR else path.parent
+    if not path.exists() and not (root / METADATA_DIR / "data_files.csv").exists():
         create_empty_samples_csv(path)
-    try:
-        df = pd.read_csv(path, dtype=str, keep_default_na=False)
-    except Exception:
-        create_empty_samples_csv(path)
-        df = pd.read_csv(path, dtype=str, keep_default_na=False)
-
-    for col in SAMPLES_CSV_COLUMNS:
-        if col not in df.columns:
-            df[col] = ""
-    df = df[SAMPLES_CSV_COLUMNS]
-    return _coerce_samples_df_dtypes(df)
+    return _coerce_samples_df_dtypes(load_data_files_as_v1_df(root))
 
 
-def save_samples_csv(path: Path, df: pd.DataFrame) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    df[SAMPLES_CSV_COLUMNS].to_csv(path, index=False)
+def save_samples_csv(path_or_root: Path, df: pd.DataFrame) -> None:
+    """Persist data-file table (v1 or v2 on disk per workspace schema)."""
+    from actintrack_app.schema_compat import save_data_files
+
+    p = Path(path_or_root)
+    if p.suffix.lower() == ".csv":
+        root = p.parent.parent if p.parent.name == METADATA_DIR else p.parent
+    else:
+        root = p
+    save_data_files(root, _coerce_samples_df_dtypes(df))
 
 
 def resolve_sample_path(root: Path, stored_path: str) -> Path:
@@ -280,7 +288,7 @@ def sync_samples_with_disk(root: Path) -> tuple[pd.DataFrame, list[str]]:
                 changed = True
 
     if changed:
-        save_samples_csv(samples_path, df)
+        save_samples_csv(root, df)
     return df, missing
 
 
@@ -297,7 +305,7 @@ def remove_samples_from_metadata(root: Path, sample_ids: list[str]) -> int:
     df = load_samples_csv(samples_path)
     before = len(df)
     df = df[~df["sample_id"].astype(str).isin(ids)].reset_index(drop=True)
-    save_samples_csv(samples_path, df)
+    save_samples_csv(root, df)
 
     crop = load_crop_metadata(crop_path)
     for sid in ids:
@@ -318,26 +326,20 @@ def update_samples_csv(path: Path, sample_record: dict[str, Any]) -> None:
                 df.loc[mask, key] = str(value)
     else:
         df = pd.concat([df, pd.DataFrame([record])], ignore_index=True)
-    save_samples_csv(path, _coerce_samples_df_dtypes(df))
+    root = path.parent.parent if path.parent.name == METADATA_DIR else path.parent
+    save_samples_csv(root, _coerce_samples_df_dtypes(df))
 
 
 def load_crop_metadata(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {"samples": {}}
-    try:
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-        if "samples" not in data:
-            data["samples"] = {}
-        return data
-    except (json.JSONDecodeError, OSError):
-        return {"samples": {}}
+    from actintrack_app.schema_compat import load_crop_metadata_compat
+
+    return load_crop_metadata_compat(path)
 
 
 def save_crop_metadata(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    from actintrack_app.schema_compat import save_crop_metadata_compat
+
+    save_crop_metadata_compat(path, data)
 
 
 def save_sample_crop_annotation(

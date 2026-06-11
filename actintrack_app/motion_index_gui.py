@@ -269,7 +269,7 @@ class TrackPreviewDialog(QDialog):
         self._cap = cv2.VideoCapture(str(self._path))
         if not self._cap.isOpened():
             self._cap.release()
-            raise OSError(f"Cannot open track preview video: {self._path}")
+            raise OSError(f"Cannot open track preview data file: {self._path}")
 
         self._frame_count = max(1, int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT)))
         self._fps = max(1.0, float(self._cap.get(cv2.CAP_PROP_FPS)) or DEFAULT_PREVIEW_FPS)
@@ -391,7 +391,7 @@ def open_track_preview_dialog(parent: QWidget | None, video_path: Path) -> None:
             parent,
             "Track Preview",
             f"Could not open in-app preview:\n{exc}\n\n"
-            "Trying the system default video player instead.",
+            "Trying the system default media player instead.",
         )
         _open_path_with_system(path)
 
@@ -529,7 +529,7 @@ def run_motion_index_for_sample(
         preview_warning = ""
         if result.track_preview_error:
             preview_warning = (
-                "Track preview video could not be written:\n"
+                "Track preview data file could not be written:\n"
                 f"{result.track_preview_error}"
             )
 

@@ -21,7 +21,7 @@ def load_video_frame(video_path: str | Path, frame_index: int = 0) -> np.ndarray
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         cap.release()
-        raise MediaLoadError(f"Cannot open video: {path}")
+        raise MediaLoadError(f"Cannot open data file: {path}")
 
     try:
         count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -48,7 +48,7 @@ def get_video_frame_count(video_path: str | Path) -> int:
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         cap.release()
-        raise MediaLoadError(f"Cannot open video: {path}")
+        raise MediaLoadError(f"Cannot open data file: {path}")
     try:
         count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if count > 0:
@@ -61,7 +61,7 @@ def get_video_frame_count(video_path: str | Path) -> int:
                 break
             n += 1
         if n == 0:
-            raise MediaLoadError(f"Video has no readable frames: {path}")
+            raise MediaLoadError(f"Data file has no readable frames: {path}")
         return n
     finally:
         cap.release()

@@ -44,6 +44,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from actintrack_app.analysis_service import AnalysisReport, build_analysis_report
+from actintrack_app.analysis_view import AnalysisViewWidget
 from actintrack_app.annotation_schema import (
     annotation_from_legacy,
     build_sample_annotation,
@@ -56,9 +58,7 @@ from actintrack_app.batch_annotation import (
     save_propagated_annotations,
 )
 from actintrack_app.batch_manager import (
-    allocate_next_batch,
     batch_has_samples,
-    create_batch,
     delete_empty_batch,
     display_batch_name,
     display_sample_label,
@@ -66,14 +66,12 @@ from actintrack_app.batch_manager import (
     get_batch_by_name,
     list_batches,
     parse_batch_number_from_name,
-    prune_all_groups_without_samples,
     rename_batch,
     repair_batch_registry,
-    reset_batches_registry_workspace,
     sanitize_batch_name,
+    sync_registry_from_samples,
 )
 from actintrack_app.file_importer import set_custom_export_name
-from actintrack_app.import_dialog import open_import_data_dialog
 from actintrack_app.gui_menus import (
     PurgeFilteredDialog,
     refresh_recent_workspaces_menu,
@@ -93,6 +91,14 @@ from actintrack_app.metadata import (
     update_samples_csv,
 )
 from actintrack_app.purge_cleanup_dialog import pick_empty_batch_name
+from actintrack_app.sample_service import (
+    DATA_IMPORT_FILTER,
+    create_sample_from_data,
+    delete_sample_and_artifacts,
+    get_primary_data_row,
+    replace_sample_data,
+    sample_has_derived_state,
+)
 from actintrack_app.purge_manager import (
     complete_batch_purge,
     delete_sample_from_batch,
@@ -102,6 +108,7 @@ from actintrack_app.purge_manager import (
     purge_sample_completely,
 )
 from actintrack_app.recent_workspaces import add_recent
+from actintrack_app.user_preferences import get_last_import_breed, set_last_import_breed
 from actintrack_app.orientation import (
     OrientationState,
     RectROI,
@@ -212,21 +219,23 @@ STATUS_COLORS = {
 class PropagateDialog(QDialog):
     def __init__(self, parent: QWidget, group: str, batch_name: str):
         super().__init__(parent)
-        self.setWindowTitle("Propagate Annotation to Biological Batch")
+        self.setWindowTitle("Propagate Annotation to Sample")
         layout = QFormLayout(self)
+        num = parse_batch_number_from_name(batch_name) or 1
+        sample_label = display_sample_label(num, batch_name)
         help_lbl = QLabel(
-            "By default, annotations apply only within the same biological batch "
-            "(one Arabidopsis sample), not across other batches in the condition group."
+            "By default, annotations apply only within the same sample, "
+            "not across other samples in the breed."
         )
         help_lbl.setWordWrap(True)
         layout.addRow(help_lbl)
         self.combo_scope = QComboBox()
         self.combo_scope.addItems(
             [
-                f"Same biological batch ({batch_name})",
-                f"Unprocessed files in {batch_name}",
-                f"All files in condition {group}",
-                "Currently selected files in list",
+                f"Same sample ({sample_label})",
+                f"Unprocessed data in {sample_label}",
+                f"All data in breed {group}",
+                "Currently selected data in list",
             ]
         )
         self.combo_scaling = QComboBox()
@@ -254,11 +263,11 @@ class PropagateDialog(QDialog):
         )
 
         text = self.combo_scope.currentText()
-        if text.startswith("Same biological"):
+        if text.startswith("Same sample"):
             return SCOPE_SAME_BATCH
         if text.startswith("Unprocessed"):
             return SCOPE_UNPROCESSED_IN_BATCH
-        if "condition" in text:
+        if text.startswith("All data in breed"):
             return SCOPE_ALL_IN_GROUP
         return SCOPE_SELECTED
 
@@ -289,6 +298,7 @@ class MainWindow(QMainWindow):
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
         )
         self._last_import_dir = self._default_source_root
+        self._last_import_breed: Optional[str] = None
         self._roi_user_adjusted = False
         self._loaded_annotation_source = "manual"
         self._last_motion_index_result: Optional[Any] = None
@@ -328,10 +338,10 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(central)
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(self._build_left_sidebar())
-        center = QWidget()
-        center_layout = QVBoxLayout(center)
+        preview_page = QWidget()
+        center_layout = QVBoxLayout(preview_page)
         self.lbl_preview_mode = QLabel(
-            "Full Sample Preview — orient the video and draw a rectangle around "
+            "Full Sample Preview — orient the data and draw a rectangle around "
             "the usable actin-rich region."
         )
         self.lbl_preview_mode.setWordWrap(True)
@@ -352,21 +362,41 @@ class MainWindow(QMainWindow):
         preview_crop_row.addStretch()
         center_layout.addLayout(preview_crop_row)
 
-        preview_controls = QHBoxLayout()
+        preview_controls = QVBoxLayout()
+        preview_controls.setSpacing(4)
+        preview_transport_row = QHBoxLayout()
+        preview_speed_row = QHBoxLayout()
         self.btn_preview_play = QPushButton("Play")
         self.btn_preview_play.clicked.connect(self._preview_play)
         self.btn_preview_pause = QPushButton("Pause")
         self.btn_preview_pause.clicked.connect(self._preview_pause)
         self.lbl_cropped_frame = QLabel("Frame 1 / 1")
+        self.lbl_cropped_frame.setMinimumWidth(72)
         self.slider_cropped_frame = QSlider(Qt.Orientation.Horizontal)
-        self.slider_cropped_frame.setMinimumWidth(180)
+        self.slider_cropped_frame.setMinimumWidth(120)
+        self.slider_cropped_frame.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
         self.slider_cropped_frame.valueChanged.connect(self._on_cropped_preview_frame_slider)
         self.lbl_preview_speed = QLabel("Speed:")
         self.combo_preview_speed = QComboBox()
         self.combo_preview_speed.addItems(["0.25×", "0.5×", "1×", "1.5×", "2×"])
         self.combo_preview_speed.setCurrentText("1×")
+        self.combo_preview_speed.currentTextChanged.connect(
+            self._on_preview_speed_changed
+        )
+        self.combo_preview_speed.setMinimumWidth(72)
+        self.combo_preview_speed.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
         self.btn_return_full_preview = QPushButton("Return to Full Preview")
         self.btn_return_full_preview.clicked.connect(self._exit_cropped_preview_mode)
+        self.btn_return_full_preview.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
         for widget in (
             self.btn_preview_play,
             self.btn_preview_pause,
@@ -377,14 +407,16 @@ class MainWindow(QMainWindow):
             self.btn_return_full_preview,
         ):
             widget.hide()
-        preview_controls.addWidget(self.btn_preview_play)
-        preview_controls.addWidget(self.btn_preview_pause)
-        preview_controls.addWidget(self.lbl_cropped_frame)
-        preview_controls.addWidget(self.slider_cropped_frame, stretch=1)
-        preview_controls.addWidget(self.lbl_preview_speed)
-        preview_controls.addWidget(self.combo_preview_speed)
-        preview_controls.addStretch()
-        preview_controls.addWidget(self.btn_return_full_preview)
+        preview_transport_row.addWidget(self.btn_preview_play)
+        preview_transport_row.addWidget(self.btn_preview_pause)
+        preview_transport_row.addWidget(self.lbl_cropped_frame)
+        preview_transport_row.addWidget(self.slider_cropped_frame, stretch=1)
+        preview_speed_row.addWidget(self.lbl_preview_speed)
+        preview_speed_row.addWidget(self.combo_preview_speed)
+        preview_speed_row.addStretch()
+        preview_speed_row.addWidget(self.btn_return_full_preview)
+        preview_controls.addLayout(preview_transport_row)
+        preview_controls.addLayout(preview_speed_row)
         center_layout.addLayout(preview_controls)
         self._preview_control_widgets = (
             self.btn_preview_play,
@@ -395,9 +427,13 @@ class MainWindow(QMainWindow):
             self.combo_preview_speed,
             self.btn_return_full_preview,
         )
-        splitter.addWidget(center)
+        self._analysis_view = AnalysisViewWidget()
+        self._center_stack = QStackedWidget()
+        self._center_stack.addWidget(preview_page)
+        self._center_stack.addWidget(self._analysis_view)
+        splitter.addWidget(self._center_stack)
         splitter.addWidget(self._build_right_sidebar())
-        splitter.setSizes([260, 740, 280])
+        splitter.setSizes([260, 780, 260])
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
@@ -417,8 +453,8 @@ class MainWindow(QMainWindow):
     def _build_right_sidebar(self) -> QStackedWidget:
         """Normal tabbed controls, or full-column Advanced Tracking Settings."""
         stack = QStackedWidget()
-        stack.setMinimumWidth(300)
-        stack.setMaximumWidth(440)
+        stack.setMinimumWidth(260)
+        stack.setMaximumWidth(380)
 
         self._right_tabs = QTabWidget()
         preview = QWidget()
@@ -443,6 +479,27 @@ class MainWindow(QMainWindow):
         sample_layout.addWidget(self._build_notes_panel())
         sample_layout.addStretch()
         self._right_tabs.addTab(sample_tab, "Sample")
+
+        analysis_tab = QWidget()
+        analysis_tab_layout = QVBoxLayout(analysis_tab)
+        analysis_tab_layout.setContentsMargins(6, 6, 6, 6)
+        analysis_hint = QLabel(
+            "Breed and sample tracking metrics appear in the center column. "
+            "Results are loaded from saved data; tracking is not re-run here."
+        )
+        analysis_hint.setWordWrap(True)
+        analysis_hint.setStyleSheet("color: #666; font-size: 11px;")
+        analysis_tab_layout.addWidget(analysis_hint)
+        self.btn_refresh_analysis = QPushButton("Refresh Analysis")
+        self.btn_refresh_analysis.setToolTip(
+            "Reload analysis tables from saved tracking and motion-index results."
+        )
+        self.btn_refresh_analysis.clicked.connect(self.refresh_analysis_view)
+        analysis_tab_layout.addWidget(self.btn_refresh_analysis)
+        analysis_tab_layout.addStretch()
+        self._right_tabs.addTab(analysis_tab, "Analysis")
+
+        self._right_tabs.currentChanged.connect(self._on_right_tab_changed)
 
         stack.addWidget(self._right_tabs)
         stack.addWidget(self._build_tracking_settings_page())
@@ -482,12 +539,12 @@ class MainWindow(QMainWindow):
         nav = QHBoxLayout()
         self.btn_prev_sample = self._tool_button(
             "◀ Prev",
-            "Select the previous file in the list.",
+            "Select the previous data entry in the list.",
             self._on_prev_sample,
         )
         self.btn_next_sample = self._tool_button(
             "Next ▶",
-            "Select the next file in the list.",
+            "Select the next data entry in the list.",
             self._on_next_sample,
         )
         nav.addWidget(self.btn_prev_sample)
@@ -495,7 +552,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(nav)
         hint = QLabel(
             "All samples for the selected breed are listed together. "
-            "Right-click to add a sample or import a video."
+            "Right-click to add a sample or import data."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #888; font-size: 11px;")
@@ -519,14 +576,14 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_selected_panel(self) -> QGroupBox:
-        box = QGroupBox("Selected File")
+        box = QGroupBox("Selected Data File")
         layout = QVBoxLayout(box)
-        self.lbl_selected_file = QLabel("No sample selected")
+        self.lbl_selected_file = QLabel("No data selected")
         self.lbl_selected_file.setWordWrap(True)
         layout.addWidget(self.lbl_selected_file)
         layout.addWidget(QLabel("Export name:"))
         self.edit_export_name = QLineEdit()
-        self.edit_export_name.setPlaceholderText("auto-generated from condition + batch")
+        self.edit_export_name.setPlaceholderText("auto-generated from breed and sample")
         self.edit_export_name.editingFinished.connect(self._on_export_name_edited)
         layout.addWidget(self.edit_export_name)
         self.lbl_auto_export_name = QLabel("Auto name: —")
@@ -561,7 +618,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(custom)
 
         self.chk_mirror_y = QCheckBox("Mirror Y-Axis")
-        self.chk_mirror_y.setToolTip("Mirror the video left-right before ROI and tracking.")
+        self.chk_mirror_y.setToolTip("Mirror the data left-right before ROI and tracking.")
         self.chk_mirror_y.toggled.connect(self._on_mirror_y_axis)
         layout.addWidget(self.chk_mirror_y)
 
@@ -815,7 +872,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 8000)
 
     _FULL_PREVIEW_HINT = (
-        "Full Sample Preview — orient the video and draw a rectangle around "
+        "Full Sample Preview — orient the data and draw a rectangle around "
         "the usable actin-rich region."
     )
     _SELECT_SAMPLE_HINT = "Select a sample to preview."
@@ -873,6 +930,42 @@ class MainWindow(QMainWindow):
             if self._right_tabs.tabText(i) == "Orient && ROI":
                 self._right_tabs.setCurrentIndex(i)
                 break
+
+    def _on_right_tab_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        if self._right_tabs.tabText(index) == "Analysis":
+            if self._preview_mode == "cropped_tracking":
+                self._exit_cropped_preview_mode()
+            self._center_stack.setCurrentIndex(1)
+            self.refresh_analysis_view()
+        elif self._center_stack.currentIndex() == 1:
+            self._center_stack.setCurrentIndex(0)
+
+    def show_analysis_view(self) -> None:
+        for i in range(self._right_tabs.count()):
+            if self._right_tabs.tabText(i) == "Analysis":
+                self._right_tabs.setCurrentIndex(i)
+                return
+
+    def refresh_analysis_view(self) -> None:
+        if self._project_root is None:
+            self._analysis_view.refresh(
+                AnalysisReport([], [], [], "Open or create a workspace first.")
+            )
+            return
+        try:
+            report = build_analysis_report(self._project_root)
+        except Exception as exc:
+            self._analysis_view.refresh(
+                AnalysisReport([], [], [], f"Could not load analysis data:\n{exc}")
+            )
+            return
+        self._analysis_view.refresh(report)
+
+    def _refresh_analysis_if_visible(self) -> None:
+        if self._center_stack.currentIndex() == 1:
+            self.refresh_analysis_view()
 
     def _set_tracking_settings_editable(self, editable: bool) -> None:
         widgets = getattr(self, "_tracking_setting_widgets", ())
@@ -1116,14 +1209,11 @@ class MainWindow(QMainWindow):
     def _is_tracking_failed(self, analysis: CroppedPreviewAnalysis) -> bool:
         return analysis.num_tracks_with_valid_steps == 0
 
-    def _draft_tracking_json_path(self, sample_id: str) -> Path:
+    def _draft_tracking_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
-        return (
-            self._project_root
-            / METADATA_DIR
-            / DRAFT_TRACKING_DIR
-            / f"{sample_id}.json"
-        )
+        from actintrack_app.schema_compat import draft_tracking_path
+
+        return draft_tracking_path(self._project_root, data_id)
 
     def _sample_row_for_id(self, sample_id: str) -> Optional[dict[str, Any]]:
         if (
@@ -1208,8 +1298,10 @@ class MainWindow(QMainWindow):
                         return self._view_from_tracking_dict(data)
                     except (OSError, json.JSONDecodeError):
                         pass
-            draft_path = self._draft_tracking_json_path(sample_id)
-            if draft_path.is_file():
+            from actintrack_app.schema_compat import resolve_draft_tracking_path
+
+            draft_path = resolve_draft_tracking_path(self._project_root, sample_id)
+            if draft_path is not None:
                 try:
                     data = json.loads(draft_path.read_text(encoding="utf-8"))
                     return self._view_from_tracking_dict(data)
@@ -1277,6 +1369,7 @@ class MainWindow(QMainWindow):
         path = self._draft_tracking_json_path(sample_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "data_id": sample_id,
             "sample_id": sample_id,
             "downward_velocity_index_um_per_s": analysis.downward_velocity_index_um_per_s,
             "general_movement_index_um_per_s": analysis.general_movement_index_um_per_s,
@@ -1312,6 +1405,7 @@ class MainWindow(QMainWindow):
         self._tracking_result_stale_by_sample.pop(sample_id, None)
         self._save_draft_tracking_result(sample_id, analysis, params)
         self.update_tracking_result_panel(sample_id)
+        self._refresh_analysis_if_visible()
 
     def _update_orientation_label(self) -> None:
         self.lbl_orientation.setText(
@@ -1496,7 +1590,7 @@ class MainWindow(QMainWindow):
 
     def _on_preview_crop(self) -> None:
         if self._project_root is None or self._current_sample is None:
-            QMessageBox.warning(self, "Preview Cropped ROI", "Select a video first.")
+            QMessageBox.warning(self, "Preview Cropped ROI", "Select a data file first.")
             return
 
         self._cancel_pending_debounced_tracking()
@@ -1514,14 +1608,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Preview Cropped ROI",
-                "Import a video into this sample before previewing the cropped ROI.",
+                "Import data into this sample before previewing the cropped ROI.",
             )
             return
         if not is_supported_video_path(path):
             QMessageBox.information(
                 self,
                 "Unsupported",
-                "Only AVI and MP4 video files are supported in the current 2D workflow. "
+                "Only AVI and MP4 data files are supported in the current 2D workflow. "
                 "Image sequences and 3D/raw microscopy files will be added later.",
             )
             return
@@ -1571,6 +1665,7 @@ class MainWindow(QMainWindow):
         params: Optional[MotionIndexParams] = None,
     ) -> None:
         self._preview_pause()
+        self._center_stack.setCurrentIndex(0)
         self._preview_mode = "cropped_tracking"
         self._cropped_preview = analysis
         self._preview_frame_index = 0
@@ -1635,7 +1730,16 @@ class MainWindow(QMainWindow):
         if self._preview_mode != "cropped_tracking" or self._cropped_preview is None:
             return
         self._preview_playing = True
-        self._preview_timer.start(self._preview_playback_interval_ms())
+        self._update_preview_timer_interval()
+
+    def _update_preview_timer_interval(self) -> None:
+        if self._preview_playing:
+            self._preview_timer.start(self._preview_playback_interval_ms())
+
+    def _on_preview_speed_changed(self, _text: str) -> None:
+        if self._preview_mode != "cropped_tracking":
+            return
+        self._update_preview_timer_interval()
 
     def _preview_pause(self) -> None:
         self._preview_playing = False
@@ -1854,7 +1958,7 @@ class MainWindow(QMainWindow):
             return
         path = self._sample_file_path()
         if path is None or not path.exists():
-            QMessageBox.warning(self, "Export ROI", "Sample file not found.")
+            QMessageBox.warning(self, "Export ROI", "Data file not found for this sample.")
             return
         if is_wip_sample_path(path):
             QMessageBox.information(
@@ -1932,7 +2036,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Propagate",
-                "Current sample has no biological batch. Re-import or migrate project.",
+                "Current sample has no sample label in metadata. Re-import or migrate project.",
             )
             return
         dlg = PropagateDialog(self, group, batch_name)
@@ -2085,6 +2189,10 @@ class MainWindow(QMainWindow):
             return
         group = str(self._current_sample["group"])
         batch_name = sanitize_batch_name(str(self._current_sample.get("batch_name", "")))
+        sample_label = display_sample_label(
+            int(self._current_sample.get("batch_number", 1) or 1),
+            batch_name,
+        )
         approved, skipped, _ = process_batch_approved_rois(
             root=self._project_root,
             group=group,
@@ -2096,16 +2204,16 @@ class MainWindow(QMainWindow):
         if not approved:
             QMessageBox.information(
                 self,
-                "Batch Export",
-                f"No ROI-approved samples ready in {group} / {batch_name}.\n"
+                "Sample Export",
+                f"No ROI-approved data ready in {group} / {sample_label}.\n"
                 f"Skipped (not approved or missing ROI): {pre_skipped}",
             )
             return
         reply = QMessageBox.question(
             self,
-            "Process Approved Samples in Batch",
-            f"Condition group: {group}\n"
-            f"Biological batch: {batch_name}\n\n"
+            "Process Approved Data in Sample",
+            f"Breed: {group}\n"
+            f"Sample: {sample_label}\n\n"
             f"Samples to export: {len(approved)}\n"
             f"Samples skipped: {pre_skipped}\n\n"
             "Only approved ROIs will be exported. Continue?",
@@ -2150,7 +2258,7 @@ class MainWindow(QMainWindow):
                 err_preview += f"\n… +{len(report.errors) - 8} more"
         QMessageBox.information(
             self,
-            "Batch Export Complete",
+            "Sample Export Complete",
             f"Successful exports: {report.processed}\n"
             f"Failed: {report.failed}\n"
             f"Skipped: {pre_skipped + report.skipped}"
@@ -2210,6 +2318,9 @@ class MainWindow(QMainWindow):
             migrate_workspace_schema(root)
             repair_batch_registry(root)
             self._project_root = root
+            saved_breed = get_last_import_breed(root)
+            if saved_breed:
+                self._last_import_breed = saved_breed
             add_recent(root, root)
             self._refresh_recent_menu()
             self.btn_refresh_samples.setEnabled(True)
@@ -2224,7 +2335,15 @@ class MainWindow(QMainWindow):
         except OSError as e:
             QMessageBox.critical(self, "Project Error", str(e))
 
+    def _set_last_import_breed(self, breed: str | None) -> None:
+        if not breed or breed not in GROUPS:
+            return
+        self._last_import_breed = breed
+        if self._project_root is not None:
+            set_last_import_breed(self._project_root, breed)
+
     def _on_filter_group_changed(self) -> None:
+        self._set_last_import_breed(self.combo_filter_group.currentText())
         self._set_active_sample(None)
         self.reset_preview_state(
             clear_image=True,
@@ -2241,6 +2360,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         if group and group in GROUPS:
             self.combo_filter_group.setCurrentText(group)
+            self._set_last_import_breed(group)
         self._refresh_sample_list()
         if group and batch_name:
             self._select_first_video_in_batch(group, batch_name)
@@ -2260,7 +2380,7 @@ class MainWindow(QMainWindow):
             break
 
     def _ensure_filter_group_valid(self) -> str:
-        """Keep a valid condition group selected; fall back to the first."""
+        """Keep a valid breed selected; fall back to the first."""
         if self.combo_filter_group.currentText() in GROUPS:
             return self.combo_filter_group.currentText()
         self.combo_filter_group.blockSignals(True)
@@ -2287,7 +2407,7 @@ class MainWindow(QMainWindow):
         return f"──── {group} / {sample_label}: {name} ────"
 
     def _context_batch_name(self, group: str | None = None) -> str | None:
-        """Batch for menu actions: current sample's batch, or ask if ambiguous."""
+        """Sample name for menu actions: current data file's sample, or ask if ambiguous."""
         if self._project_root is None:
             return None
         group = group or self._ensure_filter_group_valid()
@@ -2304,8 +2424,8 @@ class MainWindow(QMainWindow):
         names = [str(b["batch_name"]) for b in batches]
         picked, ok = QInputDialog.getItem(
             self,
-            "Select Batch",
-            f"Choose a batch in {group}:",
+            "Select Sample",
+            f"Choose a sample in {group}:",
             labels,
             0,
             False,
@@ -2319,15 +2439,15 @@ class MainWindow(QMainWindow):
         batches = list_batches(self._project_root, group) if self._project_root else []
         if not batches:
             QMessageBox.information(
-                self, "Rename Batch", "No batches exist for this condition group."
+                self, "Rename Sample", "No samples exist for this breed."
             )
             return None
         labels = [self._batch_list_header_text(group, b) for b in batches]
         names = [str(b["batch_name"]) for b in batches]
         picked, ok = QInputDialog.getItem(
             self,
-            "Rename Biological Batch",
-            f"Batch to rename in {group}:",
+            "Rename Sample",
+            f"Sample to rename in {group}:",
             labels,
             0,
             False,
@@ -2338,24 +2458,43 @@ class MainWindow(QMainWindow):
 
     def _on_add_sample(self, group: str | None = None) -> None:
         if self._project_root is None:
+            QMessageBox.warning(
+                self,
+                "Add Sample",
+                "Open or create a workspace first.",
+            )
             return
         breed = group or self.combo_filter_group.currentText()
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Add Sample",
+            str(self._default_import_dir()),
+            DATA_IMPORT_FILTER,
+        )
+        if not path_str:
+            return
+        source = Path(path_str)
+        self._last_import_dir = source.parent
         try:
-            num, default_name = allocate_next_batch(self._project_root, breed)
-            batch = create_batch(
-                self._project_root, breed, default_name, batch_number=num
-            )
-            if self.combo_filter_group.currentText() != breed:
-                self.combo_filter_group.setCurrentText(breed)
-            self._refresh_sample_list()
-            self._select_sample_header(breed, str(batch["batch_name"]))
-            label = display_sample_label(
-                int(batch.get("batch_number", num) or num),
-                str(batch.get("batch_name", "")),
-            )
-            self._status(f"Added {label} under {breed}")
+            batch, _row = create_sample_from_data(self._project_root, breed, source)
         except ValueError as exc:
             QMessageBox.warning(self, "Add Sample", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.warning(self, "Add Sample", f"Import failed: {exc}")
+            return
+        self._set_last_import_breed(breed)
+        if self.combo_filter_group.currentText() != breed:
+            self.combo_filter_group.setCurrentText(breed)
+        if self._preview_mode == "cropped_tracking":
+            self.reset_preview_state(clear_image=True)
+        self._after_import_refresh(group=breed, batch_name=str(batch["batch_name"]))
+        self._refresh_analysis_if_visible()
+        label = display_sample_label(
+            int(batch.get("batch_number", 1) or 1),
+            str(batch.get("batch_name", "")),
+        )
+        self._status(f"Added {label} from {source.name}")
 
     def _select_sample_header(self, group: str, batch_name: str) -> None:
         safe = sanitize_batch_name(batch_name)
@@ -2382,8 +2521,8 @@ class MainWindow(QMainWindow):
             return
         new_name, ok = QInputDialog.getText(
             self,
-            "Rename Biological Batch",
-            "New batch name:",
+            "Rename Sample",
+            "New sample name:",
             text=old,
         )
         if not ok or not new_name.strip():
@@ -2392,7 +2531,7 @@ class MainWindow(QMainWindow):
             rename_batch(self._project_root, group, old, new_name.strip())
             self._refresh_sample_list()
         except (ValueError, OSError) as e:
-            QMessageBox.critical(self, "Rename Batch", str(e))
+            QMessageBox.critical(self, "Rename Sample", str(e))
 
     def _update_workspace_label(self) -> None:
         if self._project_root is None:
@@ -2436,6 +2575,21 @@ class MainWindow(QMainWindow):
         item.setForeground(QBrush(QColor("#aaaaaa")))
         self.list_samples.addItem(item)
 
+    def _add_sample_list_empty_row(self, group: str, batch: dict[str, Any]) -> None:
+        item = QListWidgetItem("    (incomplete — right-click Replace Data)")
+        item.setFlags(Qt.ItemFlag.NoItemFlags)
+        item.setForeground(QBrush(QColor("#666666")))
+        item.setData(
+            Qt.ItemDataRole.UserRole,
+            {
+                "item_type": "batch_empty",
+                "group": group,
+                "batch_name": str(batch.get("batch_name", "")),
+                "batch_number": int(batch.get("batch_number", 1) or 1),
+            },
+        )
+        self.list_samples.addItem(item)
+
     def _add_sample_list_row(self, row: pd.Series) -> None:
         status = str(row["processing_status"])
         export_name = str(
@@ -2472,14 +2626,14 @@ class MainWindow(QMainWindow):
         group = self._ensure_filter_group_valid()
         group_df = df[df["group"] == group]
 
-        # After a full workspace purge samples.csv is empty but batches.json may still
-        # list Batch 1 for untouched groups — clear those ghost labels on refresh.
-        if df.empty:
-            reset_batches_registry_workspace(self._project_root)
-
+        sync_registry_from_samples(self._project_root)
         batches = list_batches(self._project_root, group)
 
-        if not batches:
+        if not batches and not group_df.empty:
+            sync_registry_from_samples(self._project_root)
+            batches = list_batches(self._project_root, group)
+
+        if not batches and group_df.empty:
             self._add_sample_list_message(
                 "No samples available for this breed. Right-click to Add Sample."
             )
@@ -2498,6 +2652,7 @@ class MainWindow(QMainWindow):
                 == safe
             ]
             if batch_rows.empty:
+                self._add_sample_list_empty_row(group, batch)
                 continue
             batch_rows = batch_rows.sort_values(
                 by=["frame_number", "sample_id"],
@@ -2579,14 +2734,11 @@ class MainWindow(QMainWindow):
             remove_samples_from_metadata(self._project_root, missing_ids)
             self._refresh_sample_list()
 
-    def _menu_import_data(self) -> None:
-        open_import_data_dialog(self)
-
     def _clear_preview_pane(self) -> None:
-        self.lbl_selected_file.setText("No file selected.")
+        self.lbl_selected_file.setText("No data selected.")
         self.lbl_auto_export_name.setText("Auto name: —")
         self.edit_export_name.clear()
-        self.lbl_roi_info.setText("Select a file in the sample list.")
+        self.lbl_roi_info.setText("Select data in the sample list.")
         self.reset_preview_state(
             clear_image=True,
             placeholder=self._SELECT_SAMPLE_HINT,
@@ -2787,13 +2939,8 @@ class MainWindow(QMainWindow):
             return
         migrate_workspace_schema(self._project_root)
         repair_batch_registry(self._project_root)
-        pruned = prune_all_groups_without_samples(self._project_root)
         self._refresh_sample_list()
-        msg = "Workspace refreshed"
-        if pruned:
-            parts = ", ".join(f"{g} ({n})" for g, n in pruned.items())
-            msg += f"; removed orphan batch label(s): {parts}"
-        self._status(msg)
+        self._status("Workspace refreshed")
 
     def _menu_open_workspace_folder(self) -> None:
         if self._project_root is None:
@@ -2810,8 +2957,6 @@ class MainWindow(QMainWindow):
             subprocess.run(["xdg-open", path], check=False)
 
     def _after_purge_refresh(self, *, prefer_sample_id: str | None = None) -> None:
-        if self._project_root is not None:
-            prune_all_groups_without_samples(self._project_root)
         if prefer_sample_id:
             row = self._sample_row_for_id(prefer_sample_id)
             self._set_active_sample(row or {"sample_id": prefer_sample_id})
@@ -2821,8 +2966,8 @@ class MainWindow(QMainWindow):
         self.update_tracking_result_panel()
 
     def _ask_remove_workspace_raw(self, title: str, text: str) -> bool | None:
-        """Return True to remove raw copy, False to keep, None if cancelled."""
-        chk = QCheckBox("Also remove workspace raw copy in raw/")
+        """Return True to remove internal copy, False to keep, None if cancelled."""
+        chk = QCheckBox("Also remove the project's internal data copy")
         chk.setChecked(False)
         box = QMessageBox(self)
         box.setWindowTitle(title)
@@ -2834,6 +2979,47 @@ class MainWindow(QMainWindow):
         if box.exec() != QMessageBox.StandardButton.Ok:
             return None
         return chk.isChecked()
+
+    def _confirm_delete_sample(
+        self,
+        breed: str,
+        sample_name: str,
+        *,
+        has_internal_copy: bool,
+        incomplete: bool = False,
+    ) -> bool | None:
+        """Return whether to remove the project's internal data copy, or None if cancelled."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Delete Sample?")
+        box.setText(f'Delete "{sample_name}" from this Breed?')
+        if incomplete:
+            box.setInformativeText(
+                "This will remove the incomplete Sample from the project."
+            )
+        else:
+            box.setInformativeText(
+                "This will remove the Sample from the project, including its ROI, "
+                "tracking results, notes, and analysis data. "
+                "The original data file on your computer will not be deleted."
+            )
+        internal_copy_chk: QCheckBox | None = None
+        if has_internal_copy:
+            internal_copy_chk = QCheckBox(
+                "Also remove the project's internal data copy"
+            )
+            internal_copy_chk.setChecked(False)
+            box.setCheckBox(internal_copy_chk)
+        delete_btn = box.addButton(
+            "Delete Sample", QMessageBox.ButtonRole.DestructiveRole
+        )
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not delete_btn:
+            return None
+        if internal_copy_chk is not None:
+            return internal_copy_chk.isChecked()
+        return False
 
     def _confirm_typed_phrase(
         self,
@@ -2868,71 +3054,123 @@ class MainWindow(QMainWindow):
 
     def _on_sample_list_context_menu(self, pos) -> None:
         if self._project_root is None:
+            QMessageBox.warning(
+                self,
+                "Sample List",
+                "Open or create a workspace first.",
+            )
             return
         item = self.list_samples.itemAt(pos)
         menu = QMenu(self)
         meta = self._list_item_meta(item)
 
-        if meta and meta.get("item_type") == "sample":
-            sid = str(meta.get("sample_id", ""))
-            menu.addAction(
-                "Delete File from Batch",
-                lambda: self._ctx_delete_file(sid, meta),
-            )
-            menu.addSeparator()
-            menu.addAction(
-                "Purge File Annotations Only",
-                lambda: self._ctx_purge_file_annotations(sid),
-            )
-            menu.addAction(
-                "Purge Selected File Completely",
-                lambda: self._ctx_purge_file_complete(sid, meta),
-            )
-        elif meta and meta.get("item_type") == "batch_header":
+        if meta and meta.get("item_type") in (
+            "batch_header",
+            "batch_empty",
+            "sample",
+        ):
             group = str(meta.get("group", self._ensure_filter_group_valid()))
             batch_name = str(meta.get("batch_name", ""))
             menu.addAction(
-                "Add Sample",
-                lambda: self._on_add_sample(group),
+                "Rename Sample",
+                lambda g=group, b=batch_name: self._ctx_rename_batch(g, b),
             )
             menu.addAction(
-                "Import Video Into This Sample",
-                lambda: self._ctx_import_into_batch(group, batch_name),
+                "Delete Sample",
+                lambda g=group, b=batch_name: self._ctx_delete_batch(g, b),
             )
             menu.addSeparator()
             menu.addAction(
-                "Delete Sample",
-                lambda: self._ctx_delete_batch(group, batch_name),
+                "Replace Data",
+                lambda g=group, b=batch_name: self._ctx_replace_sample_data(g, b),
             )
         else:
-            menu.addAction(
+            breed = self._ensure_filter_group_valid()
+            add_action = menu.addAction(
                 "Add Sample",
-                lambda: self._on_add_sample(self._ensure_filter_group_valid()),
+                lambda: self._on_add_sample(breed),
             )
+            if breed not in GROUPS:
+                add_action.setEnabled(False)
+                menu.addAction("Please select a breed first.").setEnabled(False)
 
         if not menu.isEmpty():
-            menu.exec(self.list_samples.mapToGlobal(pos))
+            menu.exec(self.list_samples.viewport().mapToGlobal(pos))
 
-    def _ctx_import_into_batch(self, group: str, batch_name: str) -> None:
-        if not group or not batch_name:
+    def _ctx_replace_sample_data(self, group: str, batch_name: str) -> None:
+        if self._project_root is None or not group or not batch_name:
             QMessageBox.warning(
-                self, "Import Video", "Could not determine the sample for import."
+                self,
+                "Replace Data",
+                "Could not determine the sample for data replacement.",
             )
             return
-        open_import_data_dialog(
+        path_str, _ = QFileDialog.getOpenFileName(
             self,
-            preset_group=group,
-            preset_batch_name=batch_name,
+            "Replace Data",
+            str(self._default_import_dir()),
+            DATA_IMPORT_FILTER,
         )
+        if not path_str:
+            return
+        source = Path(path_str)
+        self._last_import_dir = source.parent
+        row = get_primary_data_row(self._project_root, group, batch_name)
+        if row and sample_has_derived_state(self._project_root, str(row["sample_id"])):
+            reply = QMessageBox.question(
+                self,
+                "Replace Data",
+                "This sample has ROI, tracking, or processed outputs.\n\n"
+                "Replacing the data file will clear those derived results. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        if self._preview_mode == "cropped_tracking":
+            self.reset_preview_state(clear_image=True)
+        try:
+            updated = replace_sample_data(
+                self._project_root, group, batch_name, source
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Replace Data", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.warning(self, "Replace Data", f"Import failed: {exc}")
+            return
+        final_batch_name = str(updated.get("batch_name", batch_name))
+        self._set_last_import_breed(group)
+        self.reset_preview_state(clear_image=True)
+        self._after_import_refresh(group=group, batch_name=final_batch_name)
+        self._refresh_analysis_if_visible()
+        self._status(f"Replaced data for {final_batch_name} with {source.name}")
+
+    def _ctx_rename_batch(self, group: str, batch_name: str) -> None:
+        if self._project_root is None:
+            return
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Sample",
+            "New sample name:",
+            text=batch_name,
+        )
+        if not ok or not new_name.strip():
+            return
+        try:
+            rename_batch(self._project_root, group, batch_name, new_name.strip())
+            self._refresh_sample_list()
+            self._select_sample_header(group, sanitize_batch_name(new_name))
+        except (ValueError, OSError) as e:
+            QMessageBox.critical(self, "Rename Sample", str(e))
 
     def _ctx_purge_file_annotations(self, sample_id: str) -> None:
         if self._project_root is None:
             return
         reply = QMessageBox.question(
             self,
-            "Purge File Annotations",
-            "Clear annotations, previews, and processed outputs for this file?\n\n"
-            "The file entry and workspace raw copy will be kept.",
+            "Purge Data Annotations",
+            "Clear annotations, previews, and processed outputs for this data file?\n\n"
+            "The data entry and workspace raw copy will be kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -2952,8 +3190,8 @@ class MainWindow(QMainWindow):
             return
         reply = QMessageBox.question(
             self,
-            "Purge Selected File Completely",
-            "Remove this file from the app database and delete its annotations, "
+            "Purge Selected Data Completely",
+            "Remove this data file from the app database and delete its annotations, "
             "previews, and processed outputs?\n\n"
             "Original external source files will not be deleted.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -2981,11 +3219,13 @@ class MainWindow(QMainWindow):
             if group and batch_name and not batch_has_samples(
                 self._project_root, group, batch_name
             ):
+                num = parse_batch_number_from_name(batch_name) or 1
+                sample_label = display_sample_label(num, batch_name)
                 if (
                     QMessageBox.question(
                         self,
-                        "Empty Batch",
-                        f"Batch '{batch_name}' is now empty. Delete the batch label too?",
+                        "Empty Sample",
+                        f"{sample_label} is now empty. Delete the sample label too?",
                         QMessageBox.StandardButton.Yes
                         | QMessageBox.StandardButton.No,
                     )
@@ -3001,8 +3241,8 @@ class MainWindow(QMainWindow):
             return
         reply = QMessageBox.question(
             self,
-            "Delete File from Batch",
-            "Delete this file from the batch? This will remove its metadata, "
+            "Delete Data from Sample",
+            "Delete this data file from the sample? This will remove its metadata, "
             "annotations, previews, and processed outputs. Raw workspace copy "
             "will be kept unless you choose to remove it.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3026,15 +3266,17 @@ class MainWindow(QMainWindow):
             self._invalidate_tracking_result_for_sample(sample_id)
             self._set_active_sample(None)
             self._after_purge_refresh()
-            self._status(f"Deleted {sample_id} from batch")
+            self._status(f"Deleted {sample_id} from sample")
             if group and batch_name and not batch_has_samples(
                 self._project_root, group, batch_name
             ):
+                num = parse_batch_number_from_name(batch_name) or 1
+                sample_label = display_sample_label(num, batch_name)
                 if (
                     QMessageBox.question(
                         self,
-                        "Empty Batch",
-                        f"Batch '{batch_name}' is now empty. Delete the batch label too?",
+                        "Empty Sample",
+                        f"{sample_label} is now empty. Delete the sample label too?",
                         QMessageBox.StandardButton.Yes
                         | QMessageBox.StandardButton.No,
                     )
@@ -3048,11 +3290,13 @@ class MainWindow(QMainWindow):
     def _ctx_purge_batch_annotations(self, group: str, batch_name: str) -> None:
         if self._project_root is None:
             return
+        num = parse_batch_number_from_name(batch_name) or 1
+        sample_label = display_sample_label(num, batch_name)
         reply = QMessageBox.question(
             self,
-            "Purge Batch Annotations",
-            f"Clear annotations and processed outputs for batch '{batch_name}'?\n\n"
-            "File entries and workspace raw copies will be kept.",
+            "Purge Sample Annotations",
+            f"Clear annotations and processed outputs for {sample_label}?\n\n"
+            "Data entries and workspace raw copies will be kept.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -3068,21 +3312,21 @@ class MainWindow(QMainWindow):
         if self._project_root is None:
             return
         if not self._confirm_typed_phrase(
-            "Complete Batch Purge",
-            "This will completely remove this batch from the workspace. It will delete "
-            "the batch label, all file entries in the app database, all annotations, "
-            "previews, and processed outputs for this batch. Workspace raw copies can "
+            "Complete Sample Purge",
+            "This will completely remove this sample from the workspace. It will delete "
+            "the sample label, all data entries in the app database, all annotations, "
+            "previews, and processed outputs for this sample. Workspace raw copies can "
             "also be deleted if you choose. Original external source files will not be "
             "touched. This cannot be undone.",
-            "PURGE BATCH",
+            "PURGE SAMPLE",
         ):
             QMessageBox.information(
-                self, "Cancelled", 'Type exactly "PURGE BATCH" to run this action.'
+                self, "Cancelled", 'Type exactly "PURGE SAMPLE" to run this action.'
             )
             return
         remove_raw = self._ask_remove_workspace_raw(
             "Workspace Raw Copies",
-            "Also remove workspace raw copies for this batch?",
+            "Also remove workspace raw copies for this sample?",
         )
         if remove_raw is None:
             return
@@ -3095,69 +3339,66 @@ class MainWindow(QMainWindow):
             )
             self._current_sample = None
             self._after_purge_refresh()
-            self._show_purge_summary("Complete Batch Purge", stats)
+            self._show_purge_summary("Complete Sample Purge", stats)
         except (ValueError, OSError) as e:
             QMessageBox.warning(self, "Purge", str(e))
+
+    def _current_selection_in_batch(self, group: str, batch_name: str) -> bool:
+        if not self._current_sample:
+            return False
+        return (
+            str(self._current_sample.get("group", "")) == group
+            and sanitize_batch_name(str(self._current_sample.get("batch_name", "")))
+            == sanitize_batch_name(batch_name)
+        )
+
+    def _clear_preview_before_sample_delete(
+        self, group: str, batch_name: str
+    ) -> None:
+        if (
+            self._current_selection_in_batch(group, batch_name)
+            or self._preview_mode == "cropped_tracking"
+        ):
+            self.reset_preview_state(
+                clear_image=True,
+                placeholder=self._SELECT_SAMPLE_HINT,
+            )
 
     def _ctx_delete_batch(self, group: str, batch_name: str) -> None:
         if self._project_root is None:
             return
+        sample_name = sanitize_batch_name(batch_name)
         has_files = batch_has_samples(self._project_root, group, batch_name)
-        if has_files:
-            understand = QCheckBox(
-                "I understand this will remove the whole batch from the workspace database."
-            )
-            box = QMessageBox(self)
-            box.setWindowTitle("Delete Batch")
-            box.setText(
-                "Delete this entire batch? This will remove all files in the batch from "
-                "the app database and delete all annotations, previews, and processed "
-                "outputs for the batch. Raw workspace copies will be kept unless you "
-                "choose to remove them. Original external files will not be touched."
-            )
-            box.setCheckBox(understand)
-            box.setStandardButtons(
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if (
-                box.exec() != QMessageBox.StandardButton.Yes
-                or not understand.isChecked()
-            ):
-                return
-            remove_raw = self._ask_remove_workspace_raw(
-                "Workspace Raw Copies",
-                "Also remove workspace raw copies for all files in this batch?",
-            )
-            if remove_raw is None:
-                return
-            try:
-                stats = complete_batch_purge(
+        remove_internal_copy = self._confirm_delete_sample(
+            group,
+            sample_name,
+            has_internal_copy=has_files,
+            incomplete=not has_files,
+        )
+        if remove_internal_copy is None:
+            return
+        try:
+            if has_files:
+                stats = delete_sample_and_artifacts(
                     self._project_root,
                     group,
                     batch_name,
-                    remove_workspace_raw=remove_raw,
+                    remove_workspace_raw=remove_internal_copy,
                 )
-                self._current_sample = None
+                self._clear_preview_before_sample_delete(group, batch_name)
+                self._set_active_sample(None)
                 self._after_purge_refresh()
-                self._show_purge_summary("Batch Deleted", stats)
-            except (ValueError, OSError) as e:
-                QMessageBox.warning(self, "Delete Batch", str(e))
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Delete Empty Batch",
-            f"Delete empty batch '{batch_name}' from this condition group?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            delete_empty_batch(self._project_root, group, batch_name)
-            self._after_purge_refresh()
-            self._status(f"Deleted empty batch {batch_name}")
-        except ValueError as e:
-            QMessageBox.warning(self, "Delete Batch", str(e))
+                self._refresh_analysis_if_visible()
+                self._show_purge_summary("Sample Deleted", stats)
+            else:
+                delete_empty_batch(self._project_root, group, batch_name)
+                self._clear_preview_before_sample_delete(group, batch_name)
+                self._set_active_sample(None)
+                self._after_purge_refresh()
+                self._refresh_analysis_if_visible()
+                self._status(f'Deleted Sample "{sample_name}"')
+        except (ValueError, OSError) as e:
+            QMessageBox.warning(self, "Delete Sample", str(e))
 
     def _menu_purge_filtered(self) -> None:
         if self._project_root is None:
@@ -3193,10 +3434,12 @@ class MainWindow(QMainWindow):
         batch_name = pick_empty_batch_name(self, self._project_root, group)
         if not batch_name:
             return
+        num = parse_batch_number_from_name(batch_name) or 1
+        sample_label = display_sample_label(num, batch_name)
         reply = QMessageBox.question(
             self,
-            "Delete Empty Batch",
-            f"Delete empty batch '{batch_name}' from this condition group?",
+            "Delete Empty Sample",
+            f"Delete empty sample '{sample_label}' from {group}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -3204,13 +3447,13 @@ class MainWindow(QMainWindow):
         try:
             delete_empty_batch(self._project_root, group, batch_name)
             self._after_purge_refresh()
-            self._status(f"Deleted empty batch {batch_name}")
+            self._status(f"Deleted empty sample {sample_label}")
         except ValueError as e:
-            QMessageBox.warning(self, "Delete Batch", str(e))
+            QMessageBox.warning(self, "Delete Sample", str(e))
 
     def _menu_delete_file_from_batch(self) -> None:
         if self._project_root is None or self._current_sample is None:
-            QMessageBox.warning(self, "Delete", "Select a file in the batch list first.")
+            QMessageBox.warning(self, "Delete", "Select a data file in the sample list first.")
             return
         sid = str(self._current_sample["sample_id"])
         self._ctx_delete_file(sid, self._current_sample)
@@ -3218,16 +3461,8 @@ class MainWindow(QMainWindow):
     def _menu_review_batch(self) -> None:
         self._refresh_sample_list()
         self._status(
-            "Review propagated annotations using Approve / Reject on each file."
+            "Review propagated annotations using Approve / Reject on each data entry."
         )
-
-    def _menu_generate_motion_index(self) -> None:
-        from actintrack_app.motion_index_gui import run_motion_index_for_sample
-
-        run_motion_index_for_sample(self)
-
-    def _on_generate_motion_index(self) -> None:
-        self._menu_generate_motion_index()
 
     def _menu_how_to_run(self) -> None:
         readme = APP_ROOT / "README.md"

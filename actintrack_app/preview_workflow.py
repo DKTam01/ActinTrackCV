@@ -49,13 +49,13 @@ def load_cropped_frames_from_video(
     path = Path(video_path)
     if path.suffix.lower() not in VIDEO_EXTENSIONS:
         raise MediaLoadError(
-            "Only AVI and MP4 video files are supported in the current 2D workflow."
+            "Only AVI and MP4 data files are supported in the current 2D workflow."
         )
 
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         cap.release()
-        raise MediaLoadError(f"Cannot open video: {path}")
+        raise MediaLoadError(f"Cannot open data file: {path}")
 
     frames: list[np.ndarray] = []
     try:
@@ -70,7 +70,9 @@ def load_cropped_frames_from_video(
         cap.release()
 
     if len(frames) < 2:
-        raise MediaLoadError("Video must contain at least 2 readable frames for preview.")
+        raise MediaLoadError(
+            "Data file must contain at least 2 readable frames for preview."
+        )
     return frames
 
 

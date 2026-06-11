@@ -12,7 +12,6 @@ from actintrack_app.batch_manager import (
     all_workspace_condition_groups,
     clear_batches_registry_for_groups,
     list_batches,
-    prune_all_groups_without_samples,
     remove_batch_folders,
     remove_batch_from_registry,
     refresh_batch_stats,
@@ -309,7 +308,6 @@ def complete_workspace_purge(
 
     batches_cleared = clear_batches_registry_for_groups(root, groups)
     reset_batches_registry_workspace(root)
-    prune_all_groups_without_samples(root)
 
     save_crop_metadata(root / METADATA_DIR / CROP_METADATA_JSON, {"samples": {}})
     save_samples_csv(
@@ -494,3 +492,10 @@ def purge_all_annotated_processed(root: Path) -> dict[str, Any]:
         "samples_reset": len(ids),
         "processed_groups_cleared": deleted_dirs,
     }
+
+
+# v2 terminology aliases (breed/sample/data).
+purge_sample_annotations = purge_batch_annotations
+complete_sample_purge = complete_batch_purge
+purge_breed_annotations = purge_condition_annotations
+complete_breed_purge = complete_condition_purge
