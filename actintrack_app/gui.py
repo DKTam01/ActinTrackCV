@@ -176,10 +176,18 @@ from actintrack_app.utils import (
     sample_status_label,
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
+from actintrack_app.paths import (
+    app_root,
+    default_source_root,
+    default_workspace_root,
+    resource_path,
+    resource_root,
+)
 
 
-APP_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_ROOT = APP_ROOT / "raw_source"
+APP_ROOT = app_root()
+RESOURCE_ROOT = resource_root()
+DEFAULT_SOURCE_ROOT = default_source_root()
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
 DRAFT_TRACKING_DIR = "draft_tracking"
 METRIC_DEBOUNCE_MS = 2500
@@ -354,7 +362,7 @@ class MainWindow(QMainWindow):
         self._total_frames = 1
         self._reference_frame_index = 0
         self._orientation = OrientationState()
-        self._workspace_root = APP_ROOT
+        self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
         )
@@ -4719,7 +4727,7 @@ class MainWindow(QMainWindow):
         )
 
     def _menu_how_to_run(self) -> None:
-        readme = APP_ROOT / "README.md"
+        readme = resource_path("README.md")
         text = (
             "From the ActinTrackCV project folder:\n\n"
             "  ./run_app.sh\n"
