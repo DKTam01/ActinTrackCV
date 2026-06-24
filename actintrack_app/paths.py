@@ -13,6 +13,13 @@ from pathlib import Path
 #: Folder name used for the default user-writable workspace.
 WORKSPACE_DIR_NAME = "ActinTrackCV"
 
+#: Runtime icon candidates (relative to ``resource_root()``), preferred first.
+#: PNG/ICO are usable by ``QIcon`` at runtime; ``.icns`` is bundle-only.
+ICON_CANDIDATES = (
+    ("packaging", "assets", "app", "actintrackcv.png"),
+    ("packaging", "assets", "app", "actintrackcv.ico"),
+)
+
 
 def is_frozen() -> bool:
     """True when running from a frozen build (PyInstaller, etc.)."""
@@ -77,3 +84,16 @@ def default_source_root() -> Path:
     """
     docs = _documents_dir()
     return docs if docs is not None else Path.home()
+
+
+def icon_path() -> Path | None:
+    """Path to a runtime ``QIcon``-compatible app icon, or ``None`` if missing.
+
+    Resolves bundled icon assets through :func:`resource_path` so it works both
+    in development and in frozen builds.
+    """
+    for parts in ICON_CANDIDATES:
+        candidate = resource_path(*parts)
+        if candidate.is_file():
+            return candidate
+    return None

@@ -12,7 +12,7 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtGui import QBrush, QColor, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -176,10 +176,12 @@ from actintrack_app.utils import (
     sample_status_label,
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
+from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
     app_root,
     default_source_root,
     default_workspace_root,
+    icon_path,
     resource_path,
     resource_root,
 )
@@ -188,6 +190,14 @@ from actintrack_app.paths import (
 APP_ROOT = app_root()
 RESOURCE_ROOT = resource_root()
 DEFAULT_SOURCE_ROOT = default_source_root()
+
+
+def _app_qicon() -> Optional[QIcon]:
+    """Bundled app icon as a QIcon, or None if no runtime icon is available."""
+    path = icon_path()
+    if path is not None and path.is_file():
+        return QIcon(str(path))
+    return None
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
 DRAFT_TRACKING_DIR = "draft_tracking"
 METRIC_DEBOUNCE_MS = 2500
@@ -353,6 +363,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ActinTrackCV — 2D Arabidopsis F-actin Preprocessing")
         self.resize(1280, 720)
         self.setMinimumSize(960, 600)
+
+        _icon = _app_qicon()
+        if _icon is not None:
+            self.setWindowIcon(_icon)
 
         self._project_root: Optional[Path] = None
         self._current_sample: Optional[dict] = None
@@ -4742,6 +4756,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About ActinTrackCV",
+            f"ActinTrackCV {__version__}\n\n"
             "ActinTrackCV — Arabidopsis F-actin fluorescence microscopy: 2D preprocessing, "
             "orientation, ROI annotation, and cropped export for actin cable analysis.\n\n"
             "Suggest ROI from F-actin Signal is a computer vision helper that looks for areas "
@@ -4768,6 +4783,11 @@ class MainWindow(QMainWindow):
 def run_app() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("ActinTrackCV")
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName("ActinTrackCV")
+    icon = _app_qicon()
+    if icon is not None:
+        app.setWindowIcon(icon)
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

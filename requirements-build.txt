@@ -1,0 +1,7 @@
+# Build-time dependencies for packaging ActinTrackCV.
+# Installs the runtime requirements plus the packaging toolchain.
+#
+#   python -m pip install -r requirements-build.txt
+
+-r requirements.txt
+pyinstaller>=6.0,<7.0
