@@ -35,11 +35,13 @@ exists. Until then both use the default PyInstaller icon (runtime PNG still work
 
 ## Platform builds
 
-- **Windows** — PyInstaller one-folder app (`packaging/windows/`):
-  `dist/ActinTrackCV/ActinTrackCV.exe`.
-- **macOS** — PyInstaller `.app` bundle (`packaging/macos/`):
+- **macOS (current focus)** — PyInstaller `.app` bundle (`packaging/macos/`):
   `dist/ActinTrackCV.app`. Unsigned/un-notarized for now (Gatekeeper warning;
-  right-click → Open for internal builds).
+  right-click → Open for internal builds). `.dmg`, code signing, and notarization
+  are future work; `.icns` is still TODO.
+- **Windows** — scaffolded but not yet validated. A PyInstaller one-folder build
+  exists (`packaging/windows/`, output `dist/ActinTrackCV/ActinTrackCV.exe`) as a
+  future validation target; the current pre-release focus is macOS.
 
 Both bundle `README.md` and `packaging/assets/app/actintrackcv.png`, and neither
 bundles user/project data folders.

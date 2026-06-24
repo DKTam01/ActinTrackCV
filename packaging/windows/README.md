@@ -2,6 +2,10 @@
 
 Builds a debuggable one-folder, windowed Windows app. No installer yet.
 
+> **Status:** scaffolded but **not yet validated**. The current pre-release focus
+> is macOS (see `packaging/macos/`). This Windows build is a future validation
+> target and has not been run/verified on a clean Windows machine.
+
 ## Prerequisites
 
 - Windows 10/11

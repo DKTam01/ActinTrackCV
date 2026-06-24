@@ -4,6 +4,25 @@ Desktop app for **ROI-level / sample-level F-actin movement analysis** in 2D **A
 
 **Active import formats:** AVI and MP4 only. Image sequences and 3D/raw microscopy formats are postponed.
 
+## Download for macOS
+
+Most users do not need Python or the source code — download the prebuilt app from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
+
+1. Download `ActinTrackCV-0.2.0-macos-arm64.zip` from the latest release.
+2. Unzip it (double-click in Finder).
+3. Open `ActinTrackCV.app`.
+4. Because this build is **unsigned**, macOS may block the first launch. If so:
+   **Right-click (Control-click) `ActinTrackCV.app` → Open → Open.** After the first approval, it opens normally.
+
+Notes for this build:
+
+- This is a **macOS Apple Silicon pre-release / internal test build** (not a signed, notarized installer).
+- **AVI/MP4 loading still needs validation on clean Macs with real microscopy videos** — please report any playback issues.
+- Project/workspace data defaults to **`~/Documents/ActinTrackCV`** (created on first launch).
+- Your external AVI/MP4 **Data** files stay outside the app — they are never bundled or deleted.
+
+Developers who want to run from source or build the app: see [Install dependencies](#install-dependencies) and [Build from source](#build-from-source) below.
+
 ## Install dependencies
 
 From the project root:
@@ -174,30 +193,31 @@ python -m unittest discover -s tests -v
 
 See [`ActinTrackCV_User_Documentation_Refined.md`](ActinTrackCV_User_Documentation_Refined.md) for the full user guide. (Previous `.docx` copies have been removed from the repo.)
 
-## Packaging (in progress)
+## Build from source
 
-ActinTrackCV is being prepared for packaged Windows/macOS installs so non-developers can run it without a Python environment.
+Packaging is **macOS-first**. The frozen app never writes into its own bundle:
 
 - **Default workspace:** first launch creates/uses `~/Documents/ActinTrackCV` (not the app install directory). Manually chosen workspaces still load.
 - **External Data is never bundled or deleted:** your AVI/MP4 files and project folders (`raw/`, `processed/`, `previews/`, `metadata/`, `raw_source/`, `frames/`) stay outside the app.
 
-**Build the Windows one-folder app** (current validation target; not yet an installer wizard):
-
-```powershell
-python -m pip install -r requirements-build.txt
-powershell -ExecutionPolicy Bypass -File packaging/windows/build_windows.ps1
-```
-
-Output: `dist/ActinTrackCV/ActinTrackCV.exe`. This is a debuggable one-folder PyInstaller build. **Clean-machine Windows validation (AVI/MP4 loading on a VM without Python) is still required.** See [`packaging/windows/README.md`](packaging/windows/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
-
-**Build the macOS `.app` bundle** (scaffolded; debuggable build, not a signed/notarized installer):
+**Build the macOS `.app` bundle** (debuggable build; not a signed/notarized installer):
 
 ```bash
 python -m pip install -r requirements-build.txt
 bash packaging/macos/build_macos.sh
 ```
 
-Output: `dist/ActinTrackCV.app`. It is **unsigned** — Gatekeeper will warn on first launch, so right-click → Open. `.dmg`, signing/notarization, and clean-machine AVI/MP4 validation are still pending. See [`packaging/macos/README.md`](packaging/macos/README.md).
+Output: `dist/ActinTrackCV.app`. It is **unsigned** — Gatekeeper warns on first launch, so right-click → Open.
+
+Package the bundle into a release zip with `ditto` (preferred over plain `zip`, which can corrupt the `.app` bundle's symlinks/metadata):
+
+```bash
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-0.2.0-macos-arm64.zip
+```
+
+`.dmg`, code signing, and notarization are future work. See [`packaging/macos/README.md`](packaging/macos/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
+
+**Windows:** Windows packaging is scaffolded but not yet validated. A Windows one-folder PyInstaller build exists as a future validation target (`packaging/windows/`, output `dist/ActinTrackCV/ActinTrackCV.exe`), but the current pre-release focus is macOS. See [`packaging/windows/README.md`](packaging/windows/README.md).
 
 ## Not implemented
 

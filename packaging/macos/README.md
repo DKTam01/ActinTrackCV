@@ -28,6 +28,17 @@ Output: `dist/ActinTrackCV.app`
 
 Options: `SKIP_TESTS=1` and `KEEP_OLD=1` as environment variables.
 
+## Package for release
+
+Zip the bundle with `ditto` (preferred over plain `zip`, which can break the
+`.app` bundle's symlinks/metadata):
+
+```bash
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-0.2.0-macos-arm64.zip
+```
+
+Upload the zip as a GitHub Release asset. Do not commit `dist/` or the zip.
+
 ## Open the app
 
 ```bash
@@ -72,7 +83,7 @@ videos. First launch creates/uses `~/Documents/ActinTrackCV` (never inside
 On a Mac that did not build the app (ideally without the dev environment):
 
 - [ ] `ActinTrackCV.app` launches (right-click → Open the first time).
-- [ ] About shows `ActinTrackCV 0.1.0`.
+- [ ] About shows `ActinTrackCV 0.2.0`.
 - [ ] App/runtime icon appears.
 - [ ] Help → How to Run does not crash.
 - [ ] Workspace is created at `~/Documents/ActinTrackCV`, not inside the `.app`.
