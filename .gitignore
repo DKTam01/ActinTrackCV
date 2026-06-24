@@ -10,6 +10,10 @@ __pycache__/
 venv/
 .ipynb_checkpoints/
 
+# PyInstaller build artifacts
+/build/
+/dist/
+
 # Workspace runtime metadata (root only; tests/fixtures exempt)
 /metadata/
 !/tests/fixtures/v1_workspace/metadata/
@@ -33,6 +37,16 @@ venv/
 *.jpeg
 *.mp4
 *.avi
+
+# Packaging assets must be tracked despite the global *.png ignore above
+!packaging/assets/
+!packaging/assets/**/*.png
+!packaging/assets/**/*.ico
+!packaging/assets/**/*.icns
+
+# Documentation source of truth is Markdown; do not commit Word docs
+*.docx
+~$*.docx
 
 # Project-specific
 models/

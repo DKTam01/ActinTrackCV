@@ -172,13 +172,25 @@ python -m unittest discover -s tests -v
 
 ## User documentation
 
-See [`ActinTrackCV_User_Documentation_Refined.docx`](ActinTrackCV_User_Documentation_Refined.docx) for the full user guide.
+Markdown is the source of truth for documentation. See [`ActinTrackCV_User_Documentation_Refined.md`](ActinTrackCV_User_Documentation_Refined.md) for the full user guide. (Previous `.docx` copies have been removed from the repo.)
 
-Regenerate the DOCX from Markdown (if pandoc is installed):
+## Packaging (in progress)
 
-```bash
-bash scripts/build_refined_user_documentation.sh
+ActinTrackCV is being prepared for packaged Windows/macOS installs so non-developers can run it without a Python environment.
+
+- **Default workspace:** first launch creates/uses `~/Documents/ActinTrackCV` (not the app install directory). Manually chosen workspaces still load.
+- **External Data is never bundled or deleted:** your AVI/MP4 files and project folders (`raw/`, `processed/`, `previews/`, `metadata/`, `raw_source/`, `frames/`) stay outside the app.
+
+**Build the Windows one-folder app** (current validation target; not yet an installer wizard):
+
+```powershell
+python -m pip install -r requirements-build.txt
+powershell -ExecutionPolicy Bypass -File packaging/windows/build_windows.ps1
 ```
+
+Output: `dist/ActinTrackCV/ActinTrackCV.exe`. This is a debuggable one-folder PyInstaller build. **Clean-machine Windows validation (AVI/MP4 loading on a VM without Python) is still required.** See [`packaging/windows/README.md`](packaging/windows/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
+
+macOS packaging is planned but not yet implemented.
 
 ## Not implemented
 
