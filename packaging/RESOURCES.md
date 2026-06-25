@@ -13,8 +13,8 @@ These are resolved relative to `resource_root()`:
 packaging/assets/
   app/
     actintrackcv.png      ← runtime window/app icon (QIcon)
-    actintrackcv.ico      ← TODO (Windows .exe / installer icon)
-    actintrackcv.icns     ← TODO (macOS .app bundle icon)
+    actintrackcv.ico      ← Windows .exe / installer icon
+    actintrackcv.icns     ← macOS .app bundle icon
   screenshots/            ← reserved for future docs screenshots
 ```
 
@@ -24,24 +24,24 @@ packaging/assets/
 
 ## Icon assets
 - `packaging/assets/app/actintrackcv.png` — present (final app icon).
-- `packaging/assets/app/actintrackcv.ico` — TODO (Windows .exe / installer icon).
-- `packaging/assets/app/actintrackcv.icns` — TODO (macOS .app bundle icon).
+- `packaging/assets/app/actintrackcv.ico` — present (Windows .exe icon).
+- `packaging/assets/app/actintrackcv.icns` — present (macOS .app bundle icon).
 
-The `.png` is used at runtime by Qt. The `.ico`/`.icns` are needed by the
-installer/bundle steps in a later phase and are not loaded by the running app.
-The Windows spec wires the `.ico` into the EXE automatically once the file
-exists; the macOS spec wires the `.icns` into the `.app` automatically once it
-exists. Until then both use the default PyInstaller icon (runtime PNG still works).
+The `.png` is used at runtime by Qt. The `.ico`/`.icns` are consumed by the
+platform build steps and are not normally loaded by the running app. The Windows
+spec embeds the `.ico` into the EXE (and bundles it as a runtime fallback); the
+macOS spec wires the `.icns` into the `.app` bundle.
 
 ## Platform builds
 
-- **macOS (current focus)** — PyInstaller `.app` bundle (`packaging/macos/`):
+- **macOS** — PyInstaller `.app` bundle (`packaging/macos/`):
   `dist/ActinTrackCV.app`. Unsigned/un-notarized for now (Gatekeeper warning;
   right-click → Open for internal builds). `.dmg`, code signing, and notarization
-  are future work; `.icns` is still TODO.
-- **Windows** — scaffolded but not yet validated. A PyInstaller one-folder build
-  exists (`packaging/windows/`, output `dist/ActinTrackCV/ActinTrackCV.exe`) as a
-  future validation target; the current pre-release focus is macOS.
+  are future work.
+- **Windows** — PyInstaller one-folder build (`packaging/windows/`, output
+  `dist/ActinTrackCV/ActinTrackCV.exe`), packaged as a zip pre-release. Must be
+  built on Windows 10/11 x64 (no cross-compile). Unsigned (SmartScreen warning;
+  More info → Run anyway). Installer wizard and code signing are future work.
 
 Both bundle `README.md` and `packaging/assets/app/actintrackcv.png`, and neither
 bundles user/project data folders.

@@ -21,6 +21,23 @@ Notes for this build:
 - Project/workspace data defaults to **`~/Documents/ActinTrackCV`** (created on first launch).
 - Your external AVI/MP4 **Data** files stay outside the app — they are never bundled or deleted.
 
+## Download for Windows
+
+A **Windows 10/11 x64 pre-release** is available as a one-folder zip (not an installer wizard yet).
+
+1. Download `ActinTrackCV-0.2.0-windows-x64-onefolder.zip` from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
+2. Unzip it.
+3. Open the `ActinTrackCV` folder.
+4. Double-click `ActinTrackCV.exe`.
+5. **Keep the whole folder together** — do not move `ActinTrackCV.exe` out on its own (it needs the `_internal` folder next to it).
+
+Notes for this build:
+
+- This is an **unsigned Windows pre-release / internal test build**. Windows SmartScreen may warn on first launch — click **More info → Run anyway**.
+- Project/workspace data defaults to **`Documents\ActinTrackCV`** under your user profile (created on first launch), not inside the app folder.
+- Your external AVI/MP4 **Data** files stay outside the app — they are never bundled or deleted.
+- A signed setup wizard is future work.
+
 Developers who want to run from source or build the app: see [Install dependencies](#install-dependencies) and [Build from source](#build-from-source) below.
 
 ## Install dependencies
@@ -217,7 +234,20 @@ ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-0.2.0-macos-arm64.zi
 
 `.dmg`, code signing, and notarization are future work. See [`packaging/macos/README.md`](packaging/macos/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
 
-**Windows:** Windows packaging is scaffolded but not yet validated. A Windows one-folder PyInstaller build exists as a future validation target (`packaging/windows/`, output `dist/ActinTrackCV/ActinTrackCV.exe`), but the current pre-release focus is macOS. See [`packaging/windows/README.md`](packaging/windows/README.md).
+**Build the Windows one-folder app** (must run on Windows 10/11 x64 — PyInstaller does not cross-compile):
+
+```powershell
+python -m pip install -r requirements-build.txt
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
+```
+
+Output: `dist\ActinTrackCV\ActinTrackCV.exe` (one-folder, windowed). Package the **whole** folder into a release zip:
+
+```powershell
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.0-windows-x64-onefolder.zip -Force
+```
+
+The build is **unsigned** (SmartScreen warns; More info → Run anyway). An installer wizard and code signing are future work. See [`packaging/windows/README.md`](packaging/windows/README.md).
 
 ## Not implemented
 

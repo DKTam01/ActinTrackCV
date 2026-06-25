@@ -1,10 +1,12 @@
 # Windows build (PyInstaller, one-folder)
 
-Builds a debuggable one-folder, windowed Windows app. No installer yet.
+Builds a debuggable one-folder, windowed Windows app for Windows 10/11 x64.
+This is a **one-folder pre-release** (zip), **not** an installer wizard yet.
 
-> **Status:** scaffolded but **not yet validated**. The current pre-release focus
-> is macOS (see `packaging/macos/`). This Windows build is a future validation
-> target and has not been run/verified on a clean Windows machine.
+> **Must run on Windows.** PyInstaller does not cross-compile, so the `.exe`
+> has to be built on a Windows 10/11 x64 machine — it cannot be produced from
+> macOS. The spec/scripts/docs here are kept ready so the Windows build is a
+> turnkey run.
 
 ## Prerequisites
 
@@ -33,10 +35,35 @@ Output: `dist\ActinTrackCV\ActinTrackCV.exe`
 
 - `README.md` → bundle root, read via `resource_path("README.md")`.
 - `packaging/assets/app/actintrackcv.png` → `packaging/assets/app/`, read via `icon_path()`.
+- `packaging/assets/app/actintrackcv.ico` → embedded as the `.exe` icon, and
+  bundled as a resource fallback.
 - OpenCV FFmpeg/videoio DLLs (`collect_dynamic_libs("cv2")`) for AVI/MP4.
 
 Frozen builds resolve resources under PyInstaller's `sys._MEIPASS` via
 `actintrack_app.paths.resource_root()`.
+
+## Package as a release zip
+
+Zip the **whole** one-folder app (the `.exe` needs the `_internal` folder and
+bundled files next to it — do not zip the `.exe` alone). From the repo root:
+
+```powershell
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.0-windows-x64-onefolder.zip -Force
+```
+
+Verify the zip contains a top-level `ActinTrackCV\` folder with `ActinTrackCV.exe`
+and `_internal\` inside it, and no user data / videos / build cache.
+
+## End-user instructions (unsigned pre-release)
+
+1. Download `ActinTrackCV-0.2.0-windows-x64-onefolder.zip`.
+2. Unzip it.
+3. Open the `ActinTrackCV` folder.
+4. Double-click `ActinTrackCV.exe`.
+5. Keep the whole folder together — do **not** move `ActinTrackCV.exe` out on its own.
+
+Because the build is **unsigned**, Windows SmartScreen may warn on first launch:
+click **More info → Run anyway**. A signed setup wizard is future work.
 
 ## What is NOT bundled (by design)
 
@@ -46,6 +73,6 @@ videos. First launch creates/uses `~/Documents/ActinTrackCV`.
 
 ## TODO before the installer phase
 
-- Add `packaging/assets/app/actintrackcv.ico` (the spec wires the EXE icon
-  automatically once the file exists).
 - Manually validate AVI/MP4 loading on a clean Windows VM without Python.
+- Installer wizard (Inno Setup / NSIS / WiX) — not in this phase.
+- Code signing certificate to reduce SmartScreen warnings.

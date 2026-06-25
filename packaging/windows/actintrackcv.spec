@@ -27,13 +27,19 @@ ENTRY = str(REPO_ROOT / "actintrack_app" / "main.py")
 # which resolves under sys._MEIPASS in frozen builds:
 #   resource_path("README.md")                                     -> <bundle>/README.md
 #   resource_path("packaging","assets","app","actintrackcv.png")   -> <bundle>/packaging/assets/app/...
+_ASSET_DIR = REPO_ROOT / "packaging" / "assets" / "app"
 datas = [
     (str(REPO_ROOT / "README.md"), "."),
-    (
-        str(REPO_ROOT / "packaging" / "assets" / "app" / "actintrackcv.png"),
-        "packaging/assets/app",
-    ),
+    (str(_ASSET_DIR / "actintrackcv.png"), "packaging/assets/app"),
 ]
+
+# Windows EXE icon: embed the .ico when present. Also bundle it as a resource so
+# actintrack_app.paths.icon_path() can fall back to it at runtime; the .png stays
+# the primary runtime QIcon source.
+_ico = _ASSET_DIR / "actintrackcv.ico"
+exe_icon = str(_ico) if _ico.is_file() else None
+if _ico.is_file():
+    datas.append((str(_ico), "packaging/assets/app"))
 
 # OpenCV video backends (FFmpeg DLL) are required for AVI/MP4 via cv2.VideoCapture.
 # Pull them explicitly so video loading works on a clean machine. PyQt6, pandas,
@@ -42,10 +48,6 @@ binaries = collect_dynamic_libs("cv2")
 
 # Add hidden imports here only with evidence from a real Windows build failure.
 hiddenimports = []
-
-# Windows EXE icon needs a .ico (not created yet -> see packaging/RESOURCES.md).
-_ico = REPO_ROOT / "packaging" / "assets" / "app" / "actintrackcv.ico"
-exe_icon = str(_ico) if _ico.is_file() else None
 
 
 a = Analysis(
