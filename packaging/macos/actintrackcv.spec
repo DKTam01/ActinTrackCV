@@ -43,6 +43,16 @@ datas = [
 # Bundle the standalone ffmpeg binary that imageio-ffmpeg ships, so
 # actintrack_app.video_normalize can pad odd-dimension imports to even at runtime
 # (imageio_ffmpeg.get_ffmpeg_exe() resolves inside the frozen bundle).
+# Fail fast if the build interpreter lacks it: otherwise PyInstaller silently
+# ships a build that errors with ModuleNotFoundError at import time.
+try:
+    import imageio_ffmpeg  # noqa: F401
+except ImportError as exc:
+    raise SystemExit(
+        "imageio-ffmpeg is required to build ActinTrackCV (it bundles ffmpeg "
+        "for odd-dimension video import). Install build deps first:\n"
+        "    python -m pip install -r requirements-build.txt"
+    ) from exc
 datas += collect_data_files("imageio_ffmpeg")
 
 # OpenCV video backends (FFmpeg dylib) are required for AVI/MP4 via cv2.VideoCapture.

@@ -56,6 +56,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not installed in this environment. Run: python -m pip install -r requirements-build.txt"
 }
 
+# imageio-ffmpeg must be importable by THIS interpreter so the spec can bundle
+# the ffmpeg binary + module used to normalize odd-dimension video imports.
+# Without it PyInstaller only warns and ships a build that crashes/errors at
+# import time, so fail fast here instead.
+python -c "import imageio_ffmpeg" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    throw "imageio-ffmpeg is not installed in this environment (needed to bundle ffmpeg for odd-dimension video import). Run: python -m pip install -r requirements-build.txt"
+}
+
 if (-not $KeepOld) {
     Write-Host "Cleaning old build/ and dist/ActinTrackCV/ ..."
     $BuildDir = Join-Path $RepoRoot "build"
