@@ -29,16 +29,23 @@ def load_video_frame(video_path: str | Path, frame_index: int = 0) -> np.ndarray
             # Some codecs report 0; still try to read
             pass
         elif frame_index < 0 or frame_index >= count:
-            cap.release()
             raise MediaLoadError(
                 f"Frame index {frame_index} out of range (0–{max(0, count - 1)})"
             )
 
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         ok, frame = cap.read()
-        if not ok or frame is None:
+        if not ok or frame is None or getattr(frame, "size", 0) == 0:
             raise MediaLoadError(f"No readable frame at index {frame_index}: {path}")
         return frame
+    except cv2.error as exc:
+        # Some codecs/containers (notably certain AVI files in frozen Windows
+        # OpenCV builds) fail inside the decoder rather than returning a clean
+        # (False, None). Normalize that to MediaLoadError so callers' existing
+        # MediaLoadError handling applies instead of crashing the app.
+        raise MediaLoadError(
+            f"Failed to decode frame {frame_index} from {path.name}: {exc}"
+        ) from exc
     finally:
         cap.release()
 
@@ -63,8 +70,31 @@ def get_video_frame_count(video_path: str | Path) -> int:
         if n == 0:
             raise MediaLoadError(f"Data file has no readable frames: {path}")
         return n
+    except cv2.error as exc:
+        raise MediaLoadError(
+            f"Failed to read frames from {path.name}: {exc}"
+        ) from exc
     finally:
         cap.release()
+
+
+def assert_video_readable(video_path: str | Path) -> int:
+    """Verify a stored video opens, reports frames, and decodes a non-empty frame 0.
+
+    Returns the frame count on success. Raises ``MediaLoadError`` if the file
+    cannot be opened, reports no frames, or its first frame fails to decode
+    (including decoder failures OpenCV raises as ``cv2.error``, now normalized
+    to ``MediaLoadError`` by the loaders above).
+
+    Used to reject a broken import before it becomes a Sample, rather than
+    letting the failure surface later when the preview tries to decode it.
+    """
+    path = Path(video_path)
+    total = get_video_frame_count(path)
+    frame = load_video_frame(path, 0)
+    if frame is None or getattr(frame, "size", 0) == 0:
+        raise MediaLoadError(f"Data file decoded an empty first frame: {path.name}")
+    return total
 
 
 def load_image(image_path: str | Path) -> np.ndarray:

@@ -14,6 +14,14 @@ venv/
 /build/
 /dist/
 
+# Release archives (built locally and attached to GitHub Releases; not tracked)
+*.zip
+
+# Local sample workspace (runtime data tree mirroring raw_source; not source).
+# Sample videos are already covered by the media rules below; this also keeps
+# generated workspace metadata (samples.csv, crop_metadata.json) out of git.
+/samples/
+
 # Workspace runtime metadata (root only; tests/fixtures exempt)
 /metadata/
 !/tests/fixtures/v1_workspace/metadata/

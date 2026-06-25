@@ -46,7 +46,7 @@ Zip the **whole** one-folder app (the `.exe` needs the `_internal` folder and
 bundled files next to it — do not zip the `.exe` alone). From the repo root:
 
 ```powershell
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.0-windows-x64.zip -Force
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.1-windows-x64-onefolder.zip -Force
 ```
 
 Verify the zip contains a top-level `ActinTrackCV\` folder with `ActinTrackCV.exe`
@@ -54,7 +54,7 @@ and `_internal\` inside it.
 
 ## End-user instructions (unsigned pre-release)
 
-1. Download `ActinTrackCV-0.2.0-windows-x64.zip`.
+1. Download `ActinTrackCV-0.2.1-windows-x64-onefolder.zip`.
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.

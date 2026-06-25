@@ -3655,7 +3655,7 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Add Sample", str(exc))
             return
-        except OSError as exc:
+        except (MediaLoadError, OSError) as exc:
             QMessageBox.warning(self, "Add Sample", f"Import failed: {exc}")
             return
         self._set_last_import_breed(breed)
@@ -4411,7 +4411,7 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Replace Data", str(exc))
             return
-        except OSError as exc:
+        except (MediaLoadError, OSError) as exc:
             QMessageBox.warning(self, "Replace Data", f"Import failed: {exc}")
             return
         final_batch_name = str(updated.get("batch_name", batch_name))

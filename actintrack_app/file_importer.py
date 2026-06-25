@@ -36,6 +36,7 @@ from actintrack_app.utils import (
     relative_to_root,
 )
 from actintrack_app.video_normalize import store_imported_video
+from actintrack_app.video_processing import assert_video_readable
 
 
 def _utc_now_iso() -> str:
@@ -171,8 +172,8 @@ def import_files(
         if not is_supported_file(src_path):
             raise ValueError(
                 f"Unsupported file type: {src_path.suffix}. "
-                "Supported: .avi, .mp4, .tif, .tiff, .oib, .oif, .oir, "
-                ".png, .jpg, .jpeg"
+                "Only AVI and MP4 data files are supported in the current "
+                "workflow."
             )
 
         is_video = is_video_path(src_path)
@@ -184,6 +185,11 @@ def import_files(
         dest_name = f"{sample_id}{src_path.suffix.lower()}"
         dest_path = raw_dir / dest_name
         store_imported_video(src_path, dest_path)
+        if is_video:
+            # Reject a stored video that cannot decode its first frame so we
+            # never finalize a Sample that would crash/blank the preview. The
+            # caller (create_sample_from_data) rolls back the empty batch.
+            assert_video_readable(dest_path)
 
         record = _build_sample_record(
             sample_id=sample_id,

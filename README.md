@@ -27,7 +27,7 @@ Notes for this build:
 
 A **Windows 10/11 x64 pre-release** is available as a one-folder zip (not an installer wizard yet).
 
-1. Download `ActinTrackCV-0.2.0-windows-x64.zip` from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
+1. Download `ActinTrackCV-0.2.1-windows-x64-onefolder.zip` from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.
@@ -244,7 +244,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
 Output: `dist\ActinTrackCV\ActinTrackCV.exe` (one-folder, windowed). Package the **whole** folder into a release zip:
 
 ```powershell
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.0-windows-x64.zip -Force
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.1-windows-x64-onefolder.zip -Force
 ```
 
 The build is **unsigned** (SmartScreen warns; More info → Run anyway). An installer wizard and code signing are future work. See [`packaging/windows/README.md`](packaging/windows/README.md).

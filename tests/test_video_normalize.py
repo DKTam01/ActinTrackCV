@@ -132,5 +132,62 @@ class NormalizeIntegrationTest(unittest.TestCase):
             self.assertEqual(src.read_bytes(), dest.read_bytes())
 
 
+class StoreRoutingTest(unittest.TestCase):
+    """store_imported_video routing without invoking ffmpeg."""
+
+    def test_even_dimensions_are_copied_byte_for_byte(self) -> None:
+        with mock.patch.object(
+            video_normalize, "needs_even_padding", return_value=False
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                src = Path(tmp) / "even.mp4"
+                src.write_bytes(b"raw-bytes-123")
+                dest = Path(tmp) / "stored.mp4"
+                video_normalize.store_imported_video(src, dest)
+                self.assertEqual(dest.read_bytes(), b"raw-bytes-123")
+
+    def test_odd_dimensions_are_normalized_not_copied(self) -> None:
+        with mock.patch.object(
+            video_normalize, "needs_even_padding", return_value=True
+        ), mock.patch.object(
+            video_normalize, "normalize_video_to_even"
+        ) as norm:
+            video_normalize.store_imported_video("odd.mp4", "stored.mp4")
+            norm.assert_called_once()
+
+
+class NormalizeFailureTest(unittest.TestCase):
+    """A failed normalization surfaces MediaLoadError, not a raw subprocess error."""
+
+    def test_ffmpeg_nonzero_exit_raises_media_load_error(self) -> None:
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout=b"", stderr=b"some ffmpeg failure\n"
+        )
+        with mock.patch.object(
+            video_normalize, "_ffmpeg_exe", return_value="ffmpeg"
+        ), mock.patch.object(
+            video_normalize.subprocess, "run", return_value=completed
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                src = Path(tmp) / "odd.mp4"
+                src.write_bytes(b"not-a-real-video")
+                dest = Path(tmp) / "out.mp4"
+                with self.assertRaises(video_normalize.MediaLoadError):
+                    video_normalize.normalize_video_to_even(src, dest)
+
+    def test_ffmpeg_missing_raises_media_load_error(self) -> None:
+        with mock.patch.object(
+            video_normalize, "_ffmpeg_exe", return_value="ffmpeg"
+        ), mock.patch.object(
+            video_normalize.subprocess, "run", side_effect=OSError("not found")
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                src = Path(tmp) / "odd.mp4"
+                src.write_bytes(b"not-a-real-video")
+                dest = Path(tmp) / "out.mp4"
+                with self.assertRaises(video_normalize.MediaLoadError):
+                    video_normalize.normalize_video_to_even(src, dest)
+
+
 if __name__ == "__main__":
     unittest.main()
