@@ -458,6 +458,14 @@ angle_result_choices <- function(results) {
   stats::setNames(results$result_id, labels)
 }
 
+compact_result_choices <- function(results) {
+  if (is.null(results) || nrow(results) == 0) return(character())
+  source <- ifelse(nzchar(results$source_name), results$source_name, "Unnamed")
+  method <- vapply(results$analysis_method, analysis_method_label, character(1))
+  labels <- paste(source, method, sep = " · ")
+  stats::setNames(results$result_id, labels)
+}
+
 selected_row <- function(df, id, key) {
   if (is.null(df) || nrow(df) == 0 || is.null(id) || !nzchar(id)) return(NULL)
   rows <- df[df[[key]] == id, , drop = FALSE]
@@ -684,4 +692,39 @@ summarize_groups <- function(results) {
 
 safe_output_file <- function(path) {
   is.character(path) && length(path) == 1 && nzchar(path) && file.exists(path)
+}
+
+workflow_progress_step <- function(label, detail = "", state = c("pending", "current", "done")) {
+  state <- match.arg(state)
+  icon_name <- switch(
+    state,
+    done = "circle-check",
+    current = "circle-dot",
+    pending = "circle"
+  )
+  htmltools::div(
+    class = paste("workflow-progress-step", paste0("is-", state)),
+    htmltools::span(class = "workflow-progress-icon", fontawesome::fa(icon_name, height = "12px")),
+    htmltools::div(
+      class = "workflow-progress-copy",
+      htmltools::strong(label),
+      if (nzchar(detail)) htmltools::tags$small(detail)
+    )
+  )
+}
+
+workflow_progress_strip <- function(steps) {
+  htmltools::div(class = "workflow-progress", steps)
+}
+
+next_step_banner <- function(title, detail = "", action = NULL, tone = "primary") {
+  htmltools::div(
+    class = paste("next-step-banner", paste0("next-step-banner-", tone)),
+    htmltools::div(
+      class = "next-step-copy",
+      htmltools::strong(title),
+      if (nzchar(detail)) htmltools::p(detail)
+    ),
+    if (!is.null(action)) htmltools::div(class = "next-step-action", action)
+  )
 }

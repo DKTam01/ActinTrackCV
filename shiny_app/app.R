@@ -61,7 +61,7 @@ page_heading <- function(kicker, title, description, actions = NULL) {
     class = "page-heading",
     div(
       class = "page-heading-copy",
-      div(class = "page-kicker", kicker),
+      if (!is.null(kicker) && nzchar(kicker)) div(class = "page-kicker", kicker),
       h1(title),
       p(description)
     ),
@@ -105,13 +105,13 @@ workflow_nav_choice <- function(step, icon_name, title, detail) {
 }
 
 navigation_choices <- list(
-  workflow_nav_choice("1", "house", "Project", "Workspace, files, and preview"),
-  workflow_nav_choice("2", "crosshairs", "Track", "Set ROI and run analysis"),
-  workflow_nav_choice("3", "chart-line", "Review", "QC, motion, and angles"),
-  workflow_nav_choice("4", "chart-column", "Compare", "Summarize by group")
+  workflow_nav_choice("1", "house", "Project", "Workspace & video"),
+  workflow_nav_choice("2", "crosshairs", "Track", "ROI & analysis"),
+  workflow_nav_choice("3", "chart-line", "Review", "QC & metrics"),
+  workflow_nav_choice("4", "chart-column", "Compare", "By group")
 )
 
-reference_navigation <- workflow_nav_choice("·", "layer-group", "Z-stacks", "Microscopy file inventory")
+reference_navigation <- workflow_nav_choice("·", "layer-group", "Files", "Z-stack inventory")
 
 all_navigation_choices <- c(navigation_choices, list(reference_navigation))
 all_section_values <- c("project", "track", "review", "compare", "library")
@@ -197,13 +197,13 @@ ui <- page_sidebar(
     class = "app-sidebar",
     div(
       class = "sidebar-section sidebar-context",
-      div(class = "sidebar-label", "SESSION"),
+      div(class = "sidebar-label", "WORKSPACE"),
       uiOutput("sidebar_workspace_chip"),
       uiOutput("sidebar_active_source")
     ),
     div(
       class = "sidebar-section app-navigation",
-      div(class = "sidebar-label", "YOUR WORKFLOW"),
+      div(class = "sidebar-label", "STEPS"),
       radioButtons(
         "section",
         NULL,
@@ -213,13 +213,37 @@ ui <- page_sidebar(
       )
     ),
     div(
+      class = "sidebar-section sidebar-results is-empty",
+      id = "sidebar-results-panel",
+      div(class = "sidebar-results-empty", "No saved runs yet"),
+      div(class = "sidebar-label", "ACTIVE RUN"),
+      tags$small(class = "sidebar-hint", "Review & Compare"),
+      selectInput(
+        "result_file",
+        NULL,
+        choices = c("—" = ""),
+        width = "100%"
+      )
+    ),
+    div(
+      class = "sidebar-section sidebar-quick-action",
+      uiOutput("sidebar_quick_action")
+    ),
+    div(
       class = "sidebar-footer",
       uiOutput("sidebar_footer")
     )
   ),
   tags$head(
-    tags$link(rel = "stylesheet", type = "text/css", href = "app.css")
+    tags$link(rel = "stylesheet", type = "text/css", href = "app.css"),
+    tags$script(HTML("
+      $(document).on('click', '.recent-run-open', function(event) {
+        event.preventDefault();
+        Shiny.setInputValue('recent_result_open', $(this).data('resultId'), {priority: 'event'});
+      });
+    "))
   ),
+  uiOutput("mobile_context_bar"),
   navset_hidden(
     id = "main_nav",
     nav_panel(
@@ -228,24 +252,10 @@ ui <- page_sidebar(
       div(
         class = "app-view",
         page_heading(
-          "STEP 1 · PROJECT",
-          "Choose workspace and video",
-          "Open your ActinTrackCV project folder, pick one video from that workspace, and confirm the live preview before tracking.",
-          div(
-            class = "page-heading-actions",
-            input_task_button(
-              "go_review",
-              "Review results",
-              icon = fontawesome::fa("chart-line"),
-              class = "btn-outline-secondary"
-            ),
-            input_task_button(
-              "go_tracking",
-              "Track active video",
-              icon = fontawesome::fa("crosshairs"),
-              class = "btn-primary"
-            )
-          )
+          NULL,
+          "Project",
+          "Open your ActinTrackCV folder and choose a time-lapse video. Confirm the preview before running analysis.",
+          uiOutput("project_next_action")
         ),
         card(
           class = "surface-card source-studio-card",
@@ -306,24 +316,17 @@ ui <- page_sidebar(
             )
           )
         ),
-        uiOutput("overview_metrics"),
-        layout_columns(
-          col_widths = c(7, 5),
-          card(
-            class = "surface-card",
-            card_header(
-              div(
-                strong("Recent tracking runs"),
-                span(class = "card-subtitle", "Newest validated outputs first")
-              )
-            ),
-            card_body(uiOutput("recent_results"))
+        uiOutput("workflow_progress"),
+        uiOutput("project_summary_metrics"),
+        card(
+          class = "surface-card",
+          card_header(
+            div(
+              strong("Recent runs"),
+              span(class = "card-subtitle", "Newest outputs first")
+            )
           ),
-          card(
-            class = "surface-card status-card",
-            card_header(strong("Project readiness")),
-            card_body(uiOutput("readiness_panel"))
-          )
+          card_body(uiOutput("recent_results"))
         )
       )
     ),
@@ -333,8 +336,8 @@ ui <- page_sidebar(
       div(
         class = "app-view",
         page_heading(
-          "STEP 2 · TRACK",
-          "Configure and run analysis",
+          NULL,
+          "Track",
           "The active video from Project is used here. Set ROI on the preview frame, then run landmark tracking or optical flow.",
           div(
             class = "page-heading-actions",
@@ -352,6 +355,7 @@ ui <- page_sidebar(
             )
           )
         ),
+        uiOutput("track_empty_gate"),
         uiOutput("tracking_source_banner"),
         layout_columns(
           col_widths = c(4, 8),
@@ -360,44 +364,31 @@ ui <- page_sidebar(
             card_header(strong("Analysis setup")),
             card_body(
               div(
-                class = "control-section",
+                class = "control-section control-section-primary",
                 h5("Analysis method"),
-                radioButtons(
-                  "analysis_method",
-                  NULL,
-                  choiceNames = c(
-                    "Landmark tracking (bright actin points)",
-                    "Optical flow (dense Lifeact meshwork)"
-                  ),
-                  choiceValues = c("landmark_tracking", "optical_flow"),
-                  selected = "landmark_tracking"
+                div(
+                  class = "method-choice-group",
+                  radioButtons(
+                    "analysis_method",
+                    NULL,
+                    choiceNames = c("Landmark tracking", "Optical flow"),
+                    choiceValues = c("landmark_tracking", "optical_flow"),
+                    selected = "landmark_tracking"
+                  )
                 ),
                 p(
                   class = "control-note",
-                  "Use optical flow when bright-point tracking loses identity on dense meshwork. Landmark tracking remains available for sparse puncta."
+                  "Landmark tracking follows bright puncta. Optical flow suits dense Lifeact meshwork where points lose identity."
                 )
               ),
               div(
-                class = "control-section",
-                h5("Frame and orientation"),
-                radioButtons(
-                  "rotation",
-                  "Rotation",
-                  choices = c("0°" = 0, "90°" = 90, "180°" = 180, "270°" = 270),
-                  selected = 0,
-                  inline = TRUE
-                ),
-                checkboxInput("flip_horizontal", "Mirror horizontally", FALSE),
-                uiOutput("frame_control")
-              ),
-              div(
-                class = "control-section",
+                class = "control-section control-section-primary",
                 div(
                   class = "control-heading-row",
                   h5("Region of interest"),
                   actionLink("use_full_frame", "Use full frame")
                 ),
-                p(class = "control-note", "Drag over the image or enter pixel bounds."),
+                p(class = "control-note", "Drag over the preview or enter pixel bounds."),
                 div(
                   class = "numeric-grid",
                   numericInput("roi_x", "X", 0, min = 0, step = 1),
@@ -406,16 +397,33 @@ ui <- page_sidebar(
                   numericInput("roi_height", "Height", 0, min = 1, step = 1)
                 )
               ),
+              tags$details(
+                class = "control-accordion",
+                open = NA,
+                tags$summary("Frame and orientation"),
+                div(
+                  class = "control-section control-section-nested",
+                  radioButtons(
+                    "rotation",
+                    "Rotation",
+                    choices = c("0°" = 0, "90°" = 90, "180°" = 180, "270°" = 270),
+                    selected = 0,
+                    inline = TRUE
+                  ),
+                  checkboxInput("flip_horizontal", "Mirror horizontally", FALSE),
+                  uiOutput("frame_control")
+                )
+              ),
               conditionalPanel(
                 "input.analysis_method == 'landmark_tracking'",
                 div(
-                  class = "control-section",
+                  class = "control-section control-section-nested",
                   h5("Point matching"),
                   radioButtons(
                     "tracking_method",
                     "Tracking method",
                     choiceNames = c(
-                      "Brightest nearby points (Dr. Ju method)",
+                      "Brightest nearby points",
                       "Template matching"
                     ),
                     choiceValues = c("brightest_local", "template"),
@@ -424,55 +432,72 @@ ui <- page_sidebar(
                   div(
                     class = "control-note tracking-method-note",
                     uiOutput("tracking_method_help")
-                  ),
-                  div(
-                    class = "numeric-grid",
-                    numericInput("num_points", "Starting points", 10, min = 1, max = 50),
-                    numericInput("min_spacing", "Min point spacing (px)", 20, min = 1, max = 200),
-                    numericInput("search_radius", "Search radius (px)", 8, min = 1, max = 100),
-                    numericInput("min_confidence", "Min match confidence", 0.55, min = 0, max = 1, step = 0.05),
-                    numericInput("patch_size", "Patch size (px, odd)", 11, min = 3, max = 101, step = 2)
                   )
                 ),
                 tags$details(
-                  class = "advanced-settings",
+                  class = "control-accordion",
+                  tags$summary("Detection parameters"),
+                  div(
+                    class = "control-section control-section-nested",
+                    div(
+                      class = "numeric-grid",
+                      numericInput("num_points", "Starting points", 10, min = 1, max = 50),
+                      numericInput("min_spacing", "Min point spacing (px)", 20, min = 1, max = 200),
+                      numericInput("search_radius", "Search radius (px)", 8, min = 1, max = 100),
+                      numericInput("min_confidence", "Min match confidence", 0.55, min = 0, max = 1, step = 0.05),
+                      numericInput("patch_size", "Patch size (px, odd)", 11, min = 3, max = 101, step = 2)
+                    )
+                  )
+                ),
+                tags$details(
+                  class = "control-accordion",
                   tags$summary("Advanced matching settings"),
                   div(
-                    class = "numeric-grid",
-                    numericInput("lookahead_frames", "Lookahead frames", 0, min = 0, max = 3),
-                    numericInput("preview_fps", "QC video FPS", 5, min = 1, max = 30),
-                    div()
+                    class = "control-section control-section-nested",
+                    div(
+                      class = "numeric-grid",
+                      numericInput("lookahead_frames", "Lookahead frames", 0, min = 0, max = 3),
+                      numericInput("preview_fps", "QC video FPS", 5, min = 1, max = 30),
+                      div()
+                    )
                   )
                 )
               ),
               conditionalPanel(
                 "input.analysis_method == 'optical_flow'",
-                div(
-                  class = "control-section",
-                  h5("Optical flow"),
+                tags$details(
+                  class = "control-accordion",
+                  open = NA,
+                  tags$summary("Optical flow parameters"),
                   div(
-                    class = "numeric-grid",
-                    numericInput("mask_percentile", "Brightness mask percentile", 90, min = 50, max = 99, step = 1),
-                    numericInput("flow_blur_kernel", "Gaussian blur kernel", 3, min = 0, max = 5, step = 2),
-                    numericInput("flow_winsize", "Flow window size", 15, min = 5, max = 51, step = 2),
-                    numericInput("flow_arrow_spacing", "Arrow spacing (px)", 8, min = 4, max = 24, step = 1),
-                    numericInput("flow_arrow_scale", "Arrow scale", 0.8, min = 0.1, max = 3, step = 0.1)
-                  ),
-                  p(
-                    class = "control-note",
-                    "Mask percentile limits flow to bright actin pixels. Blur kernel must be 0, 3, or 5."
+                    class = "control-section control-section-nested",
+                    div(
+                      class = "numeric-grid",
+                      numericInput("mask_percentile", "Brightness mask percentile", 90, min = 50, max = 99, step = 1),
+                      numericInput("flow_blur_kernel", "Gaussian blur kernel", 3, min = 0, max = 5, step = 2),
+                      numericInput("flow_winsize", "Flow window size", 15, min = 5, max = 51, step = 2),
+                      numericInput("flow_arrow_spacing", "Arrow spacing (px)", 8, min = 4, max = 24, step = 1),
+                      numericInput("flow_arrow_scale", "Arrow scale", 0.8, min = 0.1, max = 3, step = 0.1)
+                    ),
+                    p(
+                      class = "control-note",
+                      "Mask percentile limits flow to bright actin pixels. Blur kernel must be 0, 3, or 5."
+                    )
                   )
                 )
               ),
-              div(
-                class = "control-section",
-                h5("Calibration"),
+              tags$details(
+                class = "control-accordion",
+                tags$summary("Calibration"),
                 div(
-                  class = "numeric-grid two-column",
-                  numericInput("microns_per_pixel", "Microns / pixel", 0.265, min = 0.001, step = 0.001),
-                  numericInput("seconds_per_frame", "Seconds / frame", 30, min = 0.001, step = 1)
-                ),
-                div(class = "calibration-warning", fontawesome::fa("triangle-exclamation"), " Confirm these values from acquisition metadata.")
+                  class = "control-section control-section-nested",
+                  div(
+                    class = "numeric-grid two-column",
+                    numericInput("microns_per_pixel", "Microns / pixel", 0.265, min = 0.001, step = 0.001),
+                    numericInput("seconds_per_frame", "Seconds / frame", 30, min = 0.001, step = 1)
+                  ),
+                  div(class = "calibration-warning", fontawesome::fa("triangle-exclamation"), " Confirm these values from acquisition metadata.")
+                )
               ),
               uiOutput("run_analysis_button")
             )
@@ -514,11 +539,11 @@ ui <- page_sidebar(
       div(
         class = "app-view",
         page_heading(
-          "STEP 3 · REVIEW",
-          "Inspect a completed run",
-          "Choose a tracking result, then explore QC imagery, motion metrics, and angle dynamics.",
-          uiOutput("result_selector")
+          NULL,
+          "Review",
+          "Inspect QC imagery, motion metrics, and angle dynamics for the active run (selected in the sidebar)."
         ),
+        uiOutput("review_empty_gate"),
         uiOutput("review_context_banner"),
         uiOutput("review_method_note"),
         navset_tab(
@@ -530,18 +555,18 @@ ui <- page_sidebar(
               col_widths = c(6, 6),
               card(
                 class = "surface-card media-card",
-                card_header(strong("Starting points")),
+                card_header(uiOutput("qc_primary_header")),
                 card_body(uiOutput("starting_points_media"))
               ),
               card(
                 class = "surface-card media-card",
-                card_header(strong("Track overlay")),
+                card_header(uiOutput("qc_secondary_header")),
                 card_body(uiOutput("track_overlay_media"))
               )
             ),
             card(
               class = "surface-card media-card",
-              card_header(strong("Tracking preview video")),
+              card_header(uiOutput("qc_video_header")),
               card_body(uiOutput("track_video"))
             )
           ),
@@ -588,30 +613,34 @@ ui <- page_sidebar(
       div(
         class = "app-view",
         page_heading(
-          "STEP 4 · COMPARE",
-          "Group-level movement",
-          "Compare absolute and directional velocity across biological groups using completed runs.",
+          NULL,
+          "Compare",
+          "Summarize movement across biological groups. Compare runs within the same analysis method only.",
           actionButton("refresh_analysis", "Refresh", icon = fontawesome::fa("rotate"), class = "btn-outline-secondary")
         ),
-        uiOutput("compare_method_note"),
-        uiOutput("analysis_metrics"),
-        layout_columns(
-          col_widths = c(8, 4),
-          card(
-            class = "surface-card plot-card",
-            card_header(strong("Mean velocity by group")),
-            card_body(plotOutput("group_plot", height = "420px"))
+        uiOutput("compare_empty_gate"),
+        conditionalPanel(
+          "output.has_results",
+          uiOutput("compare_method_note"),
+          uiOutput("analysis_metrics"),
+          layout_columns(
+            col_widths = c(8, 4),
+            card(
+              class = "surface-card plot-card",
+              card_header(strong("Mean velocity by group")),
+              card_body(plotOutput("group_plot", height = "420px"))
+            ),
+            card(
+              class = "surface-card",
+              card_header(strong("Group summary")),
+              card_body(uiOutput("group_table"))
+            )
           ),
           card(
             class = "surface-card",
-            card_header(strong("Group summary")),
-            card_body(uiOutput("group_table"))
+            card_header(strong("Completed runs")),
+            card_body(uiOutput("all_results_table"))
           )
-        ),
-        card(
-          class = "surface-card",
-          card_header(strong("Completed runs")),
-          card_body(uiOutput("all_results_table"))
         )
       )
     ),
@@ -621,10 +650,14 @@ ui <- page_sidebar(
       div(
         class = "app-view",
         page_heading(
-          "REFERENCE · Z-STACKS",
-          "Microscopy file inventory",
-          "Audit raw Olympus and TIFF stacks without mixing them into the current 2D velocity pipeline.",
-          status_pill("Inventory only", "warning")
+          NULL,
+          "Z-stacks",
+          "Inventory Olympus and TIFF stacks. These files are not part of the current 2D velocity pipeline.",
+          status_pill("Reference only", "neutral")
+        ),
+        p(
+          class = "library-note",
+          "3D analysis will require metadata extraction and OME conversion before these stacks join the motion workflow."
         ),
         uiOutput("stack_metrics"),
         layout_columns(
@@ -640,18 +673,6 @@ ui <- page_sidebar(
             card_body(
               uiOutput("stack_selector"),
               uiOutput("stack_detail")
-            )
-          )
-        ),
-        card(
-          class = "surface-card next-step-card",
-          card_header(strong("Required before 3D analysis")),
-          card_body(
-            div(class = "step-list",
-              div(span("1"), p("Extract dimensions, channels, pixel size, z-step, and bit depth.")),
-              div(span("2"), p("Convert to OME-TIFF or another analysis-safe representation.")),
-              div(span("3"), p("Generate max-projection and middle-slice QC previews.")),
-              div(span("4"), p("Keep depth and thickness outputs separate from 2D velocity."))
             )
           )
         )
@@ -711,6 +732,22 @@ server <- function(input, output, session) {
     discover_z_stacks(project_dir())
   })
 
+  output$has_results <- reactive({
+    nrow(results()) > 0
+  })
+  outputOptions(output, "has_results", suspendWhenHidden = FALSE)
+
+  observeEvent(input$recent_result_open, {
+    rid <- input$recent_result_open
+    req(nzchar(rid))
+    rows <- results()
+    if (!rid %in% rows$result_id) return()
+    pending_result(rid)
+    updateSelectInput(session, "result_file", selected = rid)
+    updateRadioButtons(session, "section", selected = "review")
+    nav_select("main_nav", selected = "review")
+  }, ignoreInit = TRUE)
+
   observeEvent(sources(), {
     data <- sources()
     next_path <- coerce_active_source_path(data, active_source_path())
@@ -751,14 +788,19 @@ server <- function(input, output, session) {
     nav_select("main_nav", selected = "track")
   })
 
-  observeEvent(input$go_review, {
-    updateRadioButtons(session, "section", selected = "review")
-    nav_select("main_nav", selected = "review")
-  })
-
   observeEvent(input$go_project, {
     updateRadioButtons(session, "section", selected = "project")
     nav_select("main_nav", selected = "project")
+  })
+
+  observeEvent(input$go_compare, {
+    updateRadioButtons(session, "section", selected = "compare")
+    nav_select("main_nav", selected = "compare")
+  })
+
+  observeEvent(input$go_review, {
+    updateRadioButtons(session, "section", selected = "review")
+    nav_select("main_nav", selected = "review")
   })
 
   selected_source <- reactive({
@@ -864,6 +906,86 @@ server <- function(input, output, session) {
         tags$small("ACTIVE VIDEO"),
         span(if (is.null(row)) "None selected" else row$file_name)
       )
+    )
+  })
+
+  output$sidebar_result_section <- renderUI({
+    empty <- nrow(results()) == 0
+    tags$script(HTML(paste0(
+      "var panel=document.getElementById('sidebar-results-panel');",
+      "if(panel){panel.classList.toggle('is-empty',", tolower(empty), ");}"
+    )))
+  })
+
+  output$sidebar_quick_action <- renderUI({
+    section <- input$section %||% "project"
+    if (identical(section, "project") && !is.null(selected_source())) {
+      return(actionButton(
+        "go_tracking",
+        "Track this video",
+        icon = fontawesome::fa("crosshairs"),
+        class = "btn-sidebar btn-sidebar-primary"
+      ))
+    }
+    if (identical(section, "track")) {
+      if (is.null(selected_source())) {
+        return(actionButton(
+          "go_project",
+          "Select a video",
+          icon = fontawesome::fa("folder-open"),
+          class = "btn-sidebar"
+        ))
+      }
+      return(actionButton(
+        "go_project",
+        "Change video",
+        icon = fontawesome::fa("folder-open"),
+        class = "btn-sidebar"
+      ))
+    }
+    if (identical(section, "review") && nrow(results()) > 0) {
+      return(actionButton(
+        "go_compare",
+        "Compare groups",
+        icon = fontawesome::fa("chart-column"),
+        class = "btn-sidebar"
+      ))
+    }
+    if (identical(section, "compare") && nrow(results()) > 0) {
+      return(actionButton(
+        "go_review",
+        "Inspect a run",
+        icon = fontawesome::fa("chart-line"),
+        class = "btn-sidebar"
+      ))
+    }
+    NULL
+  })
+
+  output$mobile_context_bar <- renderUI({
+    section <- input$section %||% "project"
+    step_label <- switch(
+      section,
+      project = "Project",
+      track = "Track",
+      review = "Review",
+      compare = "Compare",
+      library = "Files",
+      section
+    )
+    video <- selected_source()
+    run_row <- selected_result()
+    detail <- if (!is.null(video)) {
+      video$file_name
+    } else if (!is.null(run_row)) {
+      run_row$source_name
+    } else {
+      ""
+    }
+    div(
+      class = "mobile-context-bar",
+      span(class = "mobile-context-step", step_label),
+      if (nzchar(detail)) span(class = "mobile-context-detail", detail)
     )
   })
 
@@ -1003,28 +1125,70 @@ server <- function(input, output, session) {
 
   output$sidebar_footer <- renderUI({
     status <- run_state()
+    run_count <- nrow(results())
+    label <- if (status$status == "running") {
+      "Analysis running…"
+    } else if (run_count > 0) {
+      paste(run_count, if (run_count == 1) "saved run" else "saved runs")
+    } else {
+      "No runs yet"
+    }
     div(
       class = "session-status",
       div(
-        tags$small("SESSION"),
-        span(if (status$status == "running") "Tracking in progress" else if (status$status == "success") "Latest run complete" else "Ready")
+        tags$small("STATUS"),
+        span(label)
       )
     )
   })
 
-  output$overview_metrics <- renderUI({
-    layout_columns(
-      col_widths = c(3, 3, 3, 3),
-      metric_value_box("Video sources", nrow(sources()), "AVI and MP4 files", "film", "teal"),
-      metric_value_box("Tracking runs", nrow(results()), "Saved result sets", "route", "blue"),
-      metric_value_box("Z-stacks", nrow(stacks()), "OIR, OIB, and TIFF", "layer-group", "amber"),
-      metric_value_box(
-        "Calibration",
-        paste0(format_metric(input$seconds_per_frame, 0), " s"),
-        paste0(format_metric(input$microns_per_pixel, 3), " µm / pixel"),
-        "ruler-combined",
-        "gray"
+  output$project_next_action <- renderUI({
+    if (!workspace_info()$valid || is.null(selected_source())) return(NULL)
+    div(
+      class = "page-heading-actions",
+      actionButton(
+        "go_tracking",
+        "Continue to Track",
+        icon = fontawesome::fa("arrow-right"),
+        class = "btn-primary"
       )
+    )
+  })
+
+  output$workflow_progress <- renderUI({
+    info <- workspace_info()
+    row <- selected_source()
+    has_video <- !is.null(row)
+    run_count <- nrow(results())
+    ws_state <- if (!info$valid) "current" else "done"
+    vid_state <- if (!info$valid) {
+      "pending"
+    } else if (has_video) {
+      "done"
+    } else {
+      "current"
+    }
+    res_state <- if (run_count > 0) "done" else if (has_video) "current" else "pending"
+    workflow_progress_strip(list(
+      workflow_progress_step("Workspace", info$message, ws_state),
+      workflow_progress_step(
+        "Video",
+        if (has_video) row$file_name else "Select a source file",
+        vid_state
+      ),
+      workflow_progress_step(
+        "Results",
+        if (run_count > 0) paste(run_count, "completed run(s)") else "Run analysis on Track",
+        res_state
+      )
+    ))
+  })
+
+  output$project_summary_metrics <- renderUI({
+    layout_columns(
+      col_widths = c(6, 6),
+      metric_value_box("Videos in workspace", nrow(sources()), "AVI and MP4 under raw/ or processed/", "film", "teal"),
+      metric_value_box("Completed runs", nrow(results()), "Saved analysis outputs", "route", "blue")
     )
   })
 
@@ -1033,39 +1197,42 @@ server <- function(input, output, session) {
 
   output$recent_results <- renderUI({
     data <- results()
-    if (nrow(data) == 0) return(empty_state("route", "No completed runs", "Configure an ROI and run tracking to create the first result."))
+    if (nrow(data) == 0) {
+      return(empty_state(
+        "route",
+        "No completed runs",
+        "Select a video, set an ROI on Track, then run analysis to create your first result."
+      ))
+    }
     div(class = "recent-run-list", lapply(seq_len(min(5, nrow(data))), function(i) {
       row <- data[i, , drop = FALSE]
+      primary <- result_primary_speed(row)
       div(
         class = "recent-run",
         div(
+          class = "recent-run-copy",
           strong(row$source_name),
-          tags$small(paste(row$group, row$analyzed_at, sep = " · "))
+          tags$small(paste(
+            row$group,
+            analysis_method_label(row$analysis_method),
+            row$analyzed_at,
+            sep = " · "
+          ))
         ),
         div(
-          class = "recent-run-metric",
-          span(format_metric(row$absolute_velocity, 3)),
-          tags$small("µm/s")
+          class = "recent-run-actions",
+          div(
+            class = "recent-run-metric",
+            span(format_metric(primary, 3)),
+            tags$small("µm/s")
+          ),
+          tags$button(
+            type = "button",
+            class = "recent-run-open",
+            `data-result-id` = row$result_id,
+            "Review"
+          )
         )
-      )
-    }))
-  })
-
-  output$readiness_panel <- renderUI({
-    checks <- list(
-      list(ok = workspace_info()$valid, text = "Workspace folder exists"),
-      list(ok = nrow(sources()) > 0, text = "Video sources discovered"),
-      list(ok = nzchar(active_source_path()), text = "Active video selected"),
-      list(ok = !is.null(source_probe()), text = "Active video probed successfully"),
-      list(ok = nrow(results()) > 0, text = "At least one tracking result available"),
-      list(ok = input$seconds_per_frame > 0, text = "Acquisition interval entered"),
-      list(ok = input$microns_per_pixel > 0, text = "Pixel calibration entered")
-    )
-    div(class = "readiness-grid", lapply(checks, function(check) {
-      div(
-        class = "readiness-item",
-        fontawesome::fa(if (check$ok) "circle-check" else "circle", height = "16px"),
-        span(check$text)
       )
     }))
   })
@@ -1073,36 +1240,22 @@ server <- function(input, output, session) {
   output$tracking_method_help <- renderUI({
     method <- input$tracking_method %||% "brightest_local"
     if (identical(method, "template")) {
-      return(paste(
-        "Matches a small image patch from the previous frame inside the search window.",
-        "Use for comparison; Dr. Ju's recommended workflow is brightest nearby points."
-      ))
+      return("Matches a patch from the previous frame inside the search window.")
     }
-    paste(
-      "In each frame, find the brightest nearby actin landmark within the search radius.",
-      "This is the same method as the Python workbench default and Dr. Ju's traditional CV approach."
-    )
+    "Finds the brightest nearby landmark within the search radius (workbench default)."
   })
 
   output$run_analysis_button <- renderUI({
     label <- if (identical(input$analysis_method, "optical_flow")) {
-      "Run optical flow analysis"
+      "Run optical flow"
     } else {
-      "Run calibrated tracking"
+      "Run landmark tracking"
     }
-    detail <- if (identical(input$analysis_method, "optical_flow")) {
-      "Cropping lossless frames and estimating dense Farnebäck flow..."
-    } else {
-      "Cropping lossless frames and following bright actin landmarks..."
-    }
-    tagList(
-      input_task_button(
-        "run_tracking",
-        label,
-        icon = fontawesome::fa("play"),
-        class = "btn-run"
-      ),
-      tags$span(class = "visually-hidden", detail)
+    input_task_button(
+      "run_tracking",
+      label,
+      icon = fontawesome::fa("play"),
+      class = "btn-run"
     )
   })
 
@@ -1172,6 +1325,16 @@ server <- function(input, output, session) {
     if (nzchar(preview_error())) return(status_pill("Preview error", "danger"))
     if (is.null(preview_state())) return(status_pill("Waiting for source", "neutral"))
     status_pill(paste0("Frame ", input$frame_index %||% 0), "success")
+  })
+
+  output$track_empty_gate <- renderUI({
+    if (!is.null(selected_source())) return(NULL)
+    next_step_banner(
+      "No video selected",
+      "Choose a workspace video on Project before setting an ROI.",
+      actionButton("go_project", "Go to Project", icon = fontawesome::fa("folder-open"), class = "btn-sm btn-primary"),
+      tone = "muted"
+    )
   })
 
   output$tracking_source_banner <- renderUI({
@@ -1260,7 +1423,7 @@ server <- function(input, output, session) {
       progress_message <- "Running calibrated tracking"
       progress_detail <- "Cropping lossless frames and following bright actin landmarks..."
     }
-    run_state(list(status = "running", message = run_label, log = character()))
+    run_state(list(status = "running", message = run_label, detail = progress_detail, log = character()))
     tryCatch({
       bridge_result <- withProgress(
         message = progress_message,
@@ -1270,14 +1433,17 @@ server <- function(input, output, session) {
       )
       outputs <- bridge_result$payload$outputs %||% list()
       summary_path <- outputs$summary_json %||% bridge_result$payload$summary_json %||% ""
-      pending_result(summary_path)
+      refresh_token(refresh_token() + 1L)
+      new_results <- results()
+      pending_id <- if (nrow(new_results) > 0) new_results$result_id[[1]] else summary_path
+      pending_result(pending_id)
       run_state(list(
         status = "success",
         message = paste("Completed", row$file_name),
+        detail = "",
         log = bridge_result$log,
         payload = bridge_result$payload
       ))
-      refresh_token(refresh_token() + 1L)
       updateRadioButtons(session, "section", selected = "review")
       nav_select("main_nav", selected = "review")
       showNotification(
@@ -1286,7 +1452,7 @@ server <- function(input, output, session) {
         duration = 4
       )
     }, error = function(exc) {
-      run_state(list(status = "error", message = conditionMessage(exc), log = character()))
+      run_state(list(status = "error", message = conditionMessage(exc), detail = "", log = character()))
       showNotification(conditionMessage(exc), type = "error", duration = 10)
     })
   })
@@ -1294,30 +1460,68 @@ server <- function(input, output, session) {
   output$run_activity <- renderUI({
     state <- run_state()
     icon_name <- if (state$status == "success") "circle-check" else if (state$status == "error") "circle-exclamation" else if (state$status == "running") "spinner" else "clock"
+    detail <- state$detail %||% ""
+    if (identical(state$status, "idle")) {
+      detail <- "Runs started on this page appear here with status and technical logs."
+    }
     div(
       class = paste("run-activity", paste0("run-", state$status)),
       fontawesome::fa(icon_name),
       div(
         strong(state$message),
-        if (length(state$log) > 0) tags$details(tags$summary("Show technical log"), tags$pre(paste(state$log, collapse = "\n")))
+        if (nzchar(detail)) tags$p(class = "run-detail", detail),
+        if (length(state$log) > 0) tags$details(tags$summary("Technical log"), tags$pre(paste(state$log, collapse = "\n")))
       )
     )
   })
 
   observeEvent(results(), {
-    choices <- angle_result_choices(results())
+    data <- results()
+    choices <- compact_result_choices(data)
     selected <- pending_result()
     if (!nzchar(selected) || !selected %in% unname(choices)) selected <- input$result_file
-    if (length(choices) > 0 && (is.null(selected) || !selected %in% unname(choices))) selected <- unname(choices[[1]])
+    if (length(choices) > 0 && (is.null(selected) || !selected %in% unname(choices))) {
+      selected <- unname(choices[[1]])
+    }
     updateSelectInput(session, "result_file", choices = choices, selected = selected)
   }, ignoreInit = FALSE)
 
-  output$result_selector <- renderUI({
-    div(
-      class = "result-selector-wrap",
-      selectInput("result_file", "Analysis result", choices = angle_result_choices(results()), width = "420px"),
-      div(class = "selector-help", "Each option shows source, group, analysis method, and run time.")
+  output$review_empty_gate <- renderUI({
+    if (nrow(results()) > 0) return(NULL)
+    next_step_banner(
+      "No results to review yet",
+      "Open Project, select a video, then run analysis on Track.",
+      actionButton("go_tracking", "Go to Track", icon = fontawesome::fa("crosshairs"), class = "btn-sm btn-primary"),
+      tone = "muted"
     )
+  })
+
+  output$compare_empty_gate <- renderUI({
+    if (nrow(results()) > 0) return(NULL)
+    next_step_banner(
+      "Nothing to compare yet",
+      "Complete at least one analysis run. Group charts split landmark tracking and optical flow separately.",
+      actionButton("go_tracking", "Run analysis", icon = fontawesome::fa("play"), class = "btn-sm btn-primary"),
+      tone = "muted"
+    )
+  })
+
+  output$qc_primary_header <- renderUI({
+    row <- selected_result()
+    if (is.null(row)) return(strong("QC image"))
+    if (identical(row$analysis_method, "optical_flow")) strong("Flow overlay") else strong("Starting points")
+  })
+
+  output$qc_secondary_header <- renderUI({
+    row <- selected_result()
+    if (is.null(row)) return(strong("QC image"))
+    if (identical(row$analysis_method, "optical_flow")) strong("Track paths") else strong("Track overlay")
+  })
+
+  output$qc_video_header <- renderUI({
+    row <- selected_result()
+    if (is.null(row)) return(strong("Preview video"))
+    if (identical(row$analysis_method, "optical_flow")) strong("Flow preview") else strong("Tracking preview")
   })
 
   selected_result <- reactive(selected_row(results(), input$result_file %||% "", "result_id"))
@@ -1387,23 +1591,14 @@ server <- function(input, output, session) {
   output$review_method_note <- renderUI({
     row <- selected_result()
     if (is.null(row)) return(NULL)
-    method_label <- tracking_method_label(row)
     if (identical(row$analysis_method, "optical_flow")) {
-      note <- tagList(
-        " Review shows the saved optical flow run. Method: ",
-        strong(method_label),
-        ". Inspect the flow overlay and per-pair velocity plot. Optical flow is recommended for dense Lifeact meshwork where bright-point tracking loses identity."
-      )
+      note <- "Optical flow reports dense meshwork motion. Inspect the flow overlay and per-pair velocity — values are not comparable to landmark runs."
     } else {
       primary <- result_primary_speed(row)
-      note <- tagList(
-        " Review shows the saved tracking run. Method: ",
-        strong(method_label),
-        ". Primary speed is the ",
-        strong("time-weighted mean"),
-        " across tracked steps (",
+      note <- paste0(
+        "Primary speed is the time-weighted mean (",
         format_metric(primary, 3),
-        " µm/s); it weights unequal frame gaps correctly. Compare the track overlay and preview video — if points jump or swap identity, re-run on Track with optical flow or a tighter ROI."
+        " µm/s). If tracks jump or swap identity, re-run with optical flow or a tighter ROI."
       )
     }
     div(
@@ -1949,10 +2144,11 @@ server <- function(input, output, session) {
   group_summary <- reactive(summarize_groups_stratified(results()))
 
   output$compare_method_note <- renderUI({
+    if (nrow(results()) == 0) return(NULL)
     div(
       class = "analysis-definition-note compare-method-note",
       fontawesome::fa("circle-info"),
-      " Landmark tracking and optical flow report different movement scalars. Compare runs within the same method only; charts and summaries below are split by analysis method."
+      "Landmark tracking and optical flow use different movement scalars. Charts below are split by analysis method — compare within method only."
     )
   })
 
@@ -1977,7 +2173,7 @@ server <- function(input, output, session) {
         group = summary$group,
         method_label = summary$method_label,
         metric = "Primary speed",
-        value = summary$mean_absolute_velocity
+        value = summary$mean_primary_speed
       ),
       data.frame(
         group = summary$group,
@@ -2002,12 +2198,12 @@ server <- function(input, output, session) {
   })
   output$group_table_inner <- renderTable({
     summary <- group_summary()
-    summary$mean_absolute_velocity <- round(summary$mean_absolute_velocity, 4)
+    summary$mean_primary_speed <- round(summary$mean_primary_speed, 4)
     summary$mean_downward_velocity <- round(summary$mean_downward_velocity, 4)
     summary$mean_net_y_velocity <- round(summary$mean_net_y_velocity, 4)
     summary$method_label <- vapply(summary$analysis_method, analysis_method_label, character(1))
     display <- summary[, c(
-      "group", "method_label", "samples", "mean_absolute_velocity", "mean_downward_velocity",
+      "group", "method_label", "runs", "mean_primary_speed", "mean_downward_velocity",
       "total_valid_tracks", "total_valid_steps"
     ), drop = FALSE]
     names(display) <- c(
@@ -2075,18 +2271,24 @@ server <- function(input, output, session) {
       div(span("Format"), strong(row$extension)),
       div(span("File size"), strong(row$size)),
       div(span("Group"), strong(row$group)),
-      div(span("Status"), status_pill("Awaiting metadata extraction", "warning")),
+      div(span("Status"), status_pill("Not in velocity pipeline", "neutral")),
       p(class = "path-text", row$relative_path)
     )
   })
 
   always_active_outputs <- c(
-    "sidebar_workspace_chip", "sidebar_active_source", "workspace_status",
+    "sidebar_workspace_chip", "sidebar_active_source", "sidebar_result_section",
+    "mobile_context_bar", "track_empty_gate",
+    "workspace_status",
     "source_browser", "source_browser_count", "active_source_banner",
     "source_preview_controls", "source_preview_plot", "source_preview_status",
+    "workflow_progress", "project_summary_metrics", "project_next_action",
     "frame_control", "tracking_source_banner", "frame_plot", "preview_status",
-    "roi_summary", "run_activity", "result_selector", "review_context_banner",
+    "roi_summary", "run_activity", "review_empty_gate",
+    "compare_empty_gate", "review_context_banner",
+    "qc_primary_header", "qc_secondary_header", "qc_video_header",
     "result_metrics", "trajectory_plot", "velocity_plot", "starting_points_media",
+    "group_plot",
     "track_overlay_media", "trajectory_table", "track_video",
     "motion_paths_header", "motion_velocity_header", "angles_tab_body",
     "angle_metrics", "motion_angle_plot", "turning_angle_plot", "position_time_plot",
