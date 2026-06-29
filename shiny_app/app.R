@@ -231,7 +231,11 @@ ui <- page_sidebar(
     ),
     div(
       class = "sidebar-footer",
-      uiOutput("sidebar_footer")
+      uiOutput("sidebar_footer"),
+      tags$details(class = "sidebar-shortcuts", tags$summary("Keyboard shortcuts"), tags$dl(
+        tags$dt("1 – 4"), tags$dd("Jump to workflow step"),
+        tags$dt("⌘/Ctrl + Enter"), tags$dd("Run analysis on Track")
+      ))
     )
   ),
   tags$head(
@@ -240,6 +244,29 @@ ui <- page_sidebar(
       $(document).on('click', '.recent-run-open', function(event) {
         event.preventDefault();
         Shiny.setInputValue('recent_result_open', $(this).data('resultId'), {priority: 'event'});
+      });
+      $(document).on('click', '.recent-run-compare', function(event) {
+        event.preventDefault();
+        Shiny.setInputValue('recent_result_compare', true, {priority: 'event'});
+      });
+      function actintrackTypingTarget(target) {
+        return $(target).is('input, textarea, select, [contenteditable=true]');
+      }
+      $(document).on('keydown', function(event) {
+        if (actintrackTypingTarget(event.target)) return;
+        var key = event.key;
+        if (key >= '1' && key <= '4' && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          var sections = ['project', 'track', 'review', 'compare'];
+          Shiny.setInputValue('keyboard_nav', sections[parseInt(key, 10) - 1], {priority: 'event'});
+          event.preventDefault();
+        }
+        if ((event.metaKey || event.ctrlKey) && key === 'Enter') {
+          var runBtn = document.getElementById('run_tracking');
+          if (runBtn && !runBtn.disabled) {
+            runBtn.click();
+            event.preventDefault();
+          }
+        }
       });
     "))
   ),
@@ -334,7 +361,7 @@ ui <- page_sidebar(
       title = "Track",
       value = "track",
       div(
-        class = "app-view",
+        class = "app-view track-view",
         page_heading(
           NULL,
           "Track",
@@ -488,7 +515,7 @@ ui <- page_sidebar(
               ),
               tags$details(
                 class = "control-accordion",
-                tags$summary("Calibration"),
+                tags$summary(uiOutput("calibration_accordion_title", inline = TRUE)),
                 div(
                   class = "control-section control-section-nested",
                   div(
@@ -498,8 +525,7 @@ ui <- page_sidebar(
                   ),
                   div(class = "calibration-warning", fontawesome::fa("triangle-exclamation"), " Confirm these values from acquisition metadata.")
                 )
-              ),
-              uiOutput("run_analysis_button")
+              )
             )
           ),
           card(
@@ -530,7 +556,8 @@ ui <- page_sidebar(
           class = "surface-card run-log-card",
           card_header(strong("Run activity")),
           card_body(uiOutput("run_activity"))
-        )
+        ),
+        div(class = "track-run-sticky", uiOutput("track_sticky_run"))
       )
     ),
     nav_panel(
@@ -601,7 +628,8 @@ ui <- page_sidebar(
             )
           ),
           nav_panel(
-            "Angles",
+            title = uiOutput("angles_tab_title", inline = TRUE),
+            value = "Angles",
             uiOutput("angles_tab_body")
           )
         )
@@ -746,6 +774,18 @@ server <- function(input, output, session) {
     updateSelectInput(session, "result_file", selected = rid)
     updateRadioButtons(session, "section", selected = "review")
     nav_select("main_nav", selected = "review")
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$recent_result_compare, {
+    updateRadioButtons(session, "section", selected = "compare")
+    nav_select("main_nav", selected = "compare")
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$keyboard_nav, {
+    section <- input$keyboard_nav
+    if (!section %in% all_section_values) return()
+    updateRadioButtons(session, "section", selected = section)
+    nav_select("main_nav", selected = section)
   }, ignoreInit = TRUE)
 
   observeEvent(sources(), {
@@ -1231,6 +1271,11 @@ server <- function(input, output, session) {
             class = "recent-run-open",
             `data-result-id` = row$result_id,
             "Review"
+          ),
+          tags$button(
+            type = "button",
+            class = "recent-run-compare",
+            "Compare"
           )
         )
       )
@@ -1245,17 +1290,60 @@ server <- function(input, output, session) {
     "Finds the brightest nearby landmark within the search radius (workbench default)."
   })
 
-  output$run_analysis_button <- renderUI({
-    label <- if (identical(input$analysis_method, "optical_flow")) {
-      "Run optical flow"
+  output$calibration_accordion_title <- renderUI({
+    span(
+      "Calibration · ",
+      tags$small(
+        paste0(
+          format_metric(input$microns_per_pixel, 3), " µm/px · ",
+          format_metric(input$seconds_per_frame, 0), " s/frame"
+        )
+      )
+    )
+  })
+
+  output$track_sticky_run <- renderUI({
+    row <- selected_source()
+    state <- preview_state()
+    ready <- !is.null(row) && !is.null(state)
+    method <- input$analysis_method %||% "landmark_tracking"
+    label <- if (identical(method, "optical_flow")) "Run optical flow" else "Run landmark tracking"
+    roi_label <- if (is.null(state)) {
+      "Draw an ROI on the preview"
     } else {
-      "Run landmark tracking"
+      area <- as.numeric(input$roi_width %||% 0) * as.numeric(input$roi_height %||% 0)
+      frame_area <- as.numeric(state$metadata$width) * as.numeric(state$metadata$height)
+      coverage <- if (frame_area > 0) 100 * area / frame_area else 0
+      paste0(
+        input$roi_width %||% 0, " × ", input$roi_height %||% 0,
+        " px · ",
+        format_metric(coverage, 0),
+        "% of frame"
+      )
     }
-    input_task_button(
-      "run_tracking",
-      label,
-      icon = fontawesome::fa("play"),
-      class = "btn-run"
+    div(
+      class = "track-run-sticky-inner",
+      div(
+        class = "track-run-sticky-copy",
+        strong(if (ready) row$file_name else "Select a video on Project"),
+        tags$small(roi_label),
+        tags$small(class = "track-run-sticky-hint", "⌘/Ctrl + Enter to run")
+      ),
+      if (ready) {
+        input_task_button(
+          "run_tracking",
+          label,
+          icon = fontawesome::fa("play"),
+          class = "btn-run btn-run-sticky"
+        )
+      } else {
+        tags$button(
+          type = "button",
+          class = "btn btn-run btn-run-sticky",
+          disabled = "disabled",
+          label
+        )
+      }
     )
   })
 
@@ -1719,6 +1807,21 @@ server <- function(input, output, session) {
   output$motion_velocity_header <- renderUI({
     strong(if (is_flow_result()) "Downward velocity by frame pair" else "Absolute velocity by frame")
   })
+
+  output$angles_tab_title <- renderUI({
+    if (is_flow_result()) {
+      return(tagList("Angles ", span(class = "tab-badge", "landmark")))
+    }
+    "Angles"
+  })
+
+  observeEvent(selected_result(), {
+    row <- selected_result()
+    if (is.null(row)) return()
+    if (identical(row$analysis_method, "optical_flow") && identical(input$review_tab, "Angles")) {
+      nav_select("review_tab", selected = "Overview")
+    }
+  }, ignoreInit = TRUE)
 
   output$angles_tab_body <- renderUI({
     row <- selected_result()
@@ -2283,9 +2386,10 @@ server <- function(input, output, session) {
     "source_browser", "source_browser_count", "active_source_banner",
     "source_preview_controls", "source_preview_plot", "source_preview_status",
     "workflow_progress", "project_summary_metrics", "project_next_action",
+    "calibration_accordion_title", "track_sticky_run",
     "frame_control", "tracking_source_banner", "frame_plot", "preview_status",
     "roi_summary", "run_activity", "review_empty_gate",
-    "compare_empty_gate", "review_context_banner",
+    "compare_empty_gate", "review_context_banner", "angles_tab_title",
     "qc_primary_header", "qc_secondary_header", "qc_video_header",
     "result_metrics", "trajectory_plot", "velocity_plot", "starting_points_media",
     "group_plot",
