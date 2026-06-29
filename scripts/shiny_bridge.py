@@ -24,6 +24,21 @@ from actintrack_app.motion_index import (  # noqa: E402
     run_motion_index_analysis,
     transcode_preview_to_webm,
 )
+from actintrack_app.optical_flow_motion_index import (  # noqa: E402
+    OpticalFlowSettings,
+    build_optical_flow_fingerprint,
+    compute_optical_flow_motion_index,
+)
+from actintrack_app.optical_flow_overlay import (  # noqa: E402
+    OpticalFlowVisualizationSettings,
+    build_flow_cache,
+    get_flow_arrows_for_frame,
+    render_optical_flow_overlay,
+)
+
+ANALYSIS_LANDMARK_TRACKING = "landmark_tracking"
+ANALYSIS_OPTICAL_FLOW = "optical_flow"
+ANALYSIS_METHODS = {ANALYSIS_LANDMARK_TRACKING, ANALYSIS_OPTICAL_FLOW}
 
 
 def _json_print(payload: dict[str, Any]) -> None:
@@ -190,6 +205,151 @@ def crop_video_to_frames(
     }
 
 
+def load_cropped_frames(frame_dir: Path) -> list[Any]:
+    paths = sorted(Path(frame_dir).glob("*.png"))
+    frames: list[Any] = []
+    for path in paths:
+        frame = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if frame is not None:
+            frames.append(frame)
+    return frames
+
+
+def run_optical_flow(args: argparse.Namespace) -> dict[str, Any]:
+    source = Path(args.source).resolve()
+    output_dir = Path(args.output_dir).resolve()
+    export_name = _sanitize_name(args.export_name or source.stem)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frame_dir = output_dir / "cropped_frames"
+
+    crop_meta = crop_video_to_frames(
+        source,
+        frame_dir,
+        rotation=args.rotation,
+        flip_horizontal=args.flip_horizontal,
+        roi_x=args.roi_x,
+        roi_y=args.roi_y,
+        roi_width=args.roi_width,
+        roi_height=args.roi_height,
+    )
+    frames = load_cropped_frames(frame_dir)
+    if len(frames) < 2:
+        raise ValueError("Optical flow requires at least two cropped frames.")
+
+    roi_bounds = (
+        int(crop_meta["roi_x"]),
+        int(crop_meta["roi_y"]),
+        int(crop_meta["roi_width"]),
+        int(crop_meta["roi_height"]),
+    )
+    settings = OpticalFlowSettings(
+        mask_percentile=args.mask_percentile,
+        gaussian_blur_kernel=args.flow_blur_kernel,
+        winsize=args.flow_winsize,
+        microns_per_pixel=args.microns_per_pixel,
+        seconds_per_frame=args.seconds_per_frame,
+    )
+    fingerprint = build_optical_flow_fingerprint(
+        sample_id=export_name,
+        roi_bounds=roi_bounds,
+        settings=settings,
+        data_identity=str(source),
+        frame_count=len(frames),
+    )
+    result = compute_optical_flow_motion_index(
+        frames,
+        settings,
+        sample_id=export_name,
+        data_identity=str(source),
+        roi_bounds=roi_bounds,
+        fingerprint=fingerprint,
+    )
+    if not result.has_valid_result:
+        raise ValueError(result.failure_reason or "Optical flow analysis failed.")
+
+    overlay_path = output_dir / f"{export_name}_flow_overlay.png"
+    cache = build_flow_cache(
+        frames,
+        settings,
+        sample_id=export_name,
+        fingerprint=fingerprint,
+    )
+    arrows = get_flow_arrows_for_frame(
+        cache,
+        0,
+        len(frames),
+        OpticalFlowVisualizationSettings(
+            arrow_spacing_px=args.flow_arrow_spacing,
+            arrow_scale=args.flow_arrow_scale,
+        ),
+    )
+    overlay = render_optical_flow_overlay(frames[0], arrows)
+    if not cv2.imwrite(str(overlay_path), overlay):
+        raise OSError(f"Could not write flow overlay: {overlay_path}")
+
+    summary_path = output_dir / f"{export_name}_optical_flow.json"
+    pair_csv_path = output_dir / f"{export_name}_flow_pair_summaries.csv"
+    _write_flow_pair_csv(result, pair_csv_path)
+
+    payload = result.summary_dict()
+    payload["analysis_method"] = ANALYSIS_OPTICAL_FLOW
+    payload["primary_velocity_metric"] = "optical_flow_general_movement_um_s"
+    payload["absolute_velocity_index_um_per_s"] = result.optical_flow_general_movement_um_s
+    payload["downward_velocity_index_um_per_s"] = result.optical_flow_downward_motion_um_s
+    payload["general_movement_index_um_per_s"] = result.optical_flow_general_movement_um_s
+    payload["output_dir"] = str(output_dir)
+    payload["outputs"] = {
+        "summary_json": str(summary_path),
+        "flow_overlay_png": str(overlay_path),
+        "flow_pair_csv": str(pair_csv_path),
+    }
+    payload["run_context"] = {
+        "source_path": str(source),
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "rotation": args.rotation,
+        "flip_horizontal": args.flip_horizontal,
+        "analysis_method": ANALYSIS_OPTICAL_FLOW,
+        **crop_meta,
+    }
+    summary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    manifest = output_dir / "shiny_run_manifest.json"
+    manifest.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    payload["run_manifest"] = str(manifest)
+    return payload
+
+
+def _write_flow_pair_csv(result: Any, path: Path) -> None:
+    import csv
+
+    fieldnames = [
+        "frame_a",
+        "frame_b",
+        "valid_pixel_count",
+        "valid_pixel_fraction",
+        "saturated_pixel_fraction",
+        "mean_magnitude_px_frame",
+        "mean_downward_px_frame",
+        "mean_net_y_px_frame",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for summary in result.frame_pair_summaries:
+            writer.writerow(
+                {
+                    "frame_a": summary.frame_a,
+                    "frame_b": summary.frame_b,
+                    "valid_pixel_count": summary.valid_pixel_count,
+                    "valid_pixel_fraction": summary.valid_pixel_fraction,
+                    "saturated_pixel_fraction": summary.saturated_pixel_fraction,
+                    "mean_magnitude_px_frame": summary.mean_magnitude_px_frame,
+                    "mean_downward_px_frame": summary.mean_downward_px_frame,
+                    "mean_net_y_px_frame": summary.mean_net_y_px_frame,
+                }
+            )
+
+
 def run_tracking(args: argparse.Namespace) -> dict[str, Any]:
     source = Path(args.source).resolve()
     output_dir = Path(args.output_dir).resolve()
@@ -227,7 +387,9 @@ def run_tracking(args: argparse.Namespace) -> dict[str, Any]:
         preview_fps=args.preview_fps,
     )
     payload = result.summary_dict()
+    payload["analysis_method"] = ANALYSIS_LANDMARK_TRACKING
     payload["run_context"] = {
+        "analysis_method": ANALYSIS_LANDMARK_TRACKING,
         "source_path": str(source),
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "rotation": args.rotation,
@@ -265,16 +427,26 @@ def build_parser() -> argparse.ArgumentParser:
     browser_preview.add_argument("source", type=Path)
     browser_preview.add_argument("output", type=Path)
 
-    run = subparsers.add_parser("run", help="Crop a video ROI and run tracking")
+    run = subparsers.add_parser("run", help="Crop a video ROI and run analysis")
     run.add_argument("source", type=Path)
     run.add_argument("output_dir", type=Path)
     run.add_argument("--export-name", default="")
+    run.add_argument(
+        "--analysis-method",
+        choices=sorted(ANALYSIS_METHODS),
+        default=ANALYSIS_LANDMARK_TRACKING,
+    )
     run.add_argument("--rotation", type=int, choices=[0, 90, 180, 270], default=0)
     run.add_argument("--flip-horizontal", action="store_true")
     run.add_argument("--roi-x", type=int, default=0)
     run.add_argument("--roi-y", type=int, default=0)
     run.add_argument("--roi-width", type=int, default=0)
     run.add_argument("--roi-height", type=int, default=0)
+    run.add_argument("--mask-percentile", type=float, default=90.0)
+    run.add_argument("--flow-blur-kernel", type=int, choices=[0, 3, 5], default=3)
+    run.add_argument("--flow-winsize", type=int, default=15)
+    run.add_argument("--flow-arrow-spacing", type=int, default=8)
+    run.add_argument("--flow-arrow-scale", type=float, default=0.8)
     run.add_argument("--num-points", type=int, default=10)
     run.add_argument("--min-spacing", type=int, default=20)
     run.add_argument("--search-radius", type=int, default=8)
@@ -307,8 +479,13 @@ def main() -> None:
             )
         elif args.command == "browser-preview":
             payload = transcode_preview_to_webm(args.source, args.output)
+        elif args.command == "run":
+            if args.analysis_method == ANALYSIS_OPTICAL_FLOW:
+                payload = run_optical_flow(args)
+            else:
+                payload = run_tracking(args)
         else:
-            payload = run_tracking(args)
+            raise ValueError(f"Unsupported command: {args.command}")
     except Exception as exc:
         _json_print({"ok": False, "error": str(exc)})
         raise SystemExit(1) from exc

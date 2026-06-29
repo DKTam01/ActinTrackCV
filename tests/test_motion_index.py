@@ -106,6 +106,8 @@ class MotionIndexTests(unittest.TestCase):
             float(np.hypot(2, 3)),
             places=3,
         )
+        self.assertTrue(summaries[0]["active_to_end"])
+        self.assertEqual(summaries[0]["end_reason"], "reached_last_frame")
 
     def test_tracking_assignments_do_not_collapse_onto_one_point(self) -> None:
         frames = [

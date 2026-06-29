@@ -41,6 +41,30 @@ The initial engineering gates are:
 
 These are software gates, not universal biological acceptance limits. Before comparing genotypes, convert the tolerances to µm/s and confirm that they are materially smaller than the minimum biological effect the study needs to detect.
 
+### Optical flow (Layer 1)
+
+Run:
+
+```bash
+.venv/bin/python scripts/validate_optical_flow.py
+```
+
+The benchmark writes JSON and CSV reports under `outputs/optical_flow_validation/`. It uses affine-warped bright-band frames with known uniform `dx`/`dy` px/frame and compares dense Farnebäck flow magnitudes to that ground truth.
+
+Initial engineering gates:
+
+- scalar-speed relative error no greater than 15%;
+- signed vertical and downward-component error no greater than 0.25 px/frame;
+- at least 2% of ROI pixels must pass the brightness mask.
+
+### Continuous integration
+
+On every push and pull request to `main`, GitHub Actions runs the Layer 1 gates plus unit tests and the Shiny workflow check (see `.github/workflows/validation.yml`). Locally, run the same sequence with:
+
+```bash
+./scripts/run_validation_gates.sh
+```
+
 ## Layer 2: calibrated microscope translation
 
 Required material: a stable fluorescent bead slide or fixed fluorescent specimen and a calibrated motorized/piezo stage.

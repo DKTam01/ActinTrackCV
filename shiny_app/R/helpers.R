@@ -3,7 +3,14 @@
 }
 
 safe_numeric <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NA_real_)
   suppressWarnings(as.numeric(x))
+}
+
+safe_scalar_numeric <- function(x) {
+  value <- safe_numeric(x)
+  if (length(value) == 0) return(NA_real_)
+  value[[1]]
 }
 
 safe_mean <- function(x) {
@@ -13,17 +20,17 @@ safe_mean <- function(x) {
 }
 
 format_metric <- function(value, digits = 3) {
-  value <- safe_numeric(value)
-  if (length(value) == 0 || is.na(value[[1]])) return("--")
-  formatC(value[[1]], digits = digits, format = "f")
+  value <- safe_scalar_numeric(value)
+  if (length(value) == 0 || is.na(value)) return("--")
+  formatC(value, digits = digits, format = "f")
 }
 
 format_bytes <- function(bytes) {
-  bytes <- safe_numeric(bytes)
-  if (length(bytes) == 0 || is.na(bytes[[1]])) return("--")
+  bytes <- safe_scalar_numeric(bytes)
+  if (length(bytes) == 0 || is.na(bytes)) return("--")
   units <- c("B", "KB", "MB", "GB", "TB")
-  power <- if (bytes[[1]] <= 0) 0 else min(floor(log(bytes[[1]], 1024)), length(units) - 1)
-  paste0(formatC(bytes[[1]] / (1024 ^ power), digits = 1, format = "f"), " ", units[[power + 1]])
+  power <- if (bytes <= 0) 0 else min(floor(log(bytes, 1024)), length(units) - 1)
+  paste0(formatC(bytes / (1024 ^ power), digits = 1, format = "f"), " ", units[[power + 1]])
 }
 
 normalize_project_path <- function(path) {
@@ -257,31 +264,59 @@ extract_source_frame <- function(
   run_bridge(project_dir, args)$payload
 }
 
-run_tracking_bridge <- function(project_dir, config) {
+run_analysis_bridge <- function(project_dir, config) {
   args <- c(
     "run", config$source_path, config$output_dir,
     "--export-name", config$export_name,
+    "--analysis-method", config$analysis_method,
     "--rotation", config$rotation,
     "--roi-x", config$roi_x,
     "--roi-y", config$roi_y,
     "--roi-width", config$roi_width,
     "--roi-height", config$roi_height,
-    "--num-points", config$num_points,
-    "--min-spacing", config$min_spacing,
-    "--search-radius", config$search_radius,
-    "--patch-size", config$patch_size,
-    "--min-confidence", config$min_confidence,
-    "--lookahead-frames", config$lookahead_frames,
     "--microns-per-pixel", config$microns_per_pixel,
-    "--seconds-per-frame", config$seconds_per_frame,
-    "--preview-fps", config$preview_fps,
-    "--tracking-method", config$tracking_method
+    "--seconds-per-frame", config$seconds_per_frame
   )
+  if (identical(config$analysis_method, "optical_flow")) {
+    args <- c(
+      args,
+      "--mask-percentile", config$mask_percentile,
+      "--flow-blur-kernel", config$flow_blur_kernel,
+      "--flow-winsize", config$flow_winsize,
+      "--flow-arrow-spacing", config$flow_arrow_spacing,
+      "--flow-arrow-scale", config$flow_arrow_scale
+    )
+  } else {
+    args <- c(
+      args,
+      "--num-points", config$num_points,
+      "--min-spacing", config$min_spacing,
+      "--search-radius", config$search_radius,
+      "--patch-size", config$patch_size,
+      "--min-confidence", config$min_confidence,
+      "--lookahead-frames", config$lookahead_frames,
+      "--preview-fps", config$preview_fps,
+      "--tracking-method", config$tracking_method
+    )
+  }
   if (isTRUE(config$flip_horizontal)) args <- c(args, "--flip-horizontal")
   run_bridge(project_dir, args)
 }
 
-read_tracking_json <- function(path, project_dir) {
+run_tracking_bridge <- function(project_dir, config) {
+  config$analysis_method <- config$analysis_method %||% "landmark_tracking"
+  run_analysis_bridge(project_dir, config)
+}
+
+is_landmark_result <- function(row) {
+  identical(as.character(row$analysis_method), "landmark_tracking")
+}
+
+is_flow_result_row <- function(row) {
+  identical(as.character(row$analysis_method), "optical_flow")
+}
+
+read_analysis_json <- function(path, project_dir) {
   data <- tryCatch(
     jsonlite::fromJSON(path, simplifyVector = FALSE),
     error = function(...) NULL
@@ -290,13 +325,37 @@ read_tracking_json <- function(path, project_dir) {
   outputs <- data$outputs %||% list()
   context <- data$run_context %||% list()
   source_path <- context$source_path %||% data$source_path %||% ""
-  track_preview_mp4 <- resolve_result_path(
+  analysis_method <- as.character(
+    data$analysis_method %||% context$analysis_method %||% "landmark_tracking"
+  )
+  is_flow <- identical(analysis_method, "optical_flow")
+
+  step_weighted_speed_um_s <- if (is_flow) {
+    safe_scalar_numeric(data$optical_flow_general_movement_um_s)
+  } else {
+    safe_scalar_numeric(data$absolute_velocity_index_um_per_s %||% data$general_movement_index_um_per_s)
+  }
+  primary_speed_um_s <- if (is_flow) {
+    safe_scalar_numeric(data$optical_flow_general_movement_um_s)
+  } else {
+    time_weighted <- safe_scalar_numeric(data$time_weighted_mean_speed_um_per_s)
+    if (is.na(time_weighted)) step_weighted_speed_um_s else time_weighted
+  }
+  absolute_velocity <- primary_speed_um_s
+  downward_velocity <- if (is_flow) {
+    safe_scalar_numeric(data$optical_flow_downward_motion_um_s)
+  } else {
+    safe_scalar_numeric(data$downward_velocity_index_um_per_s)
+  }
+
+  track_preview_mp4 <- if (is_flow) "" else resolve_result_path(
     project_dir,
     outputs$track_preview_mp4 %||% data$track_preview_video
   )
   inferred_webm <- if (nzchar(track_preview_mp4)) {
     sub("\\.mp4$", ".webm", track_preview_mp4, ignore.case = TRUE)
   } else ""
+
   data.frame(
     result_id = normalizePath(path, mustWork = FALSE),
     sample_id = as.character(data$sample_id %||% tools::file_path_sans_ext(basename(path))),
@@ -304,44 +363,70 @@ read_tracking_json <- function(path, project_dir) {
     source_path = source_path,
     group = infer_group_from_path(project_dir, source_path),
     analyzed_at = as.character(data$analysis_timestamp_utc %||% context$created_at_utc %||% ""),
-    absolute_velocity = safe_numeric(data$absolute_velocity_index_um_per_s %||% data$general_movement_index_um_per_s),
-    downward_velocity = safe_numeric(data$downward_velocity_index_um_per_s),
-    tracks_started = safe_numeric(data$num_tracks_started),
-    valid_tracks = safe_numeric(data$num_tracks_with_valid_steps),
-    valid_steps = safe_numeric(data$total_valid_steps),
-    frame_count = safe_numeric(data$frame_count),
-    trajectory_csv = resolve_result_path(project_dir, outputs$trajectory_csv %||% data$trajectory_csv),
+    analysis_method = analysis_method,
+    primary_speed_um_s = primary_speed_um_s,
+    step_weighted_speed_um_s = step_weighted_speed_um_s,
+    absolute_velocity = absolute_velocity,
+    downward_velocity = downward_velocity,
+    net_y_velocity = if (is_flow) safe_scalar_numeric(data$optical_flow_net_y_velocity_um_s %||% data$optical_flow_net_y_velocity_um_per_s) else NA_real_,
+    directionality_ratio = if (is_flow) safe_scalar_numeric(data$optical_flow_directionality_ratio) else NA_real_,
+    valid_pixel_fraction = if (is_flow) safe_scalar_numeric(data$optical_flow_valid_pixel_fraction) else NA_real_,
+    tracks_started = if (is_flow) NA_real_ else safe_scalar_numeric(data$num_tracks_started),
+    valid_tracks = if (is_flow) NA_real_ else safe_scalar_numeric(data$num_tracks_with_valid_steps),
+    valid_steps = if (is_flow) safe_scalar_numeric(data$frame_pair_count) else safe_scalar_numeric(data$total_valid_steps),
+    frame_count = safe_scalar_numeric(data$frame_count),
+    trajectory_csv = if (is_flow) "" else resolve_result_path(project_dir, outputs$trajectory_csv %||% data$trajectory_csv),
+    flow_pair_csv = if (is_flow) resolve_result_path(project_dir, outputs$flow_pair_csv %||% "") else "",
     summary_json = normalizePath(path, mustWork = FALSE),
-    starting_points = resolve_result_path(project_dir, outputs$starting_points_png %||% data$start_points_preview),
-    track_overlay = resolve_result_path(project_dir, outputs$track_overlay_png %||% data$tracks_overlay_preview),
+    starting_points = if (is_flow) "" else resolve_result_path(project_dir, outputs$starting_points_png %||% data$start_points_preview),
+    track_overlay = if (is_flow) "" else resolve_result_path(project_dir, outputs$track_overlay_png %||% data$tracks_overlay_preview),
+    flow_overlay = if (is_flow) resolve_result_path(project_dir, outputs$flow_overlay_png %||% "") else "",
     track_preview = track_preview_mp4,
-    track_preview_webm = resolve_result_path(
+    track_preview_webm = if (is_flow) "" else resolve_result_path(
       project_dir,
       outputs$track_preview_webm %||% data$track_preview_webm %||% inferred_webm
     ),
-    track_preview_mp4_codec = as.character(outputs$track_preview_mp4_codec %||% ""),
-    track_preview_webm_codec = as.character(outputs$track_preview_webm_codec %||% ""),
+    track_preview_mp4_codec = if (is_flow) "" else as.character(outputs$track_preview_mp4_codec %||% ""),
+    track_preview_webm_codec = if (is_flow) "" else as.character(outputs$track_preview_webm_codec %||% ""),
     output_dir = as.character(data$output_dir %||% dirname(path)),
-    tracking_method = as.character((data$parameters %||% list())$tracking_method %||% "unknown"),
-    seconds_per_frame = safe_numeric((data$parameters %||% list())$seconds_per_frame),
-    microns_per_pixel = safe_numeric((data$parameters %||% list())$microns_per_pixel),
+    tracking_method = if (is_flow) {
+      "optical_flow"
+    } else {
+      as.character((data$parameters %||% list())$tracking_method %||% "unknown")
+    },
+    seconds_per_frame = safe_scalar_numeric((data$settings %||% data$parameters %||% list())$seconds_per_frame),
+    microns_per_pixel = safe_scalar_numeric((data$settings %||% data$parameters %||% list())$microns_per_pixel),
     stringsAsFactors = FALSE
   )
+}
+
+read_tracking_json <- function(path, project_dir) {
+  read_analysis_json(path, project_dir)
 }
 
 discover_tracking_results <- function(project_dir) {
   project_dir <- normalize_project_path(project_dir)
   processed <- file.path(project_dir, "processed")
   if (!dir.exists(processed)) return(data.frame())
-  paths <- list.files(
-    processed,
-    pattern = "_motion_index\\.json$",
-    recursive = TRUE,
-    full.names = TRUE,
-    ignore.case = TRUE
+  paths <- c(
+    list.files(
+      processed,
+      pattern = "_motion_index\\.json$",
+      recursive = TRUE,
+      full.names = TRUE,
+      ignore.case = TRUE
+    ),
+    list.files(
+      processed,
+      pattern = "_optical_flow\\.json$",
+      recursive = TRUE,
+      full.names = TRUE,
+      ignore.case = TRUE
+    )
   )
+  paths <- unique(normalizePath(paths, mustWork = FALSE))
   if (length(paths) == 0) return(data.frame())
-  rows <- lapply(paths, read_tracking_json, project_dir = project_dir)
+  rows <- lapply(paths, read_analysis_json, project_dir = project_dir)
   rows <- rows[!vapply(rows, is.null, logical(1))]
   if (length(rows) == 0) return(data.frame())
   result <- do.call(rbind, rows)
@@ -360,9 +445,13 @@ angle_result_choices <- function(results) {
   if (is.null(results) || nrow(results) == 0) return(character())
   source <- ifelse(nzchar(results$source_name), results$source_name, "Unnamed source")
   method <- ifelse(
-    results$tracking_method == "brightest_local",
-    "Brightest points",
-    ifelse(results$tracking_method == "template", "Template", results$tracking_method)
+    results$analysis_method == "optical_flow",
+    "Optical flow",
+    ifelse(
+      results$tracking_method == "brightest_local",
+      "Brightest points",
+      ifelse(results$tracking_method == "template", "Template", results$tracking_method)
+    )
   )
   analyzed <- gsub("T", " ", substr(results$analyzed_at, 1, 19), fixed = TRUE)
   labels <- paste(source, results$group, method, analyzed, sep = "  •  ")
@@ -380,8 +469,47 @@ read_trajectory <- function(path) {
   read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
 }
 
+read_flow_pairs <- function(path) {
+  if (is.null(path) || !nzchar(path) || !file.exists(path)) return(data.frame())
+  read.csv(path, stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+px_frame_to_um_s <- function(px_frame, microns_per_pixel, seconds_per_frame) {
+  px_frame * safe_scalar_numeric(microns_per_pixel) / safe_scalar_numeric(seconds_per_frame)
+}
+
+analysis_method_label <- function(method) {
+  if (identical(method, "optical_flow")) {
+    "Optical flow"
+  } else if (identical(method, "landmark_tracking")) {
+    "Landmark tracking"
+  } else {
+    as.character(method %||% "Unknown")
+  }
+}
+
+tracking_method_label <- function(row) {
+  if (is.null(row)) return("Unknown")
+  if (identical(row$analysis_method, "optical_flow")) {
+    return("Optical flow")
+  }
+  if (identical(row$tracking_method, "brightest_local")) {
+    "Brightest nearby points"
+  } else if (identical(row$tracking_method, "template")) {
+    "Template matching"
+  } else {
+    as.character(row$tracking_method %||% "Unknown")
+  }
+}
+
 wrap_angle_change <- function(angle_deg) {
   ((angle_deg + 180) %% 360) - 180
+}
+
+csv_angle_value <- function(value) {
+  if (is.null(value) || length(value) == 0 || identical(value, "")) return(NA_real_)
+  numeric_value <- safe_scalar_numeric(value)
+  if (length(numeric_value) == 0 || is.na(numeric_value)) NA_real_ else numeric_value
 }
 
 derive_angle_dynamics <- function(trajectory, seconds_per_frame = 1) {
@@ -394,13 +522,40 @@ derive_angle_dynamics <- function(trajectory, seconds_per_frame = 1) {
   data$frame_index <- safe_numeric(data$frame_index)
   data$x_px <- safe_numeric(data$x_px)
   data$y_px <- safe_numeric(data$y_px)
-  data$motion_angle_deg <- NA_real_
-  data$turning_angle_deg <- NA_real_
-  data$elapsed_time_s <- data$frame_index * safe_numeric(seconds_per_frame %||% 1)
+  spf <- safe_scalar_numeric(seconds_per_frame %||% 1)
+
+  if ("motion_angle_deg" %in% names(data)) {
+    data$motion_angle_deg <- vapply(data$motion_angle_deg, csv_angle_value, numeric(1))
+  } else {
+    data$motion_angle_deg <- NA_real_
+  }
+  if ("turning_angle_deg" %in% names(data)) {
+    data$turning_angle_deg <- vapply(data$turning_angle_deg, csv_angle_value, numeric(1))
+  } else {
+    data$turning_angle_deg <- NA_real_
+  }
 
   groups <- split(seq_len(nrow(data)), data$track_id)
   for (indices in groups) {
     indices <- indices[order(data$frame_index[indices])]
+    if ("dt_s" %in% names(data)) {
+      dt_values <- vapply(data$dt_s[indices], csv_angle_value, numeric(1))
+      dt_values[is.na(dt_values)] <- 0
+      data$elapsed_time_s[indices] <- cumsum(dt_values)
+    } else {
+      data$elapsed_time_s[indices] <- data$frame_index[indices] * spf
+    }
+  }
+  if (!"elapsed_time_s" %in% names(data)) {
+    data$elapsed_time_s <- data$frame_index * spf
+  }
+
+  for (indices in groups) {
+    indices <- indices[order(data$frame_index[indices])]
+    need_motion <- is.na(data$motion_angle_deg[indices])
+    need_turning <- is.na(data$turning_angle_deg[indices])
+    if (!any(need_motion) && !any(need_turning)) next
+
     x <- data$x_px[indices]
     y <- data$y_px[indices]
     dx <- c(NA_real_, diff(x))
@@ -413,8 +568,16 @@ derive_angle_dynamics <- function(trajectory, seconds_per_frame = 1) {
     if (length(valid) >= 2) {
       turning[valid[-1]] <- wrap_angle_change(diff(angle[valid]))
     }
-    data$motion_angle_deg[indices] <- angle
-    data$turning_angle_deg[indices] <- turning
+    if (any(need_motion)) {
+      motion_values <- data$motion_angle_deg[indices]
+      motion_values[need_motion] <- angle[need_motion]
+      data$motion_angle_deg[indices] <- motion_values
+    }
+    if (any(need_turning)) {
+      turning_values <- data$turning_angle_deg[indices]
+      turning_values[need_turning] <- turning[need_turning]
+      data$turning_angle_deg[indices] <- turning_values
+    }
   }
 
   data[order(data$track_id, data$frame_index), , drop = FALSE]
@@ -475,6 +638,29 @@ summarize_angle_dynamics <- function(angle_data) {
   )
 }
 
+summarize_groups_by_method <- function(results) {
+  if (is.null(results) || nrow(results) == 0) return(data.frame())
+  keys <- interaction(results$group, results$analysis_method, drop = TRUE, lex.order = TRUE)
+  groups <- split(results, keys)
+  rows <- lapply(groups, function(group_df) {
+    is_landmark <- group_df$analysis_method == "landmark_tracking"
+    data.frame(
+      group = group_df$group[[1]],
+      analysis_method = group_df$analysis_method[[1]],
+      runs = nrow(group_df),
+      mean_primary_speed = safe_mean(group_df$primary_speed_um_s),
+      mean_downward_velocity = safe_mean(group_df$downward_velocity),
+      mean_net_y_velocity = safe_mean(group_df$net_y_velocity),
+      total_valid_tracks = sum(group_df$valid_tracks[is_landmark], na.rm = TRUE),
+      total_valid_steps = sum(group_df$valid_steps, na.rm = TRUE),
+      stringsAsFactors = FALSE
+    )
+  })
+  result <- do.call(rbind, rows)
+  rownames(result) <- NULL
+  result[order(result$group, result$analysis_method), , drop = FALSE]
+}
+
 summarize_groups <- function(results) {
   if (is.null(results) || nrow(results) == 0) return(data.frame())
   groups <- split(results, results$group)
@@ -483,8 +669,11 @@ summarize_groups <- function(results) {
     data.frame(
       group = group_name,
       samples = nrow(group_df),
-      mean_absolute_velocity = safe_mean(group_df$absolute_velocity),
+      mean_absolute_velocity = safe_mean(group_df$primary_speed_um_s),
       mean_downward_velocity = safe_mean(group_df$downward_velocity),
+      mean_net_y_velocity = safe_mean(group_df$net_y_velocity),
+      landmark_runs = sum(group_df$analysis_method == "landmark_tracking", na.rm = TRUE),
+      flow_runs = sum(group_df$analysis_method == "optical_flow", na.rm = TRUE),
       total_valid_tracks = sum(group_df$valid_tracks, na.rm = TRUE),
       total_valid_steps = sum(group_df$valid_steps, na.rm = TRUE),
       stringsAsFactors = FALSE

@@ -1022,7 +1022,7 @@ def compute_motion_indices(
                 "start_y_px": round(track.start_y, 3),
                 "num_points": len(track.points),
                 "last_frame_index": track.points[-1].frame_index if track.points else None,
-                "active_to_end": track.active,
+                "active_to_end": track.end_reason == "reached_last_frame",
                 "end_reason": track.end_reason,
                 "downward_velocity_index_um_per_s": round(
                     float(np.mean(track_downward)) if track_downward else 0.0, 6

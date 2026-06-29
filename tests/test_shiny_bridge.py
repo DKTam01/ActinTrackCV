@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,9 +11,11 @@ import cv2
 import numpy as np
 
 from scripts.shiny_bridge import (
+    ANALYSIS_OPTICAL_FLOW,
     crop_video_to_frames,
     extract_preview_frame,
     probe_media,
+    run_optical_flow,
     transcode_preview_to_webm,
 )
 
@@ -107,6 +110,37 @@ class ShinyBridgeTests(unittest.TestCase):
             self.assertEqual(int(capture.get(cv2.CAP_PROP_FRAME_COUNT)), 5)
         finally:
             capture.release()
+
+    def test_run_optical_flow_writes_expected_outputs(self) -> None:
+        output_dir = self.root / "flow_run"
+        args = argparse.Namespace(
+            source=self.video,
+            output_dir=output_dir,
+            export_name="test_flow",
+            rotation=0,
+            flip_horizontal=False,
+            roi_x=0,
+            roi_y=0,
+            roi_width=0,
+            roi_height=0,
+            mask_percentile=90.0,
+            flow_blur_kernel=3,
+            flow_winsize=15,
+            flow_arrow_spacing=8,
+            flow_arrow_scale=0.8,
+            microns_per_pixel=0.265,
+            seconds_per_frame=30.0,
+        )
+
+        payload = run_optical_flow(args)
+
+        self.assertEqual(payload["analysis_method"], ANALYSIS_OPTICAL_FLOW)
+        self.assertTrue(payload["has_valid_result"])
+        outputs = payload["outputs"]
+        self.assertTrue(Path(outputs["summary_json"]).is_file())
+        self.assertTrue(Path(outputs["flow_overlay_png"]).is_file())
+        self.assertTrue(Path(outputs["flow_pair_csv"]).is_file())
+        self.assertGreater(payload["frame_pair_count"], 0)
 
 
 if __name__ == "__main__":

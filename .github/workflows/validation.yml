@@ -1,0 +1,85 @@
+name: Validation gates
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Tests and publication gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 \
+            libglib2.0-0 \
+            ffmpeg
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Layer 1 — landmark tracking synthetic gate
+        run: python scripts/validate_tracker.py
+
+      - name: Layer 1 — template tracking synthetic gate
+        run: python scripts/validate_tracker.py --tracking-method template
+
+      - name: Layer 1 — optical flow synthetic gate
+        run: python scripts/validate_optical_flow.py
+
+      - name: Set up R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "4.4"
+
+      - name: Install R packages
+        run: Rscript -e 'install.packages("jsonlite", repos = "https://cloud.r-project.org")'
+
+      - name: Shiny helper tests
+        run: Rscript tests/test_shiny_helpers.R
+
+      - name: End-to-end Shiny workflow gate
+        run: python scripts/validate_shiny_workflow.py
+
+      - name: Upload validation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-reports
+          path: |
+            outputs/tracker_validation/
+            outputs/optical_flow_validation/
+            outputs/shiny_workflow_validation.json
+          if-no-files-found: ignore

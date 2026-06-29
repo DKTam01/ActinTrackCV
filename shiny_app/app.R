@@ -131,6 +131,54 @@ normalize_section <- function(section) {
   if (!is.null(mapped)) mapped else section
 }
 
+result_primary_speed <- function(row) {
+  if (is.null(row)) return(NA_real_)
+  primary <- row$primary_speed_um_s %||% row$primary_speed %||% row$absolute_velocity
+  safe_scalar_numeric(primary)
+}
+
+result_step_weighted_speed <- function(row) {
+  if (is.null(row)) return(NA_real_)
+  step_weighted <- row$step_weighted_speed_um_s %||% row$step_weighted_speed %||% row$absolute_velocity
+  safe_scalar_numeric(step_weighted)
+}
+
+summarize_groups_stratified <- function(results) {
+  if (exists("summarize_groups_by_method", mode = "function", inherits = TRUE)) {
+    return(summarize_groups_by_method(results))
+  }
+  if (is.null(results) || nrow(results) == 0) return(data.frame())
+  parts <- lapply(c("landmark_tracking", "optical_flow"), function(method) {
+    subset <- results[results$analysis_method == method, , drop = FALSE]
+    if (nrow(subset) == 0) return(NULL)
+    summary <- summarize_groups(subset)
+    summary$analysis_method <- method
+    summary
+  })
+  parts <- parts[!vapply(parts, is.null, logical(1))]
+  if (length(parts) == 0) return(data.frame())
+  do.call(rbind, parts)
+}
+
+layout_metric_boxes <- function(boxes) {
+  n <- length(boxes)
+  if (n <= 4L) {
+    widths <- rep(3L, n)
+    widths[[1]] <- widths[[1]] + (12L - sum(widths))
+    return(do.call(layout_columns, c(list(col_widths = widths), boxes)))
+  }
+  split_at <- ceiling(n / 2)
+  first_widths <- rep(12L %/% split_at, split_at)
+  if (sum(first_widths) < 12L) first_widths[[1]] <- first_widths[[1]] + (12L - sum(first_widths))
+  second_count <- n - split_at
+  second_widths <- rep(12L %/% second_count, second_count)
+  if (sum(second_widths) < 12L) second_widths[[1]] <- second_widths[[1]] + (12L - sum(second_widths))
+  tagList(
+    do.call(layout_columns, c(list(col_widths = first_widths), boxes[seq_len(split_at)])),
+    do.call(layout_columns, c(list(col_widths = second_widths), boxes[(split_at + 1L):n]))
+  )
+}
+
 ui <- page_sidebar(
   title = div(
     class = "topbar-brand",
@@ -286,8 +334,8 @@ ui <- page_sidebar(
         class = "app-view",
         page_heading(
           "STEP 2 · TRACK",
-          "Configure and run tracking",
-          "The active video from Project is used here. Set ROI on the preview frame, then run the tracker.",
+          "Configure and run analysis",
+          "The active video from Project is used here. Set ROI on the preview frame, then run landmark tracking or optical flow.",
           div(
             class = "page-heading-actions",
             actionButton(
@@ -309,8 +357,26 @@ ui <- page_sidebar(
           col_widths = c(4, 8),
           card(
             class = "surface-card control-card",
-            card_header(strong("Tracking setup")),
+            card_header(strong("Analysis setup")),
             card_body(
+              div(
+                class = "control-section",
+                h5("Analysis method"),
+                radioButtons(
+                  "analysis_method",
+                  NULL,
+                  choiceNames = c(
+                    "Landmark tracking (bright actin points)",
+                    "Optical flow (dense Lifeact meshwork)"
+                  ),
+                  choiceValues = c("landmark_tracking", "optical_flow"),
+                  selected = "landmark_tracking"
+                ),
+                p(
+                  class = "control-note",
+                  "Use optical flow when bright-point tracking loses identity on dense meshwork. Landmark tracking remains available for sparse puncta."
+                )
+              ),
               div(
                 class = "control-section",
                 h5("Frame and orientation"),
@@ -340,30 +406,62 @@ ui <- page_sidebar(
                   numericInput("roi_height", "Height", 0, min = 1, step = 1)
                 )
               ),
-              div(
-                class = "control-section",
-                h5("Point matching"),
-                radioButtons(
-                  "tracking_method",
-                  "Tracking method",
-                  choiceNames = c(
-                    "Brightest nearby points (Dr. Ju method)",
-                    "Template matching"
+              conditionalPanel(
+                "input.analysis_method == 'landmark_tracking'",
+                div(
+                  class = "control-section",
+                  h5("Point matching"),
+                  radioButtons(
+                    "tracking_method",
+                    "Tracking method",
+                    choiceNames = c(
+                      "Brightest nearby points (Dr. Ju method)",
+                      "Template matching"
+                    ),
+                    choiceValues = c("brightest_local", "template"),
+                    selected = "brightest_local"
                   ),
-                  choiceValues = c("brightest_local", "template"),
-                  selected = "brightest_local"
+                  div(
+                    class = "control-note tracking-method-note",
+                    uiOutput("tracking_method_help")
+                  ),
+                  div(
+                    class = "numeric-grid",
+                    numericInput("num_points", "Starting points", 10, min = 1, max = 50),
+                    numericInput("min_spacing", "Min point spacing (px)", 20, min = 1, max = 200),
+                    numericInput("search_radius", "Search radius (px)", 8, min = 1, max = 100),
+                    numericInput("min_confidence", "Min match confidence", 0.55, min = 0, max = 1, step = 0.05),
+                    numericInput("patch_size", "Patch size (px, odd)", 11, min = 3, max = 101, step = 2)
+                  )
                 ),
+                tags$details(
+                  class = "advanced-settings",
+                  tags$summary("Advanced matching settings"),
+                  div(
+                    class = "numeric-grid",
+                    numericInput("lookahead_frames", "Lookahead frames", 0, min = 0, max = 3),
+                    numericInput("preview_fps", "QC video FPS", 5, min = 1, max = 30),
+                    div()
+                  )
+                )
+              ),
+              conditionalPanel(
+                "input.analysis_method == 'optical_flow'",
                 div(
-                  class = "control-note tracking-method-note",
-                  uiOutput("tracking_method_help")
-                ),
-                div(
-                  class = "numeric-grid",
-                  numericInput("num_points", "Starting points", 10, min = 1, max = 50),
-                  numericInput("min_spacing", "Min point spacing (px)", 20, min = 1, max = 200),
-                  numericInput("search_radius", "Search radius (px)", 8, min = 1, max = 100),
-                  numericInput("min_confidence", "Min match confidence", 0.55, min = 0, max = 1, step = 0.05),
-                  numericInput("patch_size", "Patch size (px, odd)", 11, min = 3, max = 101, step = 2)
+                  class = "control-section",
+                  h5("Optical flow"),
+                  div(
+                    class = "numeric-grid",
+                    numericInput("mask_percentile", "Brightness mask percentile", 90, min = 50, max = 99, step = 1),
+                    numericInput("flow_blur_kernel", "Gaussian blur kernel", 3, min = 0, max = 5, step = 2),
+                    numericInput("flow_winsize", "Flow window size", 15, min = 5, max = 51, step = 2),
+                    numericInput("flow_arrow_spacing", "Arrow spacing (px)", 8, min = 4, max = 24, step = 1),
+                    numericInput("flow_arrow_scale", "Arrow scale", 0.8, min = 0.1, max = 3, step = 0.1)
+                  ),
+                  p(
+                    class = "control-note",
+                    "Mask percentile limits flow to bright actin pixels. Blur kernel must be 0, 3, or 5."
+                  )
                 )
               ),
               div(
@@ -376,22 +474,7 @@ ui <- page_sidebar(
                 ),
                 div(class = "calibration-warning", fontawesome::fa("triangle-exclamation"), " Confirm these values from acquisition metadata.")
               ),
-              tags$details(
-                class = "advanced-settings",
-                tags$summary("Advanced matching settings"),
-                div(
-                  class = "numeric-grid",
-                  numericInput("lookahead_frames", "Lookahead frames", 0, min = 0, max = 3),
-                  numericInput("preview_fps", "QC video FPS", 5, min = 1, max = 30),
-                  div()
-                )
-              ),
-              input_task_button(
-                "run_tracking",
-                "Run calibrated tracking",
-                icon = fontawesome::fa("play"),
-                class = "btn-run"
-              )
+              uiOutput("run_analysis_button")
             )
           ),
           card(
@@ -468,12 +551,12 @@ ui <- page_sidebar(
               col_widths = c(6, 6),
               card(
                 class = "surface-card plot-card",
-                card_header(strong("Track paths")),
+                card_header(uiOutput("motion_paths_header")),
                 card_body(plotOutput("trajectory_plot", height = "350px"))
               ),
               card(
                 class = "surface-card plot-card",
-                card_header(strong("Absolute velocity by frame")),
+                card_header(uiOutput("motion_velocity_header")),
                 card_body(plotOutput("velocity_plot", height = "350px"))
               )
             ),
@@ -494,63 +577,7 @@ ui <- page_sidebar(
           ),
           nav_panel(
             "Angles",
-            div(
-              class = "analysis-definition-note",
-              fontawesome::fa("circle-info"),
-              " Angle convention: 0° = right, +90° = down, ±180° = left, and -90° = up in image coordinates. Turning is wrapped to -180°…+180°."
-            ),
-            uiOutput("angle_metrics"),
-            layout_columns(
-              col_widths = c(7, 5),
-              card(
-                class = "surface-card media-card angle-preview-card",
-                card_header(
-                  div(
-                    strong("Full-sequence tracking preview"),
-                    span(class = "card-subtitle", "Confirms which source and tracks are being analyzed")
-                  )
-                ),
-                card_body(uiOutput("angle_preview_media"))
-              ),
-              card(
-                class = "surface-card media-card angle-overlay-card",
-                card_header(
-                  div(
-                    strong("Trajectory overlay"),
-                    span(class = "card-subtitle", "All tracked paths for the selected run")
-                  )
-                ),
-                card_body(uiOutput("angle_overlay_media"))
-              )
-            ),
-            layout_columns(
-              col_widths = c(6, 6),
-              card(
-                class = "surface-card plot-card",
-                card_header(strong("Instantaneous motion angle")),
-                card_body(plotOutput("motion_angle_plot", height = "360px"))
-              ),
-              card(
-                class = "surface-card plot-card",
-                card_header(strong("Turning angle between steps")),
-                card_body(plotOutput("turning_angle_plot", height = "360px"))
-              )
-            ),
-            card(
-              class = "surface-card plot-card",
-              card_header(strong("Tracked position through time")),
-              card_body(plotOutput("position_time_plot", height = "330px"))
-            ),
-            card(
-              class = "surface-card",
-              card_header(
-                div(
-                  strong("Per-step angle data"),
-                  downloadButton("download_angle_data", "CSV", class = "btn-sm")
-                )
-              ),
-              card_body(uiOutput("angle_table"))
-            )
+            uiOutput("angles_tab_body")
           )
         )
       )
@@ -566,6 +593,7 @@ ui <- page_sidebar(
           "Compare absolute and directional velocity across biological groups using completed runs.",
           actionButton("refresh_analysis", "Refresh", icon = fontawesome::fa("rotate"), class = "btn-outline-secondary")
         ),
+        uiOutput("compare_method_note"),
         uiOutput("analysis_metrics"),
         layout_columns(
           col_widths = c(8, 4),
@@ -1056,6 +1084,28 @@ server <- function(input, output, session) {
     )
   })
 
+  output$run_analysis_button <- renderUI({
+    label <- if (identical(input$analysis_method, "optical_flow")) {
+      "Run optical flow analysis"
+    } else {
+      "Run calibrated tracking"
+    }
+    detail <- if (identical(input$analysis_method, "optical_flow")) {
+      "Cropping lossless frames and estimating dense Farnebäck flow..."
+    } else {
+      "Cropping lossless frames and following bright actin landmarks..."
+    }
+    tagList(
+      input_task_button(
+        "run_tracking",
+        label,
+        icon = fontawesome::fa("play"),
+        class = "btn-run"
+      ),
+      tags$span(class = "visually-hidden", detail)
+    )
+  })
+
   output$frame_control <- renderUI({
     metadata <- source_probe()
     if (is.null(metadata)) return(NULL)
@@ -1147,12 +1197,21 @@ server <- function(input, output, session) {
     row <- selected_source()
     state <- preview_state()
     req(row, state)
-    if (input$patch_size %% 2 == 0) {
-      showNotification("Patch size must be an odd number.", type = "error")
-      return()
+    analysis_method <- input$analysis_method %||% "landmark_tracking"
+    if (identical(analysis_method, "landmark_tracking")) {
+      if (input$patch_size %% 2 == 0) {
+        showNotification("Patch size must be an odd number.", type = "error")
+        return()
+      }
+    } else {
+      blur_kernel <- as.integer(input$flow_blur_kernel)
+      if (!blur_kernel %in% c(0L, 3L, 5L)) {
+        showNotification("Flow blur kernel must be 0, 3, or 5.", type = "error")
+        return()
+      }
     }
     if (input$roi_width < 3 || input$roi_height < 3) {
-      showNotification("Draw a larger ROI before running tracking.", type = "error")
+      showNotification("Draw a larger ROI before running analysis.", type = "error")
       return()
     }
     timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
@@ -1169,32 +1228,48 @@ server <- function(input, output, session) {
       source_path = row$path,
       output_dir = output_dir,
       export_name = export_name,
+      analysis_method = analysis_method,
       rotation = as.integer(input$rotation),
       flip_horizontal = isTRUE(input$flip_horizontal),
       roi_x = as.integer(input$roi_x),
       roi_y = as.integer(input$roi_y),
       roi_width = as.integer(input$roi_width),
       roi_height = as.integer(input$roi_height),
-      num_points = as.integer(input$num_points),
-      min_spacing = as.integer(input$min_spacing),
-      search_radius = as.integer(input$search_radius),
-      patch_size = as.integer(input$patch_size),
-      min_confidence = as.numeric(input$min_confidence),
-      lookahead_frames = as.integer(input$lookahead_frames),
       microns_per_pixel = as.numeric(input$microns_per_pixel),
-      seconds_per_frame = as.numeric(input$seconds_per_frame),
-      preview_fps = as.numeric(input$preview_fps),
-      tracking_method = input$tracking_method
+      seconds_per_frame = as.numeric(input$seconds_per_frame)
     )
-    run_state(list(status = "running", message = paste("Tracking", row$file_name), log = character()))
+    if (identical(analysis_method, "optical_flow")) {
+      config$mask_percentile <- as.numeric(input$mask_percentile)
+      config$flow_blur_kernel <- as.integer(input$flow_blur_kernel)
+      config$flow_winsize <- as.integer(input$flow_winsize)
+      config$flow_arrow_spacing <- as.integer(input$flow_arrow_spacing)
+      config$flow_arrow_scale <- as.numeric(input$flow_arrow_scale)
+      run_label <- paste("Optical flow on", row$file_name)
+      progress_message <- "Running optical flow analysis"
+      progress_detail <- "Cropping lossless frames and estimating dense Farnebäck flow..."
+    } else {
+      config$num_points <- as.integer(input$num_points)
+      config$min_spacing <- as.integer(input$min_spacing)
+      config$search_radius <- as.integer(input$search_radius)
+      config$patch_size <- as.integer(input$patch_size)
+      config$min_confidence <- as.numeric(input$min_confidence)
+      config$lookahead_frames <- as.integer(input$lookahead_frames)
+      config$preview_fps <- as.numeric(input$preview_fps)
+      config$tracking_method <- input$tracking_method
+      run_label <- paste("Tracking", row$file_name)
+      progress_message <- "Running calibrated tracking"
+      progress_detail <- "Cropping lossless frames and following bright actin landmarks..."
+    }
+    run_state(list(status = "running", message = run_label, log = character()))
     tryCatch({
       bridge_result <- withProgress(
-        message = "Running calibrated tracking",
-        detail = "Cropping lossless frames and following bright actin landmarks...",
+        message = progress_message,
+        detail = progress_detail,
         value = 0.55,
         run_tracking_bridge(project_dir(), config)
       )
-      summary_path <- bridge_result$payload$outputs$summary_json %||% ""
+      outputs <- bridge_result$payload$outputs %||% list()
+      summary_path <- outputs$summary_json %||% bridge_result$payload$summary_json %||% ""
       pending_result(summary_path)
       run_state(list(
         status = "success",
@@ -1205,7 +1280,11 @@ server <- function(input, output, session) {
       refresh_token(refresh_token() + 1L)
       updateRadioButtons(session, "section", selected = "review")
       nav_select("main_nav", selected = "review")
-      showNotification("Tracking run completed", type = "message", duration = 4)
+      showNotification(
+        if (identical(analysis_method, "optical_flow")) "Optical flow run completed" else "Tracking run completed",
+        type = "message",
+        duration = 4
+      )
     }, error = function(exc) {
       run_state(list(status = "error", message = conditionMessage(exc), log = character()))
       showNotification(conditionMessage(exc), type = "error", duration = 10)
@@ -1236,12 +1315,30 @@ server <- function(input, output, session) {
   output$result_selector <- renderUI({
     div(
       class = "result-selector-wrap",
-      selectInput("result_file", "Tracking result", choices = angle_result_choices(results()), width = "420px"),
-      div(class = "selector-help", "Each option shows source, group, tracker, and run time.")
+      selectInput("result_file", "Analysis result", choices = angle_result_choices(results()), width = "420px"),
+      div(class = "selector-help", "Each option shows source, group, analysis method, and run time.")
     )
   })
 
   selected_result <- reactive(selected_row(results(), input$result_file %||% "", "result_id"))
+  flow_pairs <- reactive({
+    row <- selected_result()
+    if (is.null(row)) return(data.frame())
+    data <- read_flow_pairs(row$flow_pair_csv)
+    if (nrow(data) == 0) return(data.frame())
+    data$pair_index <- seq_len(nrow(data))
+    data$absolute_velocity_um_s <- px_frame_to_um_s(
+      data$mean_magnitude_px_frame,
+      row$microns_per_pixel,
+      row$seconds_per_frame
+    )
+    data$downward_velocity_um_s <- px_frame_to_um_s(
+      data$mean_downward_px_frame,
+      row$microns_per_pixel,
+      row$seconds_per_frame
+    )
+    data
+  })
   trajectory <- reactive({
     row <- selected_result()
     if (is.null(row)) return(data.frame())
@@ -1257,19 +1354,18 @@ server <- function(input, output, session) {
   })
   angle_summary <- reactive(summarize_angle_dynamics(angle_trajectory()))
 
+  is_flow_result <- reactive({
+    row <- selected_result()
+    !is.null(row) && identical(row$analysis_method, "optical_flow")
+  })
+
   output$review_context_banner <- renderUI({
     row <- selected_result()
     if (is.null(row)) {
-      return(empty_state("file-circle-question", "No tracking result selected", "Choose a completed run above to preview and analyze it."))
+      return(empty_state("file-circle-question", "No analysis result selected", "Choose a completed run above to preview and analyze it."))
     }
     relative_source <- relative_to_project(project_dir(), row$source_path)
-    method_label <- if (identical(row$tracking_method, "brightest_local")) {
-      "Brightest nearby points"
-    } else if (identical(row$tracking_method, "template")) {
-      "Template matching"
-    } else {
-      row$tracking_method
-    }
+    method_label <- tracking_method_label(row)
     div(
       class = "selected-file-banner",
       div(class = "selected-file-icon", fontawesome::fa("file-video")),
@@ -1282,7 +1378,7 @@ server <- function(input, output, session) {
       div(
         class = "selected-file-tags",
         status_pill(row$group, "info"),
-        status_pill(method_label, "neutral"),
+        status_pill(method_label, if (identical(row$analysis_method, "optical_flow")) "teal" else "neutral"),
         span(class = "selected-file-time", paste("Run", gsub("T", " ", substr(row$analyzed_at, 1, 19), fixed = TRUE)))
       )
     )
@@ -1291,32 +1387,229 @@ server <- function(input, output, session) {
   output$review_method_note <- renderUI({
     row <- selected_result()
     if (is.null(row)) return(NULL)
-    method_label <- if (identical(row$tracking_method, "brightest_local")) {
-      "Brightest nearby points"
-    } else if (identical(row$tracking_method, "template")) {
-      "Template matching"
+    method_label <- tracking_method_label(row)
+    if (identical(row$analysis_method, "optical_flow")) {
+      note <- tagList(
+        " Review shows the saved optical flow run. Method: ",
+        strong(method_label),
+        ". Inspect the flow overlay and per-pair velocity plot. Optical flow is recommended for dense Lifeact meshwork where bright-point tracking loses identity."
+      )
     } else {
-      row$tracking_method
+      primary <- result_primary_speed(row)
+      note <- tagList(
+        " Review shows the saved tracking run. Method: ",
+        strong(method_label),
+        ". Primary speed is the ",
+        strong("time-weighted mean"),
+        " across tracked steps (",
+        format_metric(primary, 3),
+        " µm/s); it weights unequal frame gaps correctly. Compare the track overlay and preview video — if points jump or swap identity, re-run on Track with optical flow or a tighter ROI."
+      )
     }
     div(
       class = "analysis-definition-note review-method-note",
       fontawesome::fa("circle-info"),
-      " Review shows the saved tracking run. Method: ",
-      strong(method_label),
-      ". Compare the track overlay and preview video — if points jump or swap identity, re-run on Track with brightest nearby points, a tighter ROI, and settings matching the Python app."
+      note
     )
   })
 
   output$result_metrics <- renderUI({
     row <- selected_result()
-    if (is.null(row)) return(empty_state("route", "No result selected", "Run tracking or choose a saved result."))
-    layout_columns(
-      col_widths = c(3, 3, 3, 3),
-      metric_value_box("Absolute velocity", paste0(format_metric(row$absolute_velocity), " µm/s"), "Primary movement metric", "arrows-up-down-left-right", "teal"),
-      metric_value_box("Downward velocity", paste0(format_metric(row$downward_velocity), " µm/s"), "Directional secondary metric", "arrow-down", "blue"),
-      metric_value_box("Valid tracks", format_metric(row$valid_tracks, 0), paste0(format_metric(row$tracks_started, 0), " started"), "route", "amber"),
-      metric_value_box("Valid steps", format_metric(row$valid_steps, 0), paste0(format_metric(row$frame_count, 0), " frames"), "list-check", "gray")
+    if (is.null(row)) return(empty_state("route", "No result selected", "Run analysis or choose a saved result."))
+    if (identical(row$analysis_method, "optical_flow")) {
+      boxes <- list(
+        metric_value_box(
+          "General movement",
+          paste0(format_metric(row$absolute_velocity), " µm/s"),
+          "Optical flow primary metric",
+          "arrows-up-down-left-right",
+          "teal"
+        ),
+        metric_value_box(
+          "Downward motion",
+          paste0(format_metric(row$downward_velocity), " µm/s"),
+          "Directional secondary metric",
+          "arrow-down",
+          "blue"
+        )
+      )
+      if (!is.na(row$directionality_ratio)) {
+        boxes <- c(boxes, list(metric_value_box(
+          "Directionality ratio",
+          format_metric(row$directionality_ratio, 2),
+          "Downward share of general movement",
+          "compass",
+          "amber"
+        )))
+      }
+      boxes <- c(boxes, list(metric_value_box(
+        "Valid pixel fraction",
+        format_metric(row$valid_pixel_fraction, 2),
+        "Bright actin mask coverage",
+        "mask",
+        if (!is.na(row$directionality_ratio)) "gray" else "amber"
+      )))
+      if ("saturated_pixel_fraction" %in% names(row) && !is.na(row$saturated_pixel_fraction)) {
+        boxes <- c(boxes, list(metric_value_box(
+          "Saturated pixel fraction",
+          format_metric(row$saturated_pixel_fraction, 2),
+          "Bright pixels at detector ceiling",
+          "sun",
+          "gray"
+        )))
+      } else {
+        boxes <- c(boxes, list(metric_value_box(
+          "Frame pairs",
+          format_metric(row$valid_steps, 0),
+          paste0(format_metric(row$frame_count, 0), " frames"),
+          "list-check",
+          "gray"
+        )))
+      }
+      return(layout_metric_boxes(boxes))
+    }
+
+    primary <- result_primary_speed(row)
+    step_weighted <- result_step_weighted_speed(row)
+    show_step_weighted <- !is.na(primary) && !is.na(step_weighted) &&
+      abs(primary - step_weighted) > 0.0005
+    boxes <- list(
+      metric_value_box(
+        "Primary speed (time-weighted)",
+        paste0(format_metric(primary), " µm/s"),
+        "Recommended landmark scalar speed",
+        "arrows-up-down-left-right",
+        "teal"
+      ),
+      metric_value_box(
+        "Downward velocity",
+        paste0(format_metric(row$downward_velocity), " µm/s"),
+        "Directional secondary metric",
+        "arrow-down",
+        "blue"
+      )
     )
+    if (show_step_weighted) {
+      boxes <- c(boxes, list(metric_value_box(
+        "Step-weighted speed",
+        paste0(format_metric(step_weighted), " µm/s"),
+        "Unweighted mean across valid steps",
+        "wave-square",
+        "amber"
+      )))
+    }
+    boxes <- c(boxes, list(
+      metric_value_box(
+        "Valid tracks",
+        format_metric(row$valid_tracks, 0),
+        paste0(format_metric(row$tracks_started, 0), " started"),
+        "route",
+        if (show_step_weighted) "gray" else "amber"
+      ),
+      metric_value_box(
+        "Valid steps",
+        format_metric(row$valid_steps, 0),
+        paste0(format_metric(row$frame_count, 0), " frames"),
+        "list-check",
+        "gray"
+      )
+    ))
+    layout_metric_boxes(boxes)
+  })
+
+  output$motion_paths_header <- renderUI({
+    strong(if (is_flow_result()) "Flow velocity by frame pair" else "Track paths")
+  })
+
+  output$motion_velocity_header <- renderUI({
+    strong(if (is_flow_result()) "Downward velocity by frame pair" else "Absolute velocity by frame")
+  })
+
+  output$angles_tab_body <- renderUI({
+    row <- selected_result()
+    if (is.null(row)) {
+      return(empty_state("compass", "No result selected", "Run tracking or choose a saved result."))
+    }
+    if (is_flow_result()) {
+      return(empty_state(
+        "compass",
+        "Angle dynamics require landmark trajectories",
+        tagList(
+          "Optical flow reports dense motion, not per-point paths. ",
+          actionLink(
+            "angles_go_track_landmark",
+            "Re-run on Track with landmark tracking",
+            class = "empty-state-link"
+          ),
+          " to inspect motion direction and turning."
+        )
+      ))
+    }
+    tagList(
+      div(
+        class = "analysis-definition-note",
+        fontawesome::fa("circle-info"),
+        " Angle convention: 0° = right, +90° = down, ±180° = left, and -90° = up in image coordinates. Turning is wrapped to -180°…+180°."
+      ),
+      uiOutput("angle_metrics"),
+      layout_columns(
+        col_widths = c(7, 5),
+        card(
+          class = "surface-card media-card angle-preview-card",
+          card_header(
+            div(
+              strong("Full-sequence tracking preview"),
+              span(class = "card-subtitle", "Confirms which source and tracks are being analyzed")
+            )
+          ),
+          card_body(uiOutput("angle_preview_media"))
+        ),
+        card(
+          class = "surface-card media-card angle-overlay-card",
+          card_header(
+            div(
+              strong("Trajectory overlay"),
+              span(class = "card-subtitle", "All tracked paths for the selected run")
+            )
+          ),
+          card_body(uiOutput("angle_overlay_media"))
+        )
+      ),
+      layout_columns(
+        col_widths = c(6, 6),
+        card(
+          class = "surface-card plot-card",
+          card_header(strong("Instantaneous motion angle")),
+          card_body(plotOutput("motion_angle_plot", height = "360px"))
+        ),
+        card(
+          class = "surface-card plot-card",
+          card_header(strong("Turning angle between steps")),
+          card_body(plotOutput("turning_angle_plot", height = "360px"))
+        )
+      ),
+      card(
+        class = "surface-card plot-card",
+        card_header(strong("Tracked position through time")),
+        card_body(plotOutput("position_time_plot", height = "330px"))
+      ),
+      card(
+        class = "surface-card",
+        card_header(
+          div(
+            strong("Per-step angle data"),
+            downloadButton("download_angle_data", "CSV", class = "btn-sm")
+          )
+        ),
+        card_body(uiOutput("angle_table"))
+      )
+    )
+  })
+
+  observeEvent(input$angles_go_track_landmark, {
+    updateRadioButtons(session, "analysis_method", selected = "landmark_tracking")
+    updateRadioButtons(session, "section", selected = "track")
+    nav_select("main_nav", selected = "track")
   })
 
   plot_theme <- function() {
@@ -1334,6 +1627,17 @@ server <- function(input, output, session) {
   }
 
   output$trajectory_plot <- renderPlot({
+    row <- selected_result()
+    if (is_flow_result()) {
+      data <- flow_pairs()
+      validate(need(nrow(data) > 0, "No optical flow pair data for this result."))
+      ggplot(data, aes(x = pair_index, y = absolute_velocity_um_s)) +
+        geom_line(linewidth = 0.8, color = "#147A6C") +
+        geom_point(size = 2, color = "#147A6C") +
+        labs(x = "Frame pair", y = "Absolute velocity (µm/s)") +
+        plot_theme()
+      return()
+    }
     data <- trajectory()
     validate(need(nrow(data) > 0, "No trajectory data for this result."))
     data$track_id <- factor(data$track_id)
@@ -1347,6 +1651,18 @@ server <- function(input, output, session) {
   })
 
   output$velocity_plot <- renderPlot({
+    row <- selected_result()
+    if (is_flow_result()) {
+      data <- flow_pairs()
+      validate(need(nrow(data) > 0, "No optical flow pair data for this result."))
+      ggplot(data, aes(x = pair_index, y = downward_velocity_um_s)) +
+        geom_hline(yintercept = 0, color = "#AAB5B2", linewidth = 0.4) +
+        geom_line(linewidth = 0.8, color = "#D08A2E") +
+        geom_point(size = 2, color = "#D08A2E") +
+        labs(x = "Frame pair", y = "Downward velocity (µm/s)") +
+        plot_theme()
+      return()
+    }
     data <- trajectory()
     validate(need(nrow(data) > 0, "No trajectory data for this result."))
     validate(need("absolute_velocity_um_per_s" %in% names(data), "Run output does not contain per-step velocity."))
@@ -1362,6 +1678,7 @@ server <- function(input, output, session) {
   output$angle_metrics <- renderUI({
     row <- selected_result()
     if (is.null(row)) return(empty_state("compass", "No result selected", "Run tracking or choose a saved result."))
+    if (is_flow_result()) return(NULL)
     summary <- angle_summary()
     layout_columns(
       col_widths = c(3, 3, 3, 3),
@@ -1373,6 +1690,11 @@ server <- function(input, output, session) {
   })
 
   output$motion_angle_plot <- renderPlot({
+    if (is_flow_result()) {
+      par(mar = c(0, 0, 0, 0), bg = "transparent")
+      plot.new()
+      return()
+    }
     data <- angle_trajectory()
     validate(need(nrow(data) > 0, "No angle trajectory data for this result."))
     data <- data[!is.na(data$motion_angle_deg), , drop = FALSE]
@@ -1388,6 +1710,11 @@ server <- function(input, output, session) {
   })
 
   output$turning_angle_plot <- renderPlot({
+    if (is_flow_result()) {
+      par(mar = c(0, 0, 0, 0), bg = "transparent")
+      plot.new()
+      return()
+    }
     data <- angle_trajectory()
     validate(need(nrow(data) > 0, "No angle trajectory data for this result."))
     data <- data[!is.na(data$turning_angle_deg), , drop = FALSE]
@@ -1404,6 +1731,11 @@ server <- function(input, output, session) {
   })
 
   output$position_time_plot <- renderPlot({
+    if (is_flow_result()) {
+      par(mar = c(0, 0, 0, 0), bg = "transparent")
+      plot.new()
+      return()
+    }
     data <- angle_trajectory()
     validate(need(nrow(data) > 0, "No tracked positions for this result."))
     x_data <- data.frame(
@@ -1451,11 +1783,17 @@ server <- function(input, output, session) {
   output$starting_points_media <- renderUI({
     row <- selected_result()
     if (is.null(row)) return(empty_state("image", "No result selected", "Choose a result to inspect QC imagery."))
+    if (identical(row$analysis_method, "optical_flow")) {
+      return(local_image_ui(row$flow_overlay, "Optical flow arrow overlay"))
+    }
     local_image_ui(row$starting_points, "Detected starting points")
   })
   output$track_overlay_media <- renderUI({
     row <- selected_result()
     if (is.null(row)) return(empty_state("image", "No result selected", "Choose a result to inspect QC imagery."))
+    if (identical(row$analysis_method, "optical_flow")) {
+      return(empty_state("chart-line", "Trajectory overlay not applicable", "Optical flow reports dense motion rather than individual track paths."))
+    }
     local_image_ui(row$track_overlay, "Tracked point paths")
   })
   output$angle_overlay_media <- renderUI({
@@ -1467,15 +1805,30 @@ server <- function(input, output, session) {
   })
 
   output$trajectory_table <- renderUI({
+    row <- selected_result()
+    if (is_flow_result()) {
+      data <- flow_pairs()
+      if (nrow(data) == 0) return(empty_state("table", "No flow pair table", "The selected run has no readable flow pair CSV."))
+      keep <- intersect(
+        c("frame_a", "frame_b", "valid_pixel_fraction", "mean_magnitude_px_frame", "mean_downward_px_frame", "absolute_velocity_um_s", "downward_velocity_um_s"),
+        names(data)
+      )
+      div(class = "data-table-wrap trajectory-table-wrap", tableOutput("trajectory_table_inner"))
+      return()
+    }
     data <- trajectory()
     if (nrow(data) == 0) return(empty_state("table", "No trajectory table", "The selected run has no readable CSV output."))
-    keep <- intersect(
-      c("track_id", "frame_index", "x_px", "y_px", "displacement_um", "absolute_velocity_um_per_s", "downward_velocity_um_per_s", "confidence"),
-      names(data)
-    )
     div(class = "data-table-wrap trajectory-table-wrap", tableOutput("trajectory_table_inner"))
   })
   output$trajectory_table_inner <- renderTable({
+    if (is_flow_result()) {
+      data <- flow_pairs()
+      keep <- intersect(
+        c("frame_a", "frame_b", "valid_pixel_fraction", "mean_magnitude_px_frame", "mean_downward_px_frame", "absolute_velocity_um_s", "downward_velocity_um_s"),
+        names(data)
+      )
+      return(head(data[, keep, drop = FALSE], 250))
+    }
     data <- trajectory()
     keep <- intersect(
       c("track_id", "frame_index", "x_px", "y_px", "displacement_um", "absolute_velocity_um_per_s", "downward_velocity_um_per_s", "confidence"),
@@ -1564,6 +1917,9 @@ server <- function(input, output, session) {
     if (is.null(row)) {
       return(empty_state("video", "Preview video unavailable", "The tracker may not have produced an MP4 preview for this run."))
     }
+    if (identical(row$analysis_method, "optical_flow")) {
+      return(empty_state("video-slash", "No preview video", "Optical flow runs save a static flow overlay instead of a tracking preview video."))
+    }
     video <- browser_video_ui(
       row,
       result_browser_preview(),
@@ -1574,36 +1930,66 @@ server <- function(input, output, session) {
   })
 
   output$download_trajectory <- downloadHandler(
-    filename = function() basename(selected_result()$trajectory_csv %||% "trajectory.csv"),
-    content = function(file) file.copy(selected_result()$trajectory_csv, file, overwrite = TRUE)
+    filename = function() {
+      row <- selected_result()
+      if (is_flow_result()) basename(row$flow_pair_csv %||% "flow_pair_summaries.csv")
+      else basename(row$trajectory_csv %||% "trajectory.csv")
+    },
+    content = function(file) {
+      row <- selected_result()
+      source_path <- if (is_flow_result()) row$flow_pair_csv else row$trajectory_csv
+      file.copy(source_path, file, overwrite = TRUE)
+    }
   )
   output$download_summary <- downloadHandler(
     filename = function() basename(selected_result()$summary_json %||% "summary.json"),
     content = function(file) file.copy(selected_result()$summary_json, file, overwrite = TRUE)
   )
 
-  group_summary <- reactive(summarize_groups(results()))
+  group_summary <- reactive(summarize_groups_stratified(results()))
+
+  output$compare_method_note <- renderUI({
+    div(
+      class = "analysis-definition-note compare-method-note",
+      fontawesome::fa("circle-info"),
+      " Landmark tracking and optical flow report different movement scalars. Compare runs within the same method only; charts and summaries below are split by analysis method."
+    )
+  })
 
   output$analysis_metrics <- renderUI({
-    summary <- group_summary()
+    data <- results()
+    landmark_runs <- sum(data$analysis_method == "landmark_tracking", na.rm = TRUE)
+    flow_runs <- sum(data$analysis_method == "optical_flow", na.rm = TRUE)
     layout_columns(
       col_widths = c(4, 4, 4),
-      metric_value_box("Groups represented", length(unique(results()$group)), "Biological categories", "people-group", "blue"),
-      metric_value_box("Completed runs", nrow(results()), "Available for comparison", "flask", "teal"),
-      metric_value_box("Valid tracks", format_metric(sum(results()$valid_tracks, na.rm = TRUE), 0), "Across all runs", "route", "amber")
+      metric_value_box("Landmark runs", landmark_runs, "Bright-point tracking results", "route", "teal"),
+      metric_value_box("Optical flow runs", flow_runs, "Dense meshwork flow results", "wind", "blue"),
+      metric_value_box("Groups represented", length(unique(data$group)), "Biological categories", "people-group", "amber")
     )
   })
 
   output$group_plot <- renderPlot({
     summary <- group_summary()
     validate(need(nrow(summary) > 0, "Complete tracking runs to populate group analysis."))
+    summary$method_label <- vapply(summary$analysis_method, analysis_method_label, character(1))
     long <- rbind(
-      data.frame(group = summary$group, metric = "Absolute velocity", value = summary$mean_absolute_velocity),
-      data.frame(group = summary$group, metric = "Downward velocity", value = summary$mean_downward_velocity)
+      data.frame(
+        group = summary$group,
+        method_label = summary$method_label,
+        metric = "Primary speed",
+        value = summary$mean_absolute_velocity
+      ),
+      data.frame(
+        group = summary$group,
+        method_label = summary$method_label,
+        metric = "Downward velocity",
+        value = summary$mean_downward_velocity
+      )
     )
     ggplot(long, aes(x = group, y = value, fill = metric)) +
       geom_col(position = position_dodge(width = 0.75), width = 0.64) +
-      scale_fill_manual(values = c("Absolute velocity" = "#147A6C", "Downward velocity" = "#D08A2E")) +
+      facet_wrap(~method_label, scales = "free_y") +
+      scale_fill_manual(values = c("Primary speed" = "#147A6C", "Downward velocity" = "#D08A2E")) +
       labs(x = NULL, y = "Mean velocity (µm/s)") +
       plot_theme() +
       theme(axis.text.x = element_text(angle = 20, hjust = 1))
@@ -1618,8 +2004,17 @@ server <- function(input, output, session) {
     summary <- group_summary()
     summary$mean_absolute_velocity <- round(summary$mean_absolute_velocity, 4)
     summary$mean_downward_velocity <- round(summary$mean_downward_velocity, 4)
-    names(summary) <- c("Group", "Runs", "Absolute µm/s", "Downward µm/s", "Valid tracks", "Valid steps")
-    summary
+    summary$mean_net_y_velocity <- round(summary$mean_net_y_velocity, 4)
+    summary$method_label <- vapply(summary$analysis_method, analysis_method_label, character(1))
+    display <- summary[, c(
+      "group", "method_label", "samples", "mean_absolute_velocity", "mean_downward_velocity",
+      "total_valid_tracks", "total_valid_steps"
+    ), drop = FALSE]
+    names(display) <- c(
+      "Group", "Method", "Runs", "Primary µm/s", "Downward µm/s",
+      "Valid tracks", "Valid steps"
+    )
+    display
   }, striped = TRUE, hover = TRUE, spacing = "s", rownames = FALSE)
 
   output$all_results_table <- renderUI({
@@ -1628,9 +2023,15 @@ server <- function(input, output, session) {
     div(class = "data-table-wrap", tableOutput("all_results_table_inner"))
   })
   output$all_results_table_inner <- renderTable({
-    data <- results()[, c("group", "source_name", "absolute_velocity", "downward_velocity", "valid_tracks", "valid_steps", "analyzed_at")]
-    names(data) <- c("Group", "Source", "Absolute µm/s", "Downward µm/s", "Tracks", "Steps", "Analyzed")
-    data
+    data <- results()
+    data$primary_speed <- vapply(seq_len(nrow(data)), function(i) result_primary_speed(data[i, , drop = FALSE]), numeric(1))
+    display <- data[, c(
+      "group", "source_name", "analysis_method", "primary_speed",
+      "downward_velocity", "valid_tracks", "valid_steps", "analyzed_at"
+    )]
+    display$analysis_method <- vapply(display$analysis_method, analysis_method_label, character(1))
+    names(display) <- c("Group", "Source", "Method", "Primary µm/s", "Downward µm/s", "Tracks", "Steps", "Analyzed")
+    display
   }, striped = TRUE, hover = TRUE, spacing = "s", rownames = FALSE)
 
   output$stack_metrics <- renderUI({
@@ -1687,6 +2088,7 @@ server <- function(input, output, session) {
     "roi_summary", "run_activity", "result_selector", "review_context_banner",
     "result_metrics", "trajectory_plot", "velocity_plot", "starting_points_media",
     "track_overlay_media", "trajectory_table", "track_video",
+    "motion_paths_header", "motion_velocity_header", "angles_tab_body",
     "angle_metrics", "motion_angle_plot", "turning_angle_plot", "position_time_plot",
     "angle_table", "angle_preview_media", "angle_overlay_media"
   )
