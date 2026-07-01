@@ -56,7 +56,7 @@ def _set_table_cell(
 
 
 class AnalysisViewWidget(QWidget):
-    """Read-only tables for breed summaries, sample details, and breed comparison."""
+    """Read-only tables for condition-group summaries, sample details, and comparison."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -64,7 +64,8 @@ class AnalysisViewWidget(QWidget):
         layout.setContentsMargins(8, 8, 8, 8)
 
         intro = QLabel(
-            "Tracking, motion-index, and optical-flow metrics aggregated by Breed and Sample. "
+            "Tracking, motion-index, and optical-flow metrics aggregated by "
+            "Condition Group and Sample. "
             "Results are read from saved sample data; opening this view does not "
             "re-run tracking."
         )
@@ -86,7 +87,7 @@ class AnalysisViewWidget(QWidget):
 
         self.tbl_breed_summary = self._make_table(
             [
-                "Breed",
+                "Condition Group",
                 "Samples",
                 "Samples with Results",
                 "Avg Absolute Velocity",
@@ -101,11 +102,11 @@ class AnalysisViewWidget(QWidget):
                 "OF Valid Pixel Fraction",
             ]
         )
-        body_layout.addWidget(self._wrap_group("Breed Summary", self.tbl_breed_summary))
+        body_layout.addWidget(self._wrap_group("Condition Group Summary", self.tbl_breed_summary))
 
         self.tbl_sample_details = self._make_table(
             [
-                "Breed",
+                "Condition Group",
                 "Sample",
                 "Status",
                 "Data Status",
@@ -128,14 +129,14 @@ class AnalysisViewWidget(QWidget):
         self.tbl_comparison = self._make_table(
             [
                 "Rank",
-                "Breed",
+                "Condition Group",
                 "Avg Absolute Velocity",
                 "Avg Downward Velocity",
                 "Avg Motion Index",
                 "Valid Sample Count",
             ]
         )
-        body_layout.addWidget(self._wrap_group("Breed Comparison", self.tbl_comparison))
+        body_layout.addWidget(self._wrap_group("Condition Group Comparison", self.tbl_comparison))
         body_layout.addStretch()
         scroll.setWidget(body)
         layout.addWidget(scroll, stretch=1)

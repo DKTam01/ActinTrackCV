@@ -1,6 +1,6 @@
 # ActinTrackCV
 
-Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy: 2D time-lapse movies of elongated ovule / embryo-sac cells expressing **Lifeact** (F-actin) and **H2B** (nucleus) reporters. Organize **Data** by **Breed** and **Sample**, orient frames, draw a rectangular **ROI**, review motion metrics in **Metric Analysis View** (template tracking and optical flow), and aggregate saved results in **Analysis**. The **R Shiny** app (`shiny_app/`) provides the lab-facing review workflow; Python remains the analysis backend.
+Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy: 2D time-lapse movies of elongated ovule / embryo-sac cells expressing **Lifeact** (F-actin) and **H2B** (nucleus) reporters. Organize **Data** by **Condition Group** and **Sample**, orient frames, draw a rectangular **ROI**, review motion metrics in **Metric Analysis View** (template tracking and optical flow), and aggregate saved results in **Analysis**. The **R Shiny** app (`shiny_app/`) provides the lab-facing review workflow; Python remains the analysis backend.
 
 **Experimental design (current dataset):** WT lines **218** and **550** (`FWApro::Lifeact-Venus` with H2B reporters) versus mutants **515** (`scar2` on #218) and **175** (`xig` on #218).
 
@@ -16,7 +16,7 @@ For a plain-language record of the project direction changes, see [`PROJECT_CHAN
 
 ## Current dataset (`raw/`)
 
-Local workspace data under `raw/` (gitignored) currently holds **21 media files** in four breed folders:
+Local workspace data under `raw/` (gitignored) currently holds **21 media files** in four condition group folders:
 
 | Folder | Files | Formats |
 |--------|------:|---------|
@@ -127,7 +127,7 @@ The Shiny app discovers source videos, supports interactive ROI selection, runs 
 
 | Term | Meaning |
 |------|---------|
-| **Breed** | Biological / experimental group (e.g. `1_WT_218`, `2_WT_550`, `3_Mutant_515`, `4_Mutant_175`) |
+| **Condition Group** | Researcher-defined experimental grouping — a genotype/breed, chemical treatment, control, mutant, environmental condition, or other experimental setup (e.g. `1_WT_218`, `2_WT_550`, `3_Mutant_515`, `4_Mutant_175`) |
 | **Sample** | One imported AVI/MP4 **Data** file plus derived project state (orientation, ROI, metrics, analysis, notes) |
 | **Data** | User-facing term for an AVI/MP4 time-lapse file |
 | **ROI** | Rectangular region of interest around the usable actin-rich area; **autosaves** as you work (no Save ROI button) |
@@ -138,12 +138,12 @@ The Shiny app discovers source videos, supports interactive ROI selection, runs 
 ## Workflow
 
 1. **Open or create a workspace** — **File → New Workspace…** or **File → Open Workspace…**
-2. **Add Sample** — **Sample → Add Sample…** (or right-click a Breed/Sample row) and select an AVI/MP4 file
+2. **Add Sample** — **Sample → Add Sample…** (or right-click a Condition Group/Sample row) and select an AVI/MP4 file
 3. **Select Data** — choose a Sample in the left panel to load its Data
 4. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region. The ROI **autosaves**; there is no Save ROI button and no Approve/Reject ROI workflow.
 5. **Metric Analysis View** — open from the preview toolbar to enter cropped ROI playback and metric review. Playback loops continuously; use the frame slider to scrub manually. Playback speeds: **0.25×, 0.5×, 1×, 1.5×, 2×**. You can switch Samples while staying in Metric Analysis View.
 6. **Metrics** — Template Tracking and Optical Flow Motion Index calculations are scheduled automatically after ROI autosave or settings changes (2.5 s debounce). Both run on **cropped ROI frames** using the current orientation and ROI.
-7. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Breed and Sample from saved per-Sample results (does not re-run metrics).
+7. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Condition Group and Sample from saved per-Sample results (does not re-run metrics).
 
 ### Metric Analysis View
 
@@ -190,9 +190,9 @@ Template Tracking and Optical Flow are **complementary**: sparse feature trackin
 
 ### Analysis
 
-**Analysis → View Analysis…** loads saved per-Sample metrics and groups them by **Breed** and **Sample**:
+**Analysis → View Analysis…** loads saved per-Sample metrics and groups them by **Condition Group** and **Sample**:
 
-- Template Tracking and Optical Flow metrics are averaged **separately** at the Breed level
+- Template Tracking and Optical Flow metrics are averaged **separately** at the Condition Group level
 - Samples without valid results are excluded from the corresponding averages
 - Missing values display as **—**
 - Opening Analysis does **not** recompute metrics
@@ -218,7 +218,7 @@ The app creates these folders inside your workspace as you work:
 ```text
 ActinTrackCV/                    ← project root (workspace)
   raw/                           ← source media and optional internal import copies
-    <breed>/                     e.g. 2_WT_550/
+    <condition_group>/           e.g. 2_WT_550/
       <PREFIX>_<NNNN>.<ext>      e.g. WT550_0003.avi
   processed/                     ← cropped exports and motion-index outputs
   metadata/                      ← runtime registry and annotations

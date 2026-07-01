@@ -309,7 +309,7 @@ class PropagateDialog(QDialog):
         sample_label = display_sample_label(num, batch_name)
         help_lbl = QLabel(
             "By default, annotations apply only within the same sample, "
-            "not across other samples in the breed."
+            "not across other samples in the condition group."
         )
         help_lbl.setWordWrap(True)
         layout.addRow(help_lbl)
@@ -318,7 +318,7 @@ class PropagateDialog(QDialog):
             [
                 f"Same sample ({sample_label})",
                 f"Unprocessed data in {sample_label}",
-                f"All data in breed {group}",
+                f"All data in condition group {group}",
                 "Currently selected data in list",
             ]
         )
@@ -351,7 +351,7 @@ class PropagateDialog(QDialog):
             return SCOPE_SAME_BATCH
         if text.startswith("Unprocessed"):
             return SCOPE_UNPROCESSED_IN_BATCH
-        if text.startswith("All data in breed"):
+        if text.startswith("All data in condition group"):
             return SCOPE_ALL_IN_GROUP
         return SCOPE_SELECTED
 
@@ -620,7 +620,7 @@ class MainWindow(QMainWindow):
         analysis_tab_layout = QVBoxLayout(analysis_tab)
         analysis_tab_layout.setContentsMargins(6, 6, 6, 6)
         analysis_hint = QLabel(
-            "Breed and sample tracking metrics appear in the center column. "
+            "Condition Group and sample tracking metrics appear in the center column. "
             "Results are loaded from saved data; tracking is not re-run here."
         )
         analysis_hint.setWordWrap(True)
@@ -653,7 +653,7 @@ class MainWindow(QMainWindow):
         self.combo_filter_group = QComboBox()
         self.combo_filter_group.addItems(list(GROUPS))
         self.combo_filter_group.currentTextChanged.connect(self._on_filter_group_changed)
-        layout.addWidget(QLabel("Breed:"))
+        layout.addWidget(QLabel("Condition Group:"))
         layout.addWidget(self.combo_filter_group)
         self.list_samples = QListWidget()
         self.list_samples.setSelectionMode(
@@ -688,7 +688,7 @@ class MainWindow(QMainWindow):
         nav.addWidget(self.btn_next_sample)
         layout.addLayout(nav)
         hint = QLabel(
-            "All samples for the selected breed are listed together. "
+            "All samples for the selected condition group are listed together. "
             "Right-click to add a sample or import data."
         )
         hint.setWordWrap(True)
@@ -717,7 +717,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.lbl_selected_file)
         layout.addWidget(QLabel("Export name:"))
         self.edit_export_name = QLineEdit()
-        self.edit_export_name.setPlaceholderText("auto-generated from breed and sample")
+        self.edit_export_name.setPlaceholderText("auto-generated from condition group and sample")
         self.edit_export_name.editingFinished.connect(self._on_export_name_edited)
         layout.addWidget(self.edit_export_name)
         self.lbl_auto_export_name = QLabel("Auto name: —")
@@ -3433,7 +3433,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Process Marked ROIs in Sample",
-            f"Breed: {group}\n"
+            f"Condition Group: {group}\n"
             f"Sample: {sample_label}\n\n"
             f"Samples to export: {len(approved)}\n"
             f"Samples skipped: {pre_skipped}\n\n"
@@ -3602,7 +3602,7 @@ class MainWindow(QMainWindow):
             break
 
     def _ensure_filter_group_valid(self) -> str:
-        """Keep a valid breed selected; fall back to the first."""
+        """Keep a valid condition group selected; fall back to the first."""
         if self.combo_filter_group.currentText() in GROUPS:
             return self.combo_filter_group.currentText()
         self.combo_filter_group.blockSignals(True)
@@ -3661,7 +3661,7 @@ class MainWindow(QMainWindow):
         batches = list_batches(self._project_root, group) if self._project_root else []
         if not batches:
             QMessageBox.information(
-                self, "Rename Sample", "No samples exist for this breed."
+                self, "Rename Sample", "No samples exist for this condition group."
             )
             return None
         labels = [self._batch_list_header_text(group, b) for b in batches]
@@ -3892,7 +3892,7 @@ class MainWindow(QMainWindow):
 
         if not batches and group_df.empty:
             self._add_sample_list_message(
-                "No samples available for this breed. Right-click to Add Sample."
+                "No samples available for this condition group. Right-click to Add Sample."
             )
             self._set_active_sample(None)
             self._clear_preview_pane()
@@ -4320,7 +4320,7 @@ class MainWindow(QMainWindow):
         """Return whether to remove the project's internal data copy, or None if cancelled."""
         box = QMessageBox(self)
         box.setWindowTitle("Delete Sample?")
-        box.setText(f'Delete "{sample_name}" from this Breed?')
+        box.setText(f'Delete "{sample_name}" from this Condition Group?')
         if incomplete:
             box.setInformativeText(
                 "This will remove the incomplete Sample from the project."
@@ -4421,7 +4421,7 @@ class MainWindow(QMainWindow):
             )
             if breed not in GROUPS:
                 add_action.setEnabled(False)
-                menu.addAction("Please select a breed first.").setEnabled(False)
+                menu.addAction("Please select a condition group first.").setEnabled(False)
 
         if not menu.isEmpty():
             menu.exec(self.list_samples.viewport().mapToGlobal(pos))

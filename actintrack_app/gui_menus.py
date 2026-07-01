@@ -36,7 +36,7 @@ class PurgeFilteredDialog(QDialog):
 
         form = QFormLayout()
         self.combo_group = QComboBox()
-        self.combo_group.addItem("(any breed)", "")
+        self.combo_group.addItem("(any condition group)", "")
         for g in GROUPS:
             self.combo_group.addItem(g, g)
         self.edit_batch = QLineEdit()
@@ -66,7 +66,7 @@ class PurgeFilteredDialog(QDialog):
         )
         self.combo_review = QComboBox()
         self.combo_review.addItems(["(any)", "pending", "approved", "rejected"])
-        form.addRow("Breed:", self.combo_group)
+        form.addRow("Condition Group:", self.combo_group)
         form.addRow("Sample name/number:", self.edit_batch)
         form.addRow("Processing status:", self.combo_status)
         form.addRow("Data type:", self.combo_file_type)

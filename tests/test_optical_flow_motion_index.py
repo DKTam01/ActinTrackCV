@@ -102,6 +102,27 @@ class OpticalFlowMotionIndexTests(unittest.TestCase):
             places=4,
         )
 
+    def test_legacy_frame_pair_summary_without_net_x(self) -> None:
+        """Older draft_optical_flow JSON omitted mean_net_x_px_frame per frame pair."""
+        legacy = {
+            "has_valid_result": True,
+            "frame_pair_summaries": [
+                {
+                    "frame_a": 0,
+                    "frame_b": 1,
+                    "valid_pixel_count": 100,
+                    "valid_pixel_fraction": 0.5,
+                    "saturated_pixel_fraction": 0.01,
+                    "mean_magnitude_px_frame": 1.2,
+                    "mean_downward_px_frame": 0.8,
+                    "mean_net_y_px_frame": 0.6,
+                }
+            ],
+        }
+        restored = result_from_dict(legacy)
+        self.assertEqual(len(restored.frame_pair_summaries), 1)
+        self.assertEqual(restored.frame_pair_summaries[0].mean_net_x_px_frame, 0.0)
+
     def test_directionality_zero_when_no_movement(self) -> None:
         settings = OpticalFlowSettings(mask_percentile=50)
         static = [np.full((40, 40), 200, dtype=np.uint8) for _ in range(3)]

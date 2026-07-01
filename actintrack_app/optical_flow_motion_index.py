@@ -382,6 +382,21 @@ def result_to_dict(result: OpticalFlowResult) -> dict[str, Any]:
     return result.summary_dict()
 
 
+def _frame_pair_summary_from_dict(item: dict[str, Any]) -> FramePairSummary:
+    """Load a per-frame summary, tolerating older saved JSON without net-X fields."""
+    return FramePairSummary(
+        frame_a=int(item["frame_a"]),
+        frame_b=int(item["frame_b"]),
+        valid_pixel_count=int(item["valid_pixel_count"]),
+        valid_pixel_fraction=float(item["valid_pixel_fraction"]),
+        saturated_pixel_fraction=float(item["saturated_pixel_fraction"]),
+        mean_magnitude_px_frame=float(item["mean_magnitude_px_frame"]),
+        mean_downward_px_frame=float(item["mean_downward_px_frame"]),
+        mean_net_x_px_frame=float(item.get("mean_net_x_px_frame", 0.0) or 0.0),
+        mean_net_y_px_frame=float(item["mean_net_y_px_frame"]),
+    )
+
+
 def result_from_dict(data: dict[str, Any]) -> OpticalFlowResult:
     settings_data = data.get("settings")
     settings = OpticalFlowSettings(**settings_data) if isinstance(settings_data, dict) else None
@@ -390,7 +405,7 @@ def result_from_dict(data: dict[str, Any]) -> OpticalFlowResult:
     summaries = []
     for item in data.get("frame_pair_summaries", []) or []:
         if isinstance(item, dict):
-            summaries.append(FramePairSummary(**item))
+            summaries.append(_frame_pair_summary_from_dict(item))
     return OpticalFlowResult(
         has_valid_result=bool(data.get("has_valid_result")),
         failure_reason=str(data.get("failure_reason", "")),

@@ -150,7 +150,7 @@ SAMPLES_CSV_COLUMNS = [
 
 RECENT_WORKSPACES_JSON = "recent_workspaces.json"
 
-# Propagation scope keys (legacy internal names; UI shows breed/sample)
+# Propagation scope keys (legacy internal names; UI shows condition group/sample)
 SCOPE_SAME_BATCH = "same_biological_batch"
 SCOPE_UNPROCESSED_IN_BATCH = "unprocessed_in_biological_batch"
 SCOPE_ALL_IN_GROUP = "all_in_condition_group"

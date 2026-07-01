@@ -9,7 +9,7 @@ This guide is written for biological researchers. It avoids software implementat
 Current workflow:
 
 ```text
-Breed -> Add Sample / Select Data -> Orient and ROI -> Preview Cropped ROI -> Draft tracking/index -> Analysis
+Condition Group -> Add Sample / Select Data -> Orient and ROI -> Preview Cropped ROI -> Draft tracking/index -> Analysis
 ```
 
 Current supported data type: 2D AVI/MP4 time-lapse data.
@@ -23,12 +23,12 @@ Image sequences, 3D image stacks, and raw microscopy formats are postponed and s
 Use this short path when starting a new analysis session.
 
 1. Open ActinTrackCV and open or create a workspace.
-2. Select a Breed in the left panel.
+2. Select a Condition Group in the left panel.
 3. Choose Sample -> Add Sample, then select one AVI or MP4 data file.
 4. Orient the image and draw a rectangular ROI around the actin-rich region.
 5. Click Preview Cropped ROI to inspect the crop and run draft tracking.
 6. Review the Tracking Result panel.
-7. Open Analysis to compare Samples and Breeds.
+7. Open Analysis to compare Samples and Condition Groups.
 
 Run command from the project folder:
 
@@ -44,14 +44,14 @@ On macOS or Linux, `./run_app.sh` is also available. On Windows, use `run_app.ba
 
 | Term | Meaning |
 |------|---------|
-| Breed | A biological or experimental group, such as `1_WT_218` or `3_Mutant_515`. In the current app these Breeds are selected from a fixed list. |
+| Condition Group | A researcher-defined experimental grouping such as a genotype/breed, chemical treatment, control, mutant, environmental condition, or other experimental setup (e.g. `1_WT_218` or `3_Mutant_515`). In the current app these Condition Groups are selected from a fixed list. |
 | Sample | One imported AVI/MP4 data file plus its project state: ROI, orientation, notes, tracking result, and analysis status. |
 | Data | The AVI/MP4 file selected by the user for a Sample. The app stores a project-managed internal copy so the workspace can be reopened later. |
 | ROI | Region of interest. A rectangle drawn around the actin-rich area to analyze. |
 | Cropped ROI Preview | A looping preview of only the ROI area, with draft tracking overlay. |
 | Tracking Result | Draft measurements from the current Sample's cropped ROI preview, including downward velocity and general movement. |
 | Motion Index | A draft comparison metric based on tracked motion in the ROI. It should be interpreted alongside visual inspection. |
-| Analysis | Read-only tables that summarize tracking/index results by Sample and Breed. |
+| Analysis | Read-only tables that summarize tracking/index results by Sample and Condition Group. |
 | Workspace/project files | The folders and metadata files ActinTrackCV uses to remember Samples, ROIs, tracking results, and outputs. |
 
 ---
@@ -61,7 +61,7 @@ On macOS or Linux, `./run_app.sh` is also available. On Windows, use `run_app.ba
 The recommended workflow is Sample-driven. A Sample represents one AVI/MP4 data file and its derived project state.
 
 ```text
-Select Breed
+Select Condition Group
   -> Add Sample by choosing AVI/MP4 Data
   -> Orient frame
   -> Draw ROI
@@ -72,18 +72,18 @@ Select Breed
 
 | Step | What you do | What the app stores or updates |
 |------|-------------|--------------------------------|
-| Select Breed | Choose the biological group in the left panel. | The Sample list filters to that Breed. |
+| Select Condition Group | Choose the experimental group in the left panel. | The Sample list filters to that Condition Group. |
 | Add Sample | Select one AVI or MP4 file. | A Sample record, project-managed internal data copy, and metadata row. |
 | Orient and ROI | Rotate/flip as needed and draw the rectangle around the intended actin-rich region. | ROI and orientation metadata. ROI changes autosave. |
 | Preview Cropped ROI | Start the cropped ROI/tracking preview. | Draft tracking/index result for the current Sample. |
 | Review Tracking Result | Compare the displayed values with visual motion in the preview. | No extra action is needed for the draft result to appear in Analysis. |
-| Analysis | Open the Analysis tab/menu item. | Analysis reads saved results and aggregates by Breed and Sample. |
+| Analysis | Open the Analysis tab/menu item. | Analysis reads saved results and aggregates by Condition Group and Sample. |
 
-### Breed selection
+### Condition Group selection
 
-The current app uses these fixed Breeds:
+The current app uses these fixed Condition Groups:
 
-| Breed | Biological meaning |
+| Condition Group | Biological meaning |
 |-------|--------------------|
 | `1_WT_218` | Wild Type 218 |
 | `2_WT_550` | Wild Type 550 |
@@ -108,13 +108,13 @@ Deleting a Sample removes the Sample from the project, including ROI, tracking r
 
 | App area | What it is for | Notes |
 |----------|----------------|-------|
-| Breed/Sample list | Select the Breed and current Sample. | Right-click a Sample header or data row to rename, delete, or replace the Sample. |
+| Condition Group/Sample list | Select the Condition Group and current Sample. | Right-click a Sample header or data row to rename, delete, or replace the Sample. |
 | Add Sample flow | Choose one AVI/MP4 file to create a Sample. | Canceling the file picker creates nothing. |
 | Orientation/ROI preview | View the full frame, rotate/flip if needed, and draw the ROI. | ROI autosaves; there is no Save ROI button. |
 | Cropped ROI preview | Loop the cropped ROI and inspect draft tracking overlay. | Includes Play/Pause, frame slider, speed control, and Return to Full Preview. |
 | Advanced Tracking Settings | Adjust draft tracking parameters. | Editable only during cropped ROI preview. |
 | Tracking Result | Shows the current Sample's draft tracking/index result. | If settings changed, rerun Preview Cropped ROI to update. |
-| Analysis | Read-only tables grouped by Breed and Sample. | Opening Analysis does not rerun tracking. |
+| Analysis | Read-only tables grouped by Condition Group and Sample. | Opening Analysis does not rerun tracking. |
 | Purge/Cleanup | Advanced project cleanup tools. | Use carefully. These actions are for maintenance and troubleshooting. |
 | Export ROI | Exports cropped ROI outputs to the `processed/` folder. | Useful when sharing processed data or keeping output files, but not required just to view draft Analysis. |
 
@@ -127,15 +127,15 @@ An ActinTrackCV workspace is a project folder managed by the app. The app create
 ```text
 <workspace>/
   raw/
-    <Breed>/
+    <ConditionGroup>/
       <SampleName>/
         <sample_id>.avi or <sample_id>.mp4
   processed/
-    <Breed>/
+    <ConditionGroup>/
       <SampleName>/
         exported crops and motion-index outputs, if exported
   previews/
-    <Breed>/
+    <ConditionGroup>/
       optional preview files
   metadata/
     data_files.csv
@@ -154,7 +154,7 @@ An ActinTrackCV workspace is a project folder managed by the app. The app create
 | `processed/` | Exported cropped ROI videos/images and finalized output files. | No, unless you are intentionally copying results out. | Only if you understand they are generated outputs and no longer need them. | Deleting manually can make Analysis or previews appear incomplete. |
 | `previews/` | Optional generated preview files. | No. | Usually safe if you only want to remove cached previews, but app cleanup tools are preferred. | The app may regenerate some previews. |
 | `metadata/data_files.csv` | Main data index for Samples. | No. | No. | App-managed record of Sample data paths and statuses. |
-| `metadata/sample_registry.json` | Sample registry grouped by Breed. | No. | No. | App-managed list of Samples. |
+| `metadata/sample_registry.json` | Sample registry grouped by Condition Group. | No. | No. | App-managed list of Samples. |
 | `metadata/crop_metadata.json` | ROI and orientation metadata. | No. | No. | Deleting this removes ROI/orientation state. |
 | `metadata/draft_tracking/` | Draft tracking/index JSON files for Samples. | No. | Only through app cleanup or if intentionally clearing draft results. | Analysis can read these results. |
 | `metadata/f_actin_motion_index_summary.csv` | Workspace-level summary of finalized motion-index outputs, when present. | No. | Only if you understand it is generated summary data. | Draft Analysis can also read per-Sample draft tracking JSON. |
@@ -307,19 +307,19 @@ The `seconds per frame` value is especially important for velocity units. Confir
 
 ## 10. Analysis Section
 
-Analysis is read-only. It does not rerun tracking. It reads saved results and summarizes them by Breed and Sample.
+Analysis is read-only. It does not rerun tracking. It reads saved results and summarizes them by Condition Group and Sample.
 
 The Analysis view includes:
 
 | Table | What it shows |
 |-------|---------------|
-| Breed Summary | Number of Samples, Samples with results, average movement metrics, and standard deviations. |
+| Condition Group Summary | Number of Samples, Samples with results, average movement metrics, and standard deviations. |
 | Sample Details | Per-Sample status, tracking/index metrics, valid tracks, valid steps, confidence, and update time. |
-| Breed Comparison | Breed-level ranking/comparison using available Sample results. |
+| Condition Group Comparison | Condition Group-level ranking/comparison using available Sample results. |
 
 Example organization:
 
-| Breed | Sample | Result status | Downward Velocity | General Movement |
+| Condition Group | Sample | Result status | Downward Velocity | General Movement |
 |-------|--------|---------------|-------------------|------------------|
 | `1_WT_218` | Sample 1 | Result available | numeric value | numeric value |
 | `1_WT_218` | Sample 2 | Missing result | - | - |
@@ -340,7 +340,7 @@ Use visual inspection and metadata checks together.
 - Watch the looping preview and compare it to the Tracking Result values.
 - Check whether tracked movement aligns with visible F-actin movement.
 - Watch for low contrast, photobleaching, sample drift, out-of-plane movement, tangled cables, and overlapping filaments.
-- Compare multiple Samples per Breed.
+- Compare multiple Samples per Condition Group.
 - Avoid drawing conclusions from one Sample alone.
 - Confirm time calibration before interpreting values as biological velocities.
 
@@ -401,7 +401,7 @@ Older project files and older documentation may use earlier names. The current u
 
 | Legacy term | Current term |
 |-------------|--------------|
-| condition group | Breed |
+| Breed | Condition Group |
 | biological batch / batch | Sample |
 | video / import video | Data / Add Sample |
 | samples.csv | `data_files.csv` in schema v2, with compatibility for older workspaces |
@@ -426,7 +426,7 @@ On Windows, activate the environment with `.venv\Scripts\activate` and use `run_
 
 - Do not manually edit `metadata/` files unless you are doing advanced troubleshooting.
 - Do not treat missing Analysis values as zero.
-- Do not interpret a single Sample as proof of a Breed-level biological effect.
+- Do not interpret a single Sample as proof of a Condition Group-level biological effect.
 - Do not treat image sequences or 3D/raw microscopy files as active import types in the current workflow.
 
 ---

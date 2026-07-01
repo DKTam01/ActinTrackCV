@@ -63,13 +63,13 @@ PURGE_ACTIONS: list[tuple[str, str, str | None]] = [
     ),
     (
         "purge_annotations_breed",
-        "5. Purge Breed Annotations Only",
+        "5. Purge Condition Group Annotations Only",
         None,
     ),
     (
         "purge_complete_breed",
-        "6. Complete Breed Purge",
-        "PURGE BREED",
+        "6. Complete Condition Group Purge",
+        "PURGE CONDITION GROUP",
     ),
     (
         "purge_annotations_workspace",
@@ -104,10 +104,10 @@ ACTION_DESCRIPTIONS = {
     ),
     "purge_annotations_breed": (
         "Clears annotations and processed outputs for all samples in the selected "
-        "breed. Keeps samples and imported data entries."
+        "condition group. Keeps samples and imported data entries."
     ),
     "purge_complete_breed": (
-        "Removes all samples and data entries for the selected breed from "
+        "Removes all samples and data entries for the selected condition group from "
         "the app database, plus all annotations and processed outputs."
     ),
     "purge_annotations_workspace": (
@@ -115,7 +115,7 @@ ACTION_DESCRIPTIONS = {
         "Keeps all samples and imported data entries."
     ),
     "purge_complete_workspace": (
-        "Removes all workspace metadata: every breed, sample, data entry, "
+        "Removes all workspace metadata: every condition group, sample, data entry, "
         "annotation, preview, and processed output."
     ),
 }
@@ -170,7 +170,7 @@ class PurgeCleanupDialog(QDialog):
             self.combo_group.setCurrentIndex(idx)
         self.combo_batch = QComboBox()
         self._refresh_batch_combo()
-        scope_layout.addRow("Breed:", self.combo_group)
+        scope_layout.addRow("Condition Group:", self.combo_group)
         scope_layout.addRow("Sample:", self.combo_batch)
         layout.addWidget(scope_box)
 
@@ -355,13 +355,13 @@ def open_purge_cleanup_dialog(window: "MainWindow") -> None:
 
 
 def pick_empty_batch_name(parent: "MainWindow", root: Path, group: str) -> str | None:
-    """List all empty samples in a breed."""
+    """List all empty samples in a condition group."""
     empty = list_empty_samples(root, group)
     if not empty:
         QMessageBox.information(
             parent,
             "Delete Empty Sample",
-            "No empty samples in this breed.",
+            "No empty samples in this condition group.",
         )
         return None
     labels = [parent._batch_list_header_text(group, b) for b in empty]
