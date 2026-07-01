@@ -296,15 +296,12 @@ class CroppedROIPreviewDialog(QDialog):
         layout.addWidget(self.slider)
 
         controls = QHBoxLayout()
-        self.btn_play = QPushButton("Play")
-        self.btn_play.clicked.connect(self._toggle_play)
-        self.btn_pause = QPushButton("Pause")
-        self.btn_pause.clicked.connect(self._pause)
+        self.btn_playback_toggle = QPushButton("Play")
+        self.btn_playback_toggle.clicked.connect(self._playback_toggle)
         self.combo_speed = QComboBox()
         self.combo_speed.addItems(["0.25×", "0.5×", "1×", "1.5×", "2×"])
         self.combo_speed.setCurrentText("1×")
-        controls.addWidget(self.btn_play)
-        controls.addWidget(self.btn_pause)
+        controls.addWidget(self.btn_playback_toggle)
         controls.addWidget(QLabel("Speed:"))
         controls.addWidget(self.combo_speed)
         controls.addStretch()
@@ -356,16 +353,21 @@ class CroppedROIPreviewDialog(QDialog):
         fps = max(0.5, self._ctx.playback_fps * mult)
         return max(20, int(1000.0 / fps))
 
-    def _toggle_play(self) -> None:
+    def _sync_playback_toggle(self) -> None:
+        self.btn_playback_toggle.setText("Pause" if self._playing else "Play")
+
+    def _playback_toggle(self) -> None:
         if self._playing:
             self._pause()
         else:
             self._playing = True
+            self._sync_playback_toggle()
             self._timer.start(self._playback_interval_ms())
 
     def _pause(self) -> None:
         self._playing = False
         self._timer.stop()
+        self._sync_playback_toggle()
 
     def _advance_frame(self) -> None:
         if self._index >= self._ctx.frame_count - 1:

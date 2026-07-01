@@ -25,7 +25,9 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn('"Breed:"', src)
         self.assertNotIn("this Breed?", src)
         self.assertIn("Condition Group", src)
-        self.assertIn("this Condition Group?", src)
+        self.assertIn("Delete this empty Condition Group?", src)
+        self.assertIn("Delete this Sample?", src)
+        self.assertIn("Condition Group Not Empty", src)
         self.assertIn("tree_samples", src)
         self.assertNotIn("Full Sample Preview — orient the data", src)
         self.assertNotIn('"◀ Prev"', src)
@@ -37,8 +39,12 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("_DEFAULT_SPLITTER_SIZES", src)
         self.assertNotIn('addTab(preview, "Frame")', src)
         self.assertNotIn("Selected Data File", src)
-        self.assertIn("btn_playback_play", src)
-        self.assertIn("btn_playback_pause", src)
+        self.assertIn("btn_playback_toggle", src)
+        self.assertNotIn("btn_playback_play", src)
+        self.assertNotIn("btn_playback_pause", src)
+        self.assertIn("Right-click the preview to suggest or clear ROI.", src)
+        self.assertIn("btn_roi_actions", src)
+        self.assertIn("_populate_roi_actions_menu", src)
         self.assertIn("slider_sample_frame", src)
         self.assertIn("lbl_sample_frame", src)
         self.assertIn("combo_sample_playback_speed", src)
@@ -46,7 +52,8 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("_build_hidden_frame_controls", src)
         self.assertIn("Return to Samples", src)
         self.assertIn('"Export ROI"', src)
-        self.assertIn("spin_of_mask_percentile", src)
+        self.assertIn("NoWheelSpinBox", src)
+        self.assertIn("NoWheelDoubleSpinBox", src)
         orient_block = src.split("def _build_unified_orient_roi_panel", 1)[1].split(
             "def _configure_tracking_field", 1
         )[0]
@@ -60,6 +67,15 @@ class UserFacingTerminologyTests(unittest.TestCase):
             orient_block.index("_build_export_name_panel()"),
             orient_block.index("self.btn_process ="),
         )
+
+    def test_preview_canvas_has_roi_context_menu(self) -> None:
+        src = _read("actintrack_app/gui_canvas.py")
+        self.assertIn("_on_context_menu", src)
+        self.assertIn("_populate_roi_actions_menu", src)
+
+        gui = _read("actintrack_app/gui.py")
+        self.assertIn("Suggest ROI from F-actin Signal", gui)
+        self.assertIn("Clear ROI", gui)
 
     def test_analysis_view_headers_use_condition_group(self) -> None:
         src = _read("actintrack_app/analysis_view.py")
@@ -77,8 +93,10 @@ class UserFacingTerminologyTests(unittest.TestCase):
         purge = _read("actintrack_app/purge_cleanup_dialog.py")
         self.assertNotIn("Breed Annotations Only", purge)
         self.assertNotIn("Complete Breed Purge", purge)
+        self.assertNotIn("raw/", purge)
         self.assertIn("Condition Group Annotations Only", purge)
         self.assertIn("Complete Condition Group Purge", purge)
+        self.assertIn("copied video data", purge)
 
     def test_readme_uses_condition_group(self) -> None:
         readme = _read("README.md")

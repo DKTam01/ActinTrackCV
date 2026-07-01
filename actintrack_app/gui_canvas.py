@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QLabel
+from PyQt6.QtWidgets import QLabel, QMenu
 
 from actintrack_app.orientation import RectROI
 
@@ -62,6 +62,8 @@ class ImageCanvas(QLabel):
         self._cell_mask_overlay: Optional[np.ndarray] = None
         self._interactive = True
         self._draw_roi = True
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
     def clear_preview(self) -> None:
         self._frame = None
@@ -212,6 +214,20 @@ class ImageCanvas(QLabel):
 
         painter.end()
         self.setPixmap(composite)
+
+    def _on_context_menu(self, pos) -> None:
+        mw = self._main_window
+        if not self._interactive or self._frame is None:
+            return
+        if mw._metric_analysis_view_active or mw._preview_mode != "full":
+            return
+        if mw._base_frame is None:
+            return
+        menu = QMenu(self)
+        self._main_window._populate_roi_actions_menu(menu)
+        action = menu.exec(self.mapToGlobal(pos))
+        if action is None:
+            return
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

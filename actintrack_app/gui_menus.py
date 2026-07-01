@@ -153,7 +153,7 @@ class GlobalPurgeConfirmDialog(QDialog):
             QLabel(
                 "This will delete all annotations, ROI selections, previews, "
                 "processed outputs, and exported cropped files across the workspace. "
-                "Raw files will be kept. This cannot be undone."
+                "Copied video data in the workspace will be kept. This cannot be undone."
             )
         )
         layout.addWidget(QLabel("Type PURGE to confirm:"))
@@ -209,7 +209,7 @@ def setup_application_menus(window: "MainWindow") -> None:
 
     act_remove_missing = QAction("Remove Missing Files…", window)
     act_remove_missing.setToolTip(
-        "Remove samples whose raw files are missing from workspace metadata."
+        "Remove Samples whose copied video data is missing from the workspace."
     )
     act_remove_missing.triggered.connect(window._on_remove_missing_samples)
     ws_menu.addAction(act_remove_missing)

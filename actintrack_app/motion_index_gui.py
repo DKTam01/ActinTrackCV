@@ -15,7 +15,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -23,13 +22,13 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from actintrack_app.export_naming import motion_index_track_preview_path
 from actintrack_app.gui_canvas import numpy_bgr_to_qimage
+from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
 from actintrack_app.motion_index import (
     MotionIndexParams,
     MotionIndexResult,
@@ -79,32 +78,32 @@ class MotionIndexSettingsDialog(QDialog):
         self.combo_method.addItem("Template matching", TRACKING_METHOD_TEMPLATE)
         method_index = self.combo_method.findData(defaults.tracking_method)
         self.combo_method.setCurrentIndex(max(0, method_index))
-        self.spin_points = QSpinBox()
+        self.spin_points = NoWheelSpinBox()
         self.spin_points.setRange(1, 50)
         self.spin_points.setValue(defaults.num_starting_points)
-        self.spin_spacing = QSpinBox()
+        self.spin_spacing = NoWheelSpinBox()
         self.spin_spacing.setRange(1, 200)
         self.spin_spacing.setValue(defaults.min_point_spacing_px)
-        self.spin_search = QSpinBox()
+        self.spin_search = NoWheelSpinBox()
         self.spin_search.setRange(1, 100)
         self.spin_search.setValue(defaults.search_radius_px)
-        self.spin_patch = QSpinBox()
+        self.spin_patch = NoWheelSpinBox()
         self.spin_patch.setRange(3, 101)
         self.spin_patch.setSingleStep(2)
         self.spin_patch.setValue(defaults.template_patch_size_px)
-        self.spin_confidence = QDoubleSpinBox()
+        self.spin_confidence = NoWheelDoubleSpinBox()
         self.spin_confidence.setRange(0.0, 1.0)
         self.spin_confidence.setDecimals(2)
         self.spin_confidence.setSingleStep(0.05)
         self.spin_confidence.setValue(defaults.min_template_confidence)
-        self.spin_lookahead = QSpinBox()
+        self.spin_lookahead = NoWheelSpinBox()
         self.spin_lookahead.setRange(0, 3)
         self.spin_lookahead.setValue(defaults.lookahead_frames)
-        self.spin_mpp = QDoubleSpinBox()
+        self.spin_mpp = NoWheelDoubleSpinBox()
         self.spin_mpp.setRange(0.001, 10.0)
         self.spin_mpp.setDecimals(4)
         self.spin_mpp.setValue(defaults.microns_per_pixel)
-        self.spin_spf = QDoubleSpinBox()
+        self.spin_spf = NoWheelDoubleSpinBox()
         self.spin_spf.setRange(0.001, 60.0)
         self.spin_spf.setDecimals(4)
         self.spin_spf.setValue(defaults.seconds_per_frame)
@@ -306,12 +305,9 @@ class TrackPreviewDialog(QDialog):
         layout.addWidget(self.slider)
 
         controls = QHBoxLayout()
-        self.btn_play = QPushButton("Play")
-        self.btn_play.clicked.connect(self._toggle_play)
-        self.btn_pause = QPushButton("Pause")
-        self.btn_pause.clicked.connect(self._pause)
-        controls.addWidget(self.btn_play)
-        controls.addWidget(self.btn_pause)
+        self.btn_playback_toggle = QPushButton("Play")
+        self.btn_playback_toggle.clicked.connect(self._playback_toggle)
+        controls.addWidget(self.btn_playback_toggle)
         controls.addStretch()
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.accept)
@@ -342,16 +338,21 @@ class TrackPreviewDialog(QDialog):
     def _playback_interval_ms(self) -> int:
         return max(20, int(1000.0 / self._fps))
 
-    def _toggle_play(self) -> None:
+    def _sync_playback_toggle(self) -> None:
+        self.btn_playback_toggle.setText("Pause" if self._playing else "Play")
+
+    def _playback_toggle(self) -> None:
         if self._playing:
             self._pause()
         else:
             self._playing = True
+            self._sync_playback_toggle()
             self._timer.start(self._playback_interval_ms())
 
     def _pause(self) -> None:
         self._playing = False
         self._timer.stop()
+        self._sync_playback_toggle()
 
     def _advance_frame(self) -> None:
         if self._index >= self._frame_count - 1:

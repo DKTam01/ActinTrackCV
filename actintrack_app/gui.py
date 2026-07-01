@@ -82,6 +82,7 @@ from actintrack_app.gui_menus import (
     setup_application_menus,
 )
 from actintrack_app.gui_canvas import ImageCanvas
+from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
 from actintrack_app.image_processing import TrackingCrop, detect_tracking_crop
 from actintrack_app.export_naming import motion_index_summary_json_path
 from actintrack_app.metadata import (
@@ -117,6 +118,7 @@ from actintrack_app.purge_manager import (
 from actintrack_app.condition_group_manager import (
     condition_group_exists,
     condition_group_display_name,
+    condition_group_has_samples,
     create_condition_group,
     delete_empty_condition_group,
     display_export_name_for_row,
@@ -544,12 +546,11 @@ class MainWindow(QMainWindow):
         sample_playback.setSpacing(4)
         sample_transport_row = QHBoxLayout()
         sample_speed_row = QHBoxLayout()
-        self.btn_playback_play = QPushButton("Play")
-        self.btn_playback_play.setToolTip("Play through the loaded sample frames.")
-        self.btn_playback_play.clicked.connect(self._playback_play)
-        self.btn_playback_pause = QPushButton("Pause")
-        self.btn_playback_pause.setToolTip("Pause frame playback.")
-        self.btn_playback_pause.clicked.connect(self._playback_pause)
+        self.btn_playback_toggle = QPushButton("Play")
+        self.btn_playback_toggle.setToolTip(
+            "Play or pause through the loaded sample frames."
+        )
+        self.btn_playback_toggle.clicked.connect(self._playback_toggle)
         self.lbl_sample_frame = QLabel("Frame —")
         self.lbl_sample_frame.setMinimumWidth(72)
         self.slider_sample_frame = QSlider(Qt.Orientation.Horizontal)
@@ -577,8 +578,7 @@ class MainWindow(QMainWindow):
         )
         self.chk_playback_loop.setChecked(True)
         for widget in (
-            self.btn_playback_play,
-            self.btn_playback_pause,
+            self.btn_playback_toggle,
             self.lbl_sample_frame,
             self.slider_sample_frame,
             self.lbl_sample_playback_speed,
@@ -586,8 +586,7 @@ class MainWindow(QMainWindow):
             self.chk_playback_loop,
         ):
             widget.hide()
-        sample_transport_row.addWidget(self.btn_playback_play)
-        sample_transport_row.addWidget(self.btn_playback_pause)
+        sample_transport_row.addWidget(self.btn_playback_toggle)
         sample_transport_row.addWidget(self.lbl_sample_frame)
         sample_transport_row.addWidget(self.slider_sample_frame, stretch=1)
         sample_speed_row.addWidget(self.lbl_sample_playback_speed)
@@ -598,8 +597,7 @@ class MainWindow(QMainWindow):
         sample_playback.addLayout(sample_speed_row)
         center_layout.addLayout(sample_playback)
         self._sample_playback_widgets = (
-            self.btn_playback_play,
-            self.btn_playback_pause,
+            self.btn_playback_toggle,
             self.lbl_sample_frame,
             self.slider_sample_frame,
             self.lbl_sample_playback_speed,
@@ -614,10 +612,9 @@ class MainWindow(QMainWindow):
         preview_controls.setSpacing(4)
         preview_transport_row = QHBoxLayout()
         preview_speed_row = QHBoxLayout()
-        self.btn_preview_play = QPushButton("Play")
-        self.btn_preview_play.clicked.connect(self._playback_play)
-        self.btn_preview_pause = QPushButton("Pause")
-        self.btn_preview_pause.clicked.connect(self._playback_pause)
+        self.btn_preview_toggle = QPushButton("Play")
+        self.btn_preview_toggle.setToolTip("Play or pause cropped preview playback.")
+        self.btn_preview_toggle.clicked.connect(self._playback_toggle)
         self.lbl_cropped_frame = QLabel("Frame 1 / 1")
         self.lbl_cropped_frame.setMinimumWidth(72)
         self.slider_cropped_frame = QSlider(Qt.Orientation.Horizontal)
@@ -646,8 +643,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Fixed,
         )
         for widget in (
-            self.btn_preview_play,
-            self.btn_preview_pause,
+            self.btn_preview_toggle,
             self.lbl_cropped_frame,
             self.slider_cropped_frame,
             self.lbl_preview_speed,
@@ -655,8 +651,7 @@ class MainWindow(QMainWindow):
             self.btn_return_full_preview,
         ):
             widget.hide()
-        preview_transport_row.addWidget(self.btn_preview_play)
-        preview_transport_row.addWidget(self.btn_preview_pause)
+        preview_transport_row.addWidget(self.btn_preview_toggle)
         preview_transport_row.addWidget(self.lbl_cropped_frame)
         preview_transport_row.addWidget(self.slider_cropped_frame, stretch=1)
         preview_speed_row.addWidget(self.lbl_preview_speed)
@@ -667,8 +662,7 @@ class MainWindow(QMainWindow):
         preview_controls.addLayout(preview_speed_row)
         center_layout.addLayout(preview_controls)
         self._preview_control_widgets = (
-            self.btn_preview_play,
-            self.btn_preview_pause,
+            self.btn_preview_toggle,
             self.lbl_cropped_frame,
             self.slider_cropped_frame,
             self.lbl_preview_speed,
@@ -805,7 +799,7 @@ class MainWindow(QMainWindow):
         self.lbl_frame_info = QLabel("Frame: —")
         self.slider_frame = QSlider(Qt.Orientation.Horizontal)
         self.slider_frame.valueChanged.connect(self._on_frame_slider)
-        self.spin_frame = QSpinBox()
+        self.spin_frame = NoWheelSpinBox()
         self.spin_frame.valueChanged.connect(self._on_frame_spin)
         layout.addWidget(self.lbl_frame_info)
         layout.addWidget(self.slider_frame)
@@ -849,7 +843,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Fixed,
         )
         custom.addWidget(angle_label)
-        self.spin_custom_angle = QDoubleSpinBox()
+        self.spin_custom_angle = NoWheelDoubleSpinBox()
         self.spin_custom_angle.setRange(-180, 180)
         self.spin_custom_angle.setDecimals(1)
         self.spin_custom_angle.setButtonSymbols(
@@ -878,18 +872,19 @@ class MainWindow(QMainWindow):
         orient_extras.addWidget(self.btn_reset_orientation)
         layout.addLayout(orient_extras)
 
-        self.btn_auto_roi = QPushButton("Suggest ROI from F-actin Signal")
-        self.btn_auto_roi.setToolTip(
-            "Suggest a rectangular region with strong visible F-actin signal. "
-            "Review and adjust before export."
+        self.btn_roi_actions = QPushButton("ROI Actions")
+        self.btn_roi_actions.setToolTip(
+            "Suggest or clear the analysis ROI for the current preview."
         )
-        self.btn_auto_roi.clicked.connect(self._on_auto_suggest_roi)
-        layout.addWidget(self.btn_auto_roi)
+        self._roi_actions_menu = QMenu(self)
+        self._populate_roi_actions_menu(self._roi_actions_menu)
+        self.btn_roi_actions.setMenu(self._roi_actions_menu)
+        layout.addWidget(self.btn_roi_actions)
 
-        self.btn_clear_roi = QPushButton("Clear ROI")
-        self.btn_clear_roi.setToolTip("Remove the current ROI rectangle from the preview.")
-        self.btn_clear_roi.clicked.connect(self._on_clear_roi)
-        layout.addWidget(self.btn_clear_roi)
+        roi_hint = QLabel("Right-click the preview to suggest or clear ROI.")
+        roi_hint.setWordWrap(True)
+        roi_hint.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(roi_hint)
 
         self.lbl_roi_save_status = QLabel("—")
         self.lbl_roi_save_status.setWordWrap(True)
@@ -931,28 +926,28 @@ class MainWindow(QMainWindow):
             "matches Dr. Ju's recommended traditional CV method."
         )
 
-        self.spin_track_points = QSpinBox()
+        self.spin_track_points = NoWheelSpinBox()
         self.spin_track_points.setRange(1, 50)
         self.spin_track_points.setValue(defaults.num_starting_points)
         self.spin_track_points.setToolTip(
             "Number of bright F-actin signal points selected in the first frame."
         )
 
-        self.spin_track_spacing = QSpinBox()
+        self.spin_track_spacing = NoWheelSpinBox()
         self.spin_track_spacing.setRange(1, 200)
         self.spin_track_spacing.setValue(defaults.min_point_spacing_px)
         self.spin_track_spacing.setToolTip(
             "Minimum pixel distance between starting points so they are spread out."
         )
 
-        self.spin_track_search = QSpinBox()
+        self.spin_track_search = NoWheelSpinBox()
         self.spin_track_search.setRange(1, 100)
         self.spin_track_search.setValue(defaults.search_radius_px)
         self.spin_track_search.setToolTip(
             "Maximum pixel distance a point can move between frames."
         )
 
-        self.spin_track_patch = QSpinBox()
+        self.spin_track_patch = NoWheelSpinBox()
         self.spin_track_patch.setRange(3, 101)
         self.spin_track_patch.setSingleStep(2)
         self.spin_track_patch.setValue(defaults.template_patch_size_px)
@@ -961,7 +956,7 @@ class MainWindow(QMainWindow):
             "when template matching is selected. Must be odd."
         )
 
-        self.spin_track_confidence = QDoubleSpinBox()
+        self.spin_track_confidence = NoWheelDoubleSpinBox()
         self.spin_track_confidence.setRange(0.0, 1.0)
         self.spin_track_confidence.setDecimals(2)
         self.spin_track_confidence.setSingleStep(0.05)
@@ -971,7 +966,7 @@ class MainWindow(QMainWindow):
             "normalized local brightness threshold."
         )
 
-        self.spin_track_lookahead = QSpinBox()
+        self.spin_track_lookahead = NoWheelSpinBox()
         self.spin_track_lookahead.setRange(0, 3)
         self.spin_track_lookahead.setValue(defaults.lookahead_frames)
         self.spin_track_lookahead.setToolTip(
@@ -979,7 +974,7 @@ class MainWindow(QMainWindow):
         )
 
         
-        self.spin_track_mpp = QDoubleSpinBox()
+        self.spin_track_mpp = NoWheelDoubleSpinBox()
         self.spin_track_mpp.setRange(0.001, 10.0)
         self.spin_track_mpp.setDecimals(4)
         self.spin_track_mpp.setValue(defaults.microns_per_pixel)
@@ -987,7 +982,7 @@ class MainWindow(QMainWindow):
             "Physical image scale used to convert pixels to microns."
         )
 
-        self.spin_track_spf = QDoubleSpinBox()
+        self.spin_track_spf = NoWheelDoubleSpinBox()
         self.spin_track_spf.setRange(0.001, 60.0)
         self.spin_track_spf.setDecimals(4)
         self.spin_track_spf.setValue(defaults.seconds_per_frame)
@@ -1090,7 +1085,7 @@ class MainWindow(QMainWindow):
 
     def _create_optical_flow_setting_widgets(self) -> None:
         defaults = OpticalFlowSettings()
-        self.spin_of_mask_percentile = QDoubleSpinBox()
+        self.spin_of_mask_percentile = NoWheelDoubleSpinBox()
         self.spin_of_mask_percentile.setRange(0.0, 100.0)
         self.spin_of_mask_percentile.setDecimals(1)
         self.spin_of_mask_percentile.setValue(defaults.mask_percentile)
@@ -1105,31 +1100,31 @@ class MainWindow(QMainWindow):
         self.combo_of_blur.setCurrentIndex(1)
         self.combo_of_blur.setToolTip("Light Gaussian blur applied before optical flow.")
 
-        self.spin_of_pyr_scale = QDoubleSpinBox()
+        self.spin_of_pyr_scale = NoWheelDoubleSpinBox()
         self.spin_of_pyr_scale.setRange(0.01, 0.99)
         self.spin_of_pyr_scale.setDecimals(2)
         self.spin_of_pyr_scale.setSingleStep(0.05)
         self.spin_of_pyr_scale.setValue(defaults.pyr_scale)
 
-        self.spin_of_levels = QSpinBox()
+        self.spin_of_levels = NoWheelSpinBox()
         self.spin_of_levels.setRange(1, 8)
         self.spin_of_levels.setValue(defaults.levels)
 
-        self.spin_of_winsize = QSpinBox()
+        self.spin_of_winsize = NoWheelSpinBox()
         self.spin_of_winsize.setRange(3, 99)
         self.spin_of_winsize.setSingleStep(2)
         self.spin_of_winsize.setValue(defaults.winsize)
 
-        self.spin_of_iterations = QSpinBox()
+        self.spin_of_iterations = NoWheelSpinBox()
         self.spin_of_iterations.setRange(1, 20)
         self.spin_of_iterations.setValue(defaults.iterations)
 
-        self.spin_of_poly_n = QSpinBox()
+        self.spin_of_poly_n = NoWheelSpinBox()
         self.spin_of_poly_n.setRange(3, 15)
         self.spin_of_poly_n.setSingleStep(2)
         self.spin_of_poly_n.setValue(defaults.poly_n)
 
-        self.spin_of_poly_sigma = QDoubleSpinBox()
+        self.spin_of_poly_sigma = NoWheelDoubleSpinBox()
         self.spin_of_poly_sigma.setRange(0.1, 5.0)
         self.spin_of_poly_sigma.setDecimals(2)
         self.spin_of_poly_sigma.setValue(defaults.poly_sigma)
@@ -1142,12 +1137,12 @@ class MainWindow(QMainWindow):
         )
         self.chk_show_of_overlay.toggled.connect(self._on_show_of_overlay_changed)
 
-        self.spin_of_arrow_spacing = QSpinBox()
+        self.spin_of_arrow_spacing = NoWheelSpinBox()
         self.spin_of_arrow_spacing.setRange(8, 40)
         self.spin_of_arrow_spacing.setValue(viz_defaults.arrow_spacing_px)
         self.spin_of_arrow_spacing.valueChanged.connect(self._on_of_viz_setting_changed)
 
-        self.spin_of_arrow_scale = QDoubleSpinBox()
+        self.spin_of_arrow_scale = NoWheelDoubleSpinBox()
         self.spin_of_arrow_scale.setRange(0.1, 20.0)
         self.spin_of_arrow_scale.setDecimals(1)
         self.spin_of_arrow_scale.setSingleStep(0.5)
@@ -1584,8 +1579,15 @@ class MainWindow(QMainWindow):
             hasattr(self, "chk_playback_loop") and self.chk_playback_loop.isChecked()
         )
 
+    def _sync_playback_toggle_buttons(self) -> None:
+        label = "Pause" if self._preview_playing else "Play"
+        if hasattr(self, "btn_playback_toggle"):
+            self.btn_playback_toggle.setText(label)
+        if hasattr(self, "btn_preview_toggle"):
+            self.btn_preview_toggle.setText(label)
+
     def _update_playback_controls_state(self) -> None:
-        if not hasattr(self, "btn_playback_play"):
+        if not hasattr(self, "btn_playback_toggle"):
             return
         can_show = (
             self._current_sample_id is not None
@@ -1597,10 +1599,19 @@ class MainWindow(QMainWindow):
         total = max(0, int(self._total_frames))
         can_scrub = can_show and total > 0
         can_play = can_show and total > 1
-        self.btn_playback_play.setEnabled(can_play)
-        self.btn_playback_pause.setEnabled(self._preview_playing)
+        self.btn_playback_toggle.setEnabled(can_play or self._preview_playing)
         if hasattr(self, "slider_sample_frame"):
             self.slider_sample_frame.setEnabled(can_scrub)
+        if hasattr(self, "btn_preview_toggle"):
+            preview_can_play = (
+                self._preview_mode == "cropped_tracking"
+                and self._cropped_preview is not None
+                and len(self._cropped_preview.frames) > 1
+            )
+            self.btn_preview_toggle.setEnabled(
+                preview_can_play or self._preview_playing
+            )
+        self._sync_playback_toggle_buttons()
 
     @staticmethod
     def _playback_interval_ms_for_speed_text(speed_text: str) -> int:
@@ -1685,6 +1696,12 @@ class MainWindow(QMainWindow):
     def _on_preview_speed_changed(self, _text: str) -> None:
         if self._preview_playing:
             self._update_playback_timer_interval()
+
+    def _playback_toggle(self) -> None:
+        if self._preview_playing:
+            self._playback_pause()
+        else:
+            self._playback_play()
 
     def _playback_pause(self) -> None:
         self._preview_playing = False
@@ -4043,21 +4060,30 @@ class MainWindow(QMainWindow):
                 "Create or select a Condition Group first.",
             )
             return
-        current_name = get_condition_group_name(self._project_root, current)
-        reply = QMessageBox.question(
-            self,
-            "Delete Condition Group",
-            f"Delete empty Condition Group '{current_name}'?\n\n"
-            "This cannot be undone. Samples or Data in the group block deletion.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if condition_group_has_samples(self._project_root, current):
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.NoIcon)
+            box.setWindowTitle("Condition Group Not Empty")
+            box.setText("Delete the Samples in this Condition Group first.")
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            box.exec()
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowTitle("Delete Condition Group")
+        box.setText("Delete this empty Condition Group?")
+        delete_btn = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+        if box.clickedButton() is not delete_btn:
             return
         try:
             delete_empty_condition_group(self._project_root, current)
         except ValueError as exc:
             QMessageBox.warning(self, "Delete Condition Group", str(exc))
             return
+        current_name = get_condition_group_name(self._project_root, current)
         self._refresh_condition_group_combo()
         self._refresh_sample_list()
         self._refresh_analysis_if_visible()
@@ -4562,13 +4588,10 @@ class MainWindow(QMainWindow):
         _, missing_ids = sync_samples_with_disk(self._project_root)
         if not missing_ids:
             return
-        if (
-            QMessageBox.question(
-                self,
-                "Remove Missing",
-                f"Remove {len(missing_ids)} missing sample(s) from metadata?",
-            )
-            == QMessageBox.StandardButton.Yes
+        if self._ask_yes_no(
+            "Remove Missing Samples",
+            f"Remove {len(missing_ids)} Sample(s) whose copied video data is missing?",
+            informative="Only workspace metadata is updated.",
         ):
             remove_samples_from_metadata(self._project_root, missing_ids)
             self._refresh_sample_list()
@@ -4892,11 +4915,47 @@ class MainWindow(QMainWindow):
         self._refresh_sample_list()
         self.update_tracking_result_panel()
 
-    def _ask_remove_workspace_raw(self, title: str, text: str) -> bool | None:
-        """Return True to remove internal copy, False to keep, None if cancelled."""
-        chk = QCheckBox("Also remove the project's internal data copy")
+    def _populate_roi_actions_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        suggest = menu.addAction("Suggest ROI from F-actin Signal")
+        suggest.setToolTip(
+            "Suggest a rectangular region with strong visible F-actin signal. "
+            "Review and adjust before export."
+        )
+        clear = menu.addAction("Clear ROI")
+        clear.setToolTip("Remove the current ROI rectangle from the preview.")
+        suggest.triggered.connect(self._on_auto_suggest_roi)
+        clear.triggered.connect(self._on_clear_roi)
+
+    def _ask_yes_no(
+        self,
+        title: str,
+        text: str,
+        *,
+        informative: str = "",
+    ) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowTitle(title)
+        box.setText(text)
+        if informative:
+            box.setInformativeText(informative)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _ask_remove_workspace_raw(
+        self,
+        *,
+        title: str = "Copied Video Data",
+        text: str = "Remove the workspace's copied video data for this file?",
+    ) -> bool | None:
+        """Return True to remove copied video data, False to keep, None if cancelled."""
+        chk = QCheckBox("Also remove the workspace's copied video data")
         chk.setChecked(False)
         box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.NoIcon)
         box.setWindowTitle(title)
         box.setText(text)
         box.setCheckBox(chk)
@@ -4907,46 +4966,16 @@ class MainWindow(QMainWindow):
             return None
         return chk.isChecked()
 
-    def _confirm_delete_sample(
-        self,
-        breed: str,
-        sample_name: str,
-        *,
-        has_internal_copy: bool,
-        incomplete: bool = False,
-    ) -> bool | None:
-        """Return whether to remove the project's internal data copy, or None if cancelled."""
+    def _confirm_delete_sample(self) -> bool:
         box = QMessageBox(self)
-        box.setWindowTitle("Delete Sample?")
-        box.setText(f'Delete "{sample_name}" from this Condition Group?')
-        if incomplete:
-            box.setInformativeText(
-                "This will remove the incomplete Sample from the project."
-            )
-        else:
-            box.setInformativeText(
-                "This will remove the Sample from the project, including its ROI, "
-                "tracking results, notes, and analysis data. "
-                "The original data file on your computer will not be deleted."
-            )
-        internal_copy_chk: QCheckBox | None = None
-        if has_internal_copy:
-            internal_copy_chk = QCheckBox(
-                "Also remove the project's internal data copy"
-            )
-            internal_copy_chk.setChecked(False)
-            box.setCheckBox(internal_copy_chk)
-        delete_btn = box.addButton(
-            "Delete Sample", QMessageBox.ButtonRole.DestructiveRole
-        )
+        box.setIcon(QMessageBox.Icon.NoIcon)
+        box.setWindowTitle("Delete Sample")
+        box.setText("Delete this Sample?")
+        delete_btn = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel_btn)
         box.exec()
-        if box.clickedButton() is not delete_btn:
-            return None
-        if internal_copy_chk is not None:
-            return internal_copy_chk.isChecked()
-        return False
+        return box.clickedButton() is delete_btn
 
     def _confirm_typed_phrase(
         self,
@@ -5125,14 +5154,13 @@ class MainWindow(QMainWindow):
     def _ctx_purge_file_annotations(self, sample_id: str) -> None:
         if self._project_root is None:
             return
-        reply = QMessageBox.question(
-            self,
+        if not self._ask_yes_no(
             "Purge Data Annotations",
-            "Clear annotations, previews, and processed outputs for this data file?\n\n"
-            "The data entry and workspace raw copy will be kept.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            "Clear annotations, previews, and processed outputs for this data file?",
+            informative=(
+                "The data entry and the workspace's copied video data will be kept."
+            ),
+        ):
             return
         try:
             stats = purge_sample_annotations_only(self._project_root, sample_id)
@@ -5147,20 +5175,17 @@ class MainWindow(QMainWindow):
     ) -> None:
         if self._project_root is None:
             return
-        reply = QMessageBox.question(
-            self,
-            "Purge Selected Data Completely",
-            "Remove this data file from the app database and delete its annotations, "
-            "previews, and processed outputs?\n\n"
-            "Original external source files will not be deleted.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not self._ask_yes_no(
+            "Remove Data File",
+            "Remove this data file from the workspace?",
+            informative=(
+                "This removes its metadata, annotations, previews, and processed "
+                "outputs. Files on your computer outside this workspace are not "
+                "deleted."
+            ),
+        ):
             return
-        remove_raw = self._ask_remove_workspace_raw(
-            "Workspace Raw Copy",
-            "Keep or remove the copied file in the workspace raw/ folder?",
-        )
+        remove_raw = self._ask_remove_workspace_raw()
         if remove_raw is None:
             return
         try:
@@ -5180,15 +5205,9 @@ class MainWindow(QMainWindow):
             ):
                 num = parse_batch_number_from_name(batch_name) or 1
                 sample_label = display_sample_label(num, batch_name)
-                if (
-                    QMessageBox.question(
-                        self,
-                        "Empty Sample",
-                        f"{sample_label} is now empty. Delete the sample label too?",
-                        QMessageBox.StandardButton.Yes
-                        | QMessageBox.StandardButton.No,
-                    )
-                    == QMessageBox.StandardButton.Yes
+                if self._ask_yes_no(
+                    "Empty Sample",
+                    f'Remove empty Sample "{sample_label}"?',
                 ):
                     delete_empty_batch(self._project_root, group, batch_name)
             self._refresh_sample_list()
@@ -5198,20 +5217,17 @@ class MainWindow(QMainWindow):
     def _ctx_delete_file(self, sample_id: str, meta: dict[str, Any]) -> None:
         if self._project_root is None:
             return
-        reply = QMessageBox.question(
-            self,
-            "Delete Data from Sample",
-            "Delete this data file from the sample? This will remove its metadata, "
-            "annotations, previews, and processed outputs. Raw workspace copy "
-            "will be kept unless you choose to remove it.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not self._ask_yes_no(
+            "Remove Data File",
+            "Remove this data file from the Sample?",
+            informative=(
+                "This removes its metadata, annotations, previews, and processed "
+                "outputs. The workspace's copied video data can be removed in the "
+                "next step if you choose."
+            ),
+        ):
             return
-        remove_raw = self._ask_remove_workspace_raw(
-            "Workspace Raw Copy",
-            "Keep or remove the copied file in the workspace raw/ folder?",
-        )
+        remove_raw = self._ask_remove_workspace_raw()
         if remove_raw is None:
             return
         try:
@@ -5231,15 +5247,9 @@ class MainWindow(QMainWindow):
             ):
                 num = parse_batch_number_from_name(batch_name) or 1
                 sample_label = display_sample_label(num, batch_name)
-                if (
-                    QMessageBox.question(
-                        self,
-                        "Empty Sample",
-                        f"{sample_label} is now empty. Delete the sample label too?",
-                        QMessageBox.StandardButton.Yes
-                        | QMessageBox.StandardButton.No,
-                    )
-                    == QMessageBox.StandardButton.Yes
+                if self._ask_yes_no(
+                    "Empty Sample",
+                    f'Remove empty Sample "{sample_label}"?',
                 ):
                     delete_empty_batch(self._project_root, group, batch_name)
                     self._refresh_sample_list()
@@ -5251,14 +5261,13 @@ class MainWindow(QMainWindow):
             return
         num = parse_batch_number_from_name(batch_name) or 1
         sample_label = display_sample_label(num, batch_name)
-        reply = QMessageBox.question(
-            self,
-            "Purge Sample Annotations",
-            f"Clear annotations and processed outputs for {sample_label}?\n\n"
-            "Data entries and workspace raw copies will be kept.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not self._ask_yes_no(
+            "Clear Sample Annotations",
+            f"Clear annotations and processed outputs for {sample_label}?",
+            informative=(
+                "Data entries and the workspace's copied video data will be kept."
+            ),
+        ):
             return
         try:
             stats = purge_batch_annotations(self._project_root, group, batch_name)
@@ -5272,11 +5281,10 @@ class MainWindow(QMainWindow):
             return
         if not self._confirm_typed_phrase(
             "Complete Sample Purge",
-            "This will completely remove this sample from the workspace. It will delete "
-            "the sample label, all data entries in the app database, all annotations, "
-            "previews, and processed outputs for this sample. Workspace raw copies can "
-            "also be deleted if you choose. Original external source files will not be "
-            "touched. This cannot be undone.",
+            "This will completely remove this Sample from the workspace, including "
+            "its label, data entries, annotations, previews, and processed outputs. "
+            "You can optionally remove the workspace's copied video data next. "
+            "Files outside this workspace are not deleted. This cannot be undone.",
             "PURGE SAMPLE",
         ):
             QMessageBox.information(
@@ -5284,8 +5292,7 @@ class MainWindow(QMainWindow):
             )
             return
         remove_raw = self._ask_remove_workspace_raw(
-            "Workspace Raw Copies",
-            "Also remove workspace raw copies for this sample?",
+            text="Also remove the workspace's copied video data for this Sample?",
         )
         if remove_raw is None:
             return
@@ -5328,13 +5335,7 @@ class MainWindow(QMainWindow):
             return
         sample_name = sanitize_batch_name(batch_name)
         has_files = batch_has_samples(self._project_root, group, batch_name)
-        remove_internal_copy = self._confirm_delete_sample(
-            group,
-            sample_name,
-            has_internal_copy=has_files,
-            incomplete=not has_files,
-        )
-        if remove_internal_copy is None:
+        if not self._confirm_delete_sample():
             return
         try:
             if has_files:
@@ -5342,7 +5343,7 @@ class MainWindow(QMainWindow):
                     self._project_root,
                     group,
                     batch_name,
-                    remove_workspace_raw=remove_internal_copy,
+                    remove_workspace_raw=True,
                 )
                 self._clear_preview_before_sample_delete(group, batch_name)
                 self._set_active_sample(None)
@@ -5369,14 +5370,11 @@ class MainWindow(QMainWindow):
         if not ids:
             QMessageBox.information(self, "Purge", "No samples match the filters.")
             return
-        reply = QMessageBox.question(
-            self,
+        if not self._ask_yes_no(
             "Confirm Filtered Purge",
-            f"Purge annotations/processed for {len(ids)} sample(s)?\n"
-            "Raw files will be kept.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            f"Clear annotations and processed outputs for {len(ids)} Sample(s)?",
+            informative="The workspace's copied video data will be kept.",
+        ):
             return
         stats = purge_filtered_samples(self._project_root, ids)
         self._refresh_sample_list()
@@ -5395,13 +5393,10 @@ class MainWindow(QMainWindow):
             return
         num = parse_batch_number_from_name(batch_name) or 1
         sample_label = display_sample_label(num, batch_name)
-        reply = QMessageBox.question(
-                self,
+        if not self._ask_yes_no(
             "Delete Empty Sample",
-            f"Delete empty sample '{sample_label}' from {group}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            f'Remove empty Sample "{sample_label}" from this Condition Group?',
+        ):
             return
         try:
             delete_empty_batch(self._project_root, group, batch_name)

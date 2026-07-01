@@ -589,16 +589,37 @@ def create_condition_group(root: Path, name: str) -> ConditionGroupRecord:
     return record
 
 
+def data_file_row_belongs_to_condition_group(
+    root: Path, row: dict[str, Any], group_id: str
+) -> bool:
+    """True when a data-file row belongs to ``group_id`` (stable ID authoritative)."""
+    root = Path(root).resolve()
+    gid = resolve_condition_group_id(root, group_id)
+    if not gid:
+        return False
+    cid = str(row.get("condition_group_id", "")).strip()
+    if cid and is_condition_group_id(cid):
+        return cid == gid
+    legacy = str(row.get("group") or row.get("breed") or "").strip()
+    if not legacy:
+        return False
+    if is_condition_group_id(legacy):
+        return legacy == gid
+    return resolve_condition_group_id(root, legacy) == gid
+
+
 def condition_group_has_samples(root: Path, group_id: str) -> bool:
-    from actintrack_app.batch_manager import list_batches
+    """True when the group has at least one Sample with imported data.
+
+    Empty registry placeholders (Sample slots with no data files) do not count.
+    Display names in legacy metadata are resolved to ``condition_group_id``.
+    """
     from actintrack_app.metadata import load_samples_csv
 
     root = Path(root).resolve()
     gid = resolve_condition_group_id(root, group_id)
     if not gid:
         return False
-    if list_batches(root, gid):
-        return True
 
     for csv_name in (SAMPLES_CSV, "data_files.csv"):
         samples_path = root / METADATA_DIR / csv_name
@@ -607,14 +628,8 @@ def condition_group_has_samples(root: Path, group_id: str) -> bool:
         df = load_samples_csv(samples_path)
         if df.empty:
             continue
-        if "condition_group_id" in df.columns:
-            sub = df[df["condition_group_id"].astype(str) == gid]
-            if not sub.empty:
-                return True
-        col = "group"
-        if col in df.columns:
-            sub = df[df[col].astype(str) == gid]
-            if not sub.empty:
+        for _, row in df.iterrows():
+            if data_file_row_belongs_to_condition_group(root, row.to_dict(), gid):
                 return True
     return False
 
@@ -628,8 +643,8 @@ def delete_empty_condition_group(root: Path, group_id: str) -> None:
     label = record.name if record else gid
     if condition_group_has_samples(root, gid):
         raise ValueError(
-            f"Cannot delete '{label}' because it still has Samples or Data. "
-            "Move or delete those Samples first."
+            f"Condition Group '{label}' is not empty. "
+            "Delete the Samples in this Condition Group first."
         )
 
     records = [r for r in list_condition_group_records(root) if r.id != gid]

@@ -12,8 +12,9 @@ import cv2
 import numpy as np
 
 from actintrack_app.analysis_service import build_analysis_report
-from actintrack_app.batch_manager import get_batch_by_name
+from actintrack_app.batch_manager import create_batch, get_batch_by_name
 from actintrack_app.condition_group_manager import (
+    condition_group_has_samples,
     create_condition_group,
     delete_empty_condition_group,
     display_export_name_for_row,
@@ -31,6 +32,7 @@ from actintrack_app.condition_group_manager import (
 from actintrack_app.metadata import load_samples_csv
 from actintrack_app.project_manager import create_project_structure
 from actintrack_app.sample_service import create_sample_from_data
+from actintrack_app.sample_transfer import move_sample_to_condition_group
 from actintrack_app.schema_compat import load_sample_registry_as_v1, read_workspace_schema_version
 from actintrack_app.utils import CONDITION_GROUPS_JSON, METADATA_DIR, RAW_DIR, SCHEMA_V2
 
@@ -133,6 +135,14 @@ class ConditionGroupManagerTests(unittest.TestCase):
         delete_empty_condition_group(self.root, record.id)
         self.assertEqual(list_condition_group_ids(self.root), [])
 
+    def test_empty_placeholder_sample_does_not_block_group_delete(self) -> None:
+        create_project_structure(self.root)
+        record = create_condition_group(self.root, "Placeholder Group")
+        create_batch(self.root, record.id, "Batch 1")
+        self.assertFalse(condition_group_has_samples(self.root, record.id))
+        delete_empty_condition_group(self.root, record.id)
+        self.assertEqual(list_condition_group_ids(self.root), [])
+
     def test_delete_nonempty_group_blocked(self) -> None:
         create_project_structure(self.root)
         record = create_condition_group(self.root, "Control")
@@ -141,6 +151,38 @@ class ConditionGroupManagerTests(unittest.TestCase):
         create_sample_from_data(self.root, record.id, video)
         with self.assertRaises(ValueError):
             delete_empty_condition_group(self.root, record.id)
+
+    def test_renamed_group_with_samples_still_blocked(self) -> None:
+        create_project_structure(self.root)
+        record = create_condition_group(self.root, "Control")
+        video = self.root / "clip.mp4"
+        _write_test_video(video)
+        create_sample_from_data(self.root, record.id, video)
+        rename_condition_group(self.root, record.id, "Renamed Control")
+        self.assertTrue(condition_group_has_samples(self.root, record.id))
+        with self.assertRaises(ValueError):
+            delete_empty_condition_group(self.root, record.id)
+
+    def test_move_sample_updates_group_emptiness(self) -> None:
+        create_project_structure(self.root)
+        source = create_condition_group(self.root, "Source")
+        target = create_condition_group(self.root, "Target")
+        video = self.root / "move_me.mp4"
+        _write_test_video(video)
+        _batch, row = create_sample_from_data(self.root, source.id, video)
+        sample_id = str(row["sample_id"])
+        self.assertTrue(condition_group_has_samples(self.root, source.id))
+        self.assertFalse(condition_group_has_samples(self.root, target.id))
+
+        move_sample_to_condition_group(self.root, sample_id, target.id)
+
+        self.assertFalse(condition_group_has_samples(self.root, source.id))
+        self.assertTrue(condition_group_has_samples(self.root, target.id))
+        delete_empty_condition_group(self.root, source.id)
+        self.assertEqual(
+            list_condition_group_ids(self.root),
+            [target.id],
+        )
 
     def test_legacy_workspace_migrates_name_based_groups(self) -> None:
         shutil.copytree(FIXTURES / "metadata", self.root / "metadata")
