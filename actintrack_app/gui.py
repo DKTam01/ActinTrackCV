@@ -208,6 +208,15 @@ from actintrack_app.utils import (
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
 from actintrack_app import gui_dialogs
+from actintrack_app.gui_result_views import (
+    OpticalFlowResultView,
+    SampleTrackingResultView,
+    format_tracking_result_panel_lines,
+    optical_flow_result_view_from_dict,
+    optical_flow_result_view_from_result,
+    tracking_result_view_from_dict,
+    tracking_result_view_from_preview,
+)
 from actintrack_app.debug_log import breadcrumb
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
@@ -282,47 +291,6 @@ class _OpticalFlowRunSnapshot:
     orientation_key: tuple[float, bool, bool]
     video_path: str
     run_token: int
-
-
-@dataclass
-class SampleTrackingResultView:
-    """Display-ready tracking/index values for one sample."""
-
-    status: str  # success, failed, none
-    downward_velocity: float = 0.0
-    general_movement: float = 0.0
-    tracks_used: int = 0
-    tracks_requested: int = 0
-    valid_steps: int = 0
-    failure_reason: str = ""
-
-
-@dataclass
-class OpticalFlowResultView:
-    """Display-ready optical-flow motion index values for one sample."""
-
-    status: str  # success, failed, none
-    general_movement: Optional[float] = None
-    downward_motion: Optional[float] = None
-    net_y_velocity: Optional[float] = None
-    directionality_ratio: Optional[float] = None
-    valid_pixel_fraction: Optional[float] = None
-    saturated_pixel_fraction: Optional[float] = None
-    failure_reason: str = ""
-
-def _optional_gui_float(value: Any) -> Optional[float]:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _fmt_optional_float(value: Optional[float], *, places: int = 4) -> str:
-    if value is None:
-        return "—"
-    return f"{value:.{places}f}"
 
 
 STATUS_COLORS = {
@@ -2204,39 +2172,6 @@ class MainWindow(QMainWindow):
         self._update_metric_freshness_label()
         self._refresh_analysis_if_visible()
 
-    @staticmethod
-    def _view_from_optical_flow_dict(data: dict[str, Any]) -> OpticalFlowResultView:
-        if not data.get("has_valid_result"):
-            reason = str(data.get("failure_reason", "")).strip()
-            return OpticalFlowResultView(status="failed", failure_reason=reason)
-        return OpticalFlowResultView(
-            status="success",
-            general_movement=_optional_gui_float(data.get("optical_flow_general_movement_um_s")),
-            downward_motion=_optional_gui_float(data.get("optical_flow_downward_motion_um_s")),
-            net_y_velocity=_optional_gui_float(data.get("optical_flow_net_y_velocity_um_s")),
-            directionality_ratio=_optional_gui_float(data.get("optical_flow_directionality_ratio")),
-            valid_pixel_fraction=_optional_gui_float(data.get("optical_flow_valid_pixel_fraction")),
-            saturated_pixel_fraction=_optional_gui_float(
-                data.get("optical_flow_saturated_pixel_fraction")
-            ),
-        )
-
-    def _view_from_optical_flow_result(self, result: OpticalFlowResult) -> OpticalFlowResultView:
-        if not result.has_valid_result:
-            return OpticalFlowResultView(
-                status="failed",
-                failure_reason=result.failure_reason,
-            )
-        return OpticalFlowResultView(
-            status="success",
-            general_movement=result.optical_flow_general_movement_um_s,
-            downward_motion=result.optical_flow_downward_motion_um_s,
-            net_y_velocity=result.optical_flow_net_y_velocity_um_s,
-            directionality_ratio=result.optical_flow_directionality_ratio,
-            valid_pixel_fraction=result.optical_flow_valid_pixel_fraction,
-            saturated_pixel_fraction=result.optical_flow_saturated_pixel_fraction,
-        )
-
     def load_latest_optical_flow_result_for_sample(
         self, sample_id: str
     ) -> Optional[OpticalFlowResultView]:
@@ -2247,12 +2182,12 @@ class MainWindow(QMainWindow):
             if draft_path is not None:
                 try:
                     data = json.loads(draft_path.read_text(encoding="utf-8"))
-                    return self._view_from_optical_flow_dict(data)
+                    return optical_flow_result_view_from_dict(data)
                 except (OSError, json.JSONDecodeError):
                     pass
         cached = self._optical_flow_results_by_sample.get(sample_id)
         if cached is not None:
-            return self._view_from_optical_flow_result(cached)
+            return optical_flow_result_view_from_result(cached)
         return None
 
     def _run_draft_tracking_for_snapshot(
@@ -2336,9 +2271,6 @@ class MainWindow(QMainWindow):
         if color:
             item.setForeground(0, QBrush(color))
 
-    def _is_tracking_failed(self, analysis: CroppedPreviewAnalysis) -> bool:
-        return analysis.num_tracks_with_valid_steps == 0
-
     def _draft_tracking_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
         from actintrack_app.schema_compat import draft_tracking_path
@@ -2371,55 +2303,6 @@ class MainWindow(QMainWindow):
         path = motion_index_summary_json_path(batch_dir, final_name)
         return path if path.is_file() else None
 
-    @staticmethod
-    def _view_from_tracking_dict(data: dict[str, Any]) -> SampleTrackingResultView:
-        tracks_used = int(data.get("num_tracks_with_valid_steps", 0) or 0)
-        tracks_started = int(
-            data.get("num_tracks_started", data.get("num_tracks_requested", tracks_used))
-            or 0
-        )
-        if tracks_used <= 0:
-            reason = str(
-                data.get("tracking_warning")
-                or data.get("track_preview_error")
-                or data.get("failure_reason")
-                or ""
-            ).strip()
-            return SampleTrackingResultView(status="failed", failure_reason=reason)
-        return SampleTrackingResultView(
-            status="success",
-            downward_velocity=float(data.get("downward_velocity_index_um_per_s", 0.0)),
-            general_movement=float(
-                data.get(
-                    "absolute_velocity_index_um_per_s",
-                    data.get("general_movement_index_um_per_s", 0.0),
-                )
-            ),
-            tracks_used=tracks_used,
-            tracks_requested=max(tracks_started, tracks_used),
-            valid_steps=int(data.get("total_valid_steps", 0) or 0),
-        )
-
-    def _view_from_preview_analysis(
-        self, analysis: CroppedPreviewAnalysis
-    ) -> SampleTrackingResultView:
-        if self._is_tracking_failed(analysis):
-            return SampleTrackingResultView(
-                status="failed",
-                failure_reason=analysis.tracking_warning,
-            )
-        requested = len(analysis.starting_points)
-        if analysis.params is not None:
-            requested = max(requested, analysis.params.num_starting_points)
-        return SampleTrackingResultView(
-            status="success",
-            downward_velocity=analysis.downward_velocity_index_um_per_s,
-            general_movement=analysis.general_movement_index_um_per_s,
-            tracks_used=analysis.num_tracks_with_valid_steps,
-            tracks_requested=max(requested, analysis.num_tracks_started),
-            valid_steps=analysis.total_valid_steps,
-        )
-
     def load_latest_tracking_result_for_sample(
         self, sample_id: str
     ) -> Optional[SampleTrackingResultView]:
@@ -2430,7 +2313,7 @@ class MainWindow(QMainWindow):
                 if summary_path is not None:
                     try:
                         data = json.loads(summary_path.read_text(encoding="utf-8"))
-                        return self._view_from_tracking_dict(data)
+                        return tracking_result_view_from_dict(data)
                     except (OSError, json.JSONDecodeError):
                         pass
             from actintrack_app.schema_compat import resolve_draft_tracking_path
@@ -2439,12 +2322,12 @@ class MainWindow(QMainWindow):
             if draft_path is not None:
                 try:
                     data = json.loads(draft_path.read_text(encoding="utf-8"))
-                    return self._view_from_tracking_dict(data)
+                    return tracking_result_view_from_dict(data)
                 except (OSError, json.JSONDecodeError):
                     pass
         cached = self._tracking_results_by_sample.get(sample_id)
         if cached is not None:
-            return self._view_from_preview_analysis(cached)
+            return tracking_result_view_from_preview(cached)
         if sample is not None:
             proc_status = str(sample.get("processing_status", ""))
             if proc_status == STATUS_MOTION_INDEX_FAILED:
@@ -2462,71 +2345,23 @@ class MainWindow(QMainWindow):
         template_stale: bool = False,
         optical_flow_stale: bool = False,
     ) -> None:
-        lines: list[str] = []
-
-        lines.append("Template Tracking Motion Index")
-        if template_stale:
-            lines.append("May not match current settings.")
-        elif template_view is None or template_view.status == "none":
-            lines.append("Not generated yet")
-        elif template_view.status == "failed":
-            lines.append("Failed")
-            if template_view.failure_reason:
-                lines.append(template_view.failure_reason)
-        else:
-            tracks_line = f"Tracks Used: {template_view.tracks_used}"
-            if template_view.tracks_requested > template_view.tracks_used:
-                tracks_line = (
-                    f"Tracks Used: {template_view.tracks_used} / "
-                    f"{template_view.tracks_requested}"
-                )
-            lines.extend(
-                [
-                    f"Absolute Velocity: {template_view.general_movement:.4f} µm/s",
-                    f"Downward Velocity: {template_view.downward_velocity:.4f} µm/s",
-                    tracks_line,
-                    f"Valid Steps: {template_view.valid_steps}",
-                ]
-            )
-
-        lines.append("")
-        lines.append("Optical Flow Motion Index (Draft)")
         sid = self._current_sample_id
         of_status = self._optical_flow_qc_status_for_sample(sid) if sid else "Not computed"
-        lines.append(f"Status: {of_status}")
-        if optical_flow_stale:
-            lines.append("May not match current settings.")
-        elif optical_flow_view is None or optical_flow_view.status == "none":
-            if of_status == "Not computed":
-                lines.append("Not generated yet")
-        elif optical_flow_view.status == "failed":
-            lines.append("Failed")
-            if optical_flow_view.failure_reason:
-                lines.append(optical_flow_view.failure_reason)
-        else:
-            result_obj = self._get_optical_flow_result_object(sid) if sid else None
-            frame_pairs = (
-                str(result_obj.frame_pair_count)
-                if result_obj is not None and result_obj.frame_pair_count
-                else "—"
-            )
-            lines.extend(
-                [
-                    f"Frame pairs used: {frame_pairs}",
-                    f"General Movement: {_fmt_optional_float(optical_flow_view.general_movement)} µm/s",
-                    f"Downward Motion: {_fmt_optional_float(optical_flow_view.downward_motion)} µm/s",
-                    f"Net Y Velocity: {_fmt_optional_float(optical_flow_view.net_y_velocity)} µm/s",
-                    f"Directionality Ratio: {_fmt_optional_float(optical_flow_view.directionality_ratio)}",
-                    f"Valid Pixel Fraction: {_fmt_optional_float(optical_flow_view.valid_pixel_fraction)}",
-                ]
-            )
-            if optical_flow_view.saturated_pixel_fraction is not None:
-                lines.append(
-                    "Saturated Pixel Fraction: "
-                    f"{_fmt_optional_float(optical_flow_view.saturated_pixel_fraction)}"
-                )
-
-        self.lbl_tracking_result.setText("\n".join(lines))
+        result_obj = self._get_optical_flow_result_object(sid) if sid else None
+        frame_pairs = (
+            str(result_obj.frame_pair_count)
+            if result_obj is not None and result_obj.frame_pair_count
+            else "—"
+        )
+        text = format_tracking_result_panel_lines(
+            template_view,
+            optical_flow_view,
+            template_stale=template_stale,
+            optical_flow_stale=optical_flow_stale,
+            optical_flow_qc_status=of_status,
+            optical_flow_frame_pair_count=frame_pairs,
+        )
+        self.lbl_tracking_result.setText(text)
 
     def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
         sid = sample_id or self._current_sample_id
