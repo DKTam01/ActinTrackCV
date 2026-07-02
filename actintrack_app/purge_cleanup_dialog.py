@@ -36,6 +36,7 @@ from actintrack_app.purge_manager import (
     purge_sample_completely,
 )
 from actintrack_app.condition_group_manager import list_condition_group_records
+from actintrack_app.gui_styles import apply_dialog_description_style
 
 if TYPE_CHECKING:
     from actintrack_app.gui import MainWindow
@@ -160,7 +161,7 @@ class PurgeCleanupDialog(QDialog):
 
         self.lbl_description = QLabel("")
         self.lbl_description.setWordWrap(True)
-        self.lbl_description.setStyleSheet("color: #666;")
+        apply_dialog_description_style(self.lbl_description)
         layout.addWidget(self.lbl_description)
 
         scope_box = QGroupBox("Scope")

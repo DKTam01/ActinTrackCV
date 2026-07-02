@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -82,6 +83,31 @@ from actintrack_app.gui_menus import (
     setup_application_menus,
 )
 from actintrack_app.gui_canvas import ImageCanvas
+from actintrack_app.gui_styles import (
+    CONTROL_ROW_SPACING,
+    FORM_SECTION_SPACING,
+    METRIC_STATUS_INNER_SPACING,
+    METRIC_STATUS_LABEL_SPACING,
+    METRIC_STATUS_PANEL_OBJECT_NAME,
+    PANEL_INNER_MARGIN,
+    PANEL_SECTION_SPACING,
+    PLAYBACK_FRAME_LABEL_MIN_WIDTH,
+    PLAYBACK_SLIDER_MIN_WIDTH,
+    PLAYBACK_SPEED_COMBO_MIN_WIDTH,
+    ROI_HINT_STATUS_SPACING,
+    STYLE_CHECKBOX_COMPACT,
+    STYLE_METRIC_STATUS_PANEL,
+    apply_body_label_style,
+    apply_form_group_margins,
+    apply_hint_style,
+    apply_muted_hint_style,
+    apply_panel_inner_margins,
+    apply_panel_margins,
+    apply_small_secondary_style,
+    apply_status_style,
+    configure_orient_panel_action_button,
+    tracking_result_group_title,
+)
 from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
 from actintrack_app.image_processing import TrackingCrop, detect_tracking_crop
 from actintrack_app.metadata import (
@@ -452,6 +478,7 @@ class MainWindow(QMainWindow):
         center_layout = QVBoxLayout(preview_page)
         self.lbl_preview_mode = QLabel("")
         self.lbl_preview_mode.setWordWrap(True)
+        apply_hint_style(self.lbl_preview_mode)
         self.lbl_preview_mode.hide()
         center_layout.addWidget(self.lbl_preview_mode)
 
@@ -475,8 +502,21 @@ class MainWindow(QMainWindow):
         self.canvas = ImageCanvas(self)
         center_layout.addWidget(self.canvas, stretch=1)
 
-        preview_crop_row = QHBoxLayout()
-        preview_crop_row.addStretch()
+        self._metric_status_host = QFrame()
+        self._metric_status_host.setObjectName(METRIC_STATUS_PANEL_OBJECT_NAME)
+        self._metric_status_host.setStyleSheet(STYLE_METRIC_STATUS_PANEL)
+        self._metric_status_host.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._metric_status_host.hide()
+        metric_status_layout = QVBoxLayout(self._metric_status_host)
+        apply_panel_inner_margins(metric_status_layout)
+        metric_status_layout.setSpacing(METRIC_STATUS_INNER_SPACING)
+
+        metric_button_row = QHBoxLayout()
+        metric_button_row.setSpacing(PANEL_SECTION_SPACING)
+        metric_button_row.addStretch()
         self.btn_metric_analysis = self._tool_button(
             _METRIC_ANALYSIS_VIEW_LABEL,
             "Open the cropped ROI metric analysis view with Template Tracking "
@@ -484,7 +524,7 @@ class MainWindow(QMainWindow):
             self._on_show_metric_analysis_view,
         )
         self.btn_metric_analysis.hide()
-        preview_crop_row.addWidget(self.btn_metric_analysis)
+        metric_button_row.addWidget(self.btn_metric_analysis)
         self.btn_run_metrics = self._tool_button(
             "Run Metrics",
             "Compute Template Tracking and Optical Flow metrics for the current "
@@ -493,75 +533,43 @@ class MainWindow(QMainWindow):
         )
         self.btn_run_metrics.setEnabled(False)
         self.btn_run_metrics.hide()
-        preview_crop_row.addWidget(self.btn_run_metrics)
-        preview_crop_row.addStretch()
-        center_layout.addLayout(preview_crop_row)
+        metric_button_row.addWidget(self.btn_run_metrics)
+        metric_button_row.addStretch()
+        metric_status_layout.addLayout(metric_button_row)
 
+        metric_status_labels = QVBoxLayout()
+        metric_status_labels.setSpacing(METRIC_STATUS_LABEL_SPACING)
         self.lbl_metric_status = QLabel("Metric status: Not analyzed")
         self.lbl_metric_status.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.lbl_metric_status.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(self.lbl_metric_status)
         self.lbl_metric_status.hide()
-        center_layout.addWidget(self.lbl_metric_status)
+        metric_status_labels.addWidget(self.lbl_metric_status)
         self.lbl_last_analyzed = QLabel("Last analyzed: —")
         self.lbl_last_analyzed.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.lbl_last_analyzed.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(self.lbl_last_analyzed)
         self.lbl_last_analyzed.hide()
-        center_layout.addWidget(self.lbl_last_analyzed)
+        metric_status_labels.addWidget(self.lbl_last_analyzed)
+        metric_status_layout.addLayout(metric_status_labels)
 
-        sample_playback = QVBoxLayout()
-        sample_playback.setSpacing(4)
-        sample_transport_row = QHBoxLayout()
-        sample_speed_row = QHBoxLayout()
-        self.btn_playback_toggle = QPushButton("Play")
-        self.btn_playback_toggle.setToolTip(
-            "Play or pause through the loaded sample frames."
+        center_layout.addSpacing(PANEL_SECTION_SPACING)
+        center_layout.addWidget(self._metric_status_host)
+
+        self.btn_playback_toggle = self._create_playback_play_button(
+            tooltip="Play or pause through the loaded sample frames.",
         )
-        self.btn_playback_toggle.clicked.connect(self._playback_toggle)
-        self.lbl_sample_frame = QLabel("Frame —")
-        self.lbl_sample_frame.setMinimumWidth(72)
-        self.slider_sample_frame = QSlider(Qt.Orientation.Horizontal)
-        self.slider_sample_frame.setMinimumWidth(120)
-        self.slider_sample_frame.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+        self.lbl_sample_frame = self._create_playback_frame_label("Frame —")
+        self.slider_sample_frame = self._create_playback_slider(
+            value_changed=self._on_sample_frame_slider,
         )
-        self.slider_sample_frame.valueChanged.connect(self._on_sample_frame_slider)
-        self.lbl_sample_playback_speed = QLabel("Speed:")
-        self.combo_sample_playback_speed = QComboBox()
-        self.combo_sample_playback_speed.addItems(list(_PLAYBACK_SPEED_OPTIONS))
-        self.combo_sample_playback_speed.setCurrentText("1×")
-        self.combo_sample_playback_speed.setMinimumWidth(72)
-        self.combo_sample_playback_speed.setSizePolicy(
-            QSizePolicy.Policy.Fixed,
-            QSizePolicy.Policy.Fixed,
-        )
-        self.combo_sample_playback_speed.currentTextChanged.connect(
-            self._on_sample_playback_speed_changed
+        self.lbl_sample_playback_speed = self._create_playback_speed_label()
+        self.combo_sample_playback_speed = self._create_playback_speed_combo(
+            value_changed=self._on_sample_playback_speed_changed,
         )
         self.chk_playback_loop = QCheckBox("Loop")
         self.chk_playback_loop.setToolTip(
             "When checked, playback restarts at the first frame after the last frame."
         )
         self.chk_playback_loop.setChecked(True)
-        for widget in (
-            self.btn_playback_toggle,
-            self.lbl_sample_frame,
-            self.slider_sample_frame,
-            self.lbl_sample_playback_speed,
-            self.combo_sample_playback_speed,
-            self.chk_playback_loop,
-        ):
-            widget.hide()
-        sample_transport_row.addWidget(self.btn_playback_toggle)
-        sample_transport_row.addWidget(self.lbl_sample_frame)
-        sample_transport_row.addWidget(self.slider_sample_frame, stretch=1)
-        sample_speed_row.addWidget(self.lbl_sample_playback_speed)
-        sample_speed_row.addWidget(self.combo_sample_playback_speed)
-        sample_speed_row.addWidget(self.chk_playback_loop)
-        sample_speed_row.addStretch()
-        sample_playback.addLayout(sample_transport_row)
-        sample_playback.addLayout(sample_speed_row)
-        center_layout.addLayout(sample_playback)
         self._sample_playback_widgets = (
             self.btn_playback_toggle,
             self.lbl_sample_frame,
@@ -570,37 +578,31 @@ class MainWindow(QMainWindow):
             self.combo_sample_playback_speed,
             self.chk_playback_loop,
         )
+        self._hide_widgets(self._sample_playback_widgets)
+        center_layout.addLayout(
+            self._assemble_playback_controls_layout(
+                play_button=self.btn_playback_toggle,
+                frame_label=self.lbl_sample_frame,
+                frame_slider=self.slider_sample_frame,
+                speed_label=self.lbl_sample_playback_speed,
+                speed_combo=self.combo_sample_playback_speed,
+                speed_row_before_stretch=(self.chk_playback_loop,),
+            )
+        )
 
         self._hidden_frame_host = self._build_hidden_frame_controls()
         center_layout.addWidget(self._hidden_frame_host)
 
-        preview_controls = QVBoxLayout()
-        preview_controls.setSpacing(4)
-        preview_transport_row = QHBoxLayout()
-        preview_speed_row = QHBoxLayout()
-        self.btn_preview_toggle = QPushButton("Play")
-        self.btn_preview_toggle.setToolTip("Play or pause cropped preview playback.")
-        self.btn_preview_toggle.clicked.connect(self._playback_toggle)
-        self.lbl_cropped_frame = QLabel("Frame 1 / 1")
-        self.lbl_cropped_frame.setMinimumWidth(72)
-        self.slider_cropped_frame = QSlider(Qt.Orientation.Horizontal)
-        self.slider_cropped_frame.setMinimumWidth(120)
-        self.slider_cropped_frame.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
+        self.btn_preview_toggle = self._create_playback_play_button(
+            tooltip="Play or pause cropped preview playback.",
         )
-        self.slider_cropped_frame.valueChanged.connect(self._on_cropped_preview_frame_slider)
-        self.lbl_preview_speed = QLabel("Speed:")
-        self.combo_preview_speed = QComboBox()
-        self.combo_preview_speed.addItems(list(_PLAYBACK_SPEED_OPTIONS))
-        self.combo_preview_speed.setCurrentText("1×")
-        self.combo_preview_speed.currentTextChanged.connect(
-            self._on_preview_speed_changed
+        self.lbl_cropped_frame = self._create_playback_frame_label("Frame 1 / 1")
+        self.slider_cropped_frame = self._create_playback_slider(
+            value_changed=self._on_cropped_preview_frame_slider,
         )
-        self.combo_preview_speed.setMinimumWidth(72)
-        self.combo_preview_speed.setSizePolicy(
-            QSizePolicy.Policy.Fixed,
-            QSizePolicy.Policy.Fixed,
+        self.lbl_preview_speed = self._create_playback_speed_label()
+        self.combo_preview_speed = self._create_playback_speed_combo(
+            value_changed=self._on_preview_speed_changed,
         )
         self.btn_return_full_preview = QPushButton("Return to Full Preview")
         self.btn_return_full_preview.clicked.connect(self._exit_cropped_preview_mode)
@@ -608,25 +610,6 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Minimum,
             QSizePolicy.Policy.Fixed,
         )
-        for widget in (
-            self.btn_preview_toggle,
-            self.lbl_cropped_frame,
-            self.slider_cropped_frame,
-            self.lbl_preview_speed,
-            self.combo_preview_speed,
-            self.btn_return_full_preview,
-        ):
-            widget.hide()
-        preview_transport_row.addWidget(self.btn_preview_toggle)
-        preview_transport_row.addWidget(self.lbl_cropped_frame)
-        preview_transport_row.addWidget(self.slider_cropped_frame, stretch=1)
-        preview_speed_row.addWidget(self.lbl_preview_speed)
-        preview_speed_row.addWidget(self.combo_preview_speed)
-        preview_speed_row.addStretch()
-        preview_speed_row.addWidget(self.btn_return_full_preview)
-        preview_controls.addLayout(preview_transport_row)
-        preview_controls.addLayout(preview_speed_row)
-        center_layout.addLayout(preview_controls)
         self._preview_control_widgets = (
             self.btn_preview_toggle,
             self.lbl_cropped_frame,
@@ -634,6 +617,17 @@ class MainWindow(QMainWindow):
             self.lbl_preview_speed,
             self.combo_preview_speed,
             self.btn_return_full_preview,
+        )
+        self._hide_widgets(self._preview_control_widgets)
+        center_layout.addLayout(
+            self._assemble_playback_controls_layout(
+                play_button=self.btn_preview_toggle,
+                frame_label=self.lbl_cropped_frame,
+                frame_slider=self.slider_cropped_frame,
+                speed_label=self.lbl_preview_speed,
+                speed_combo=self.combo_preview_speed,
+                speed_row_after_stretch=(self.btn_return_full_preview,),
+            )
         )
         self._analysis_view = AnalysisViewWidget()
         self._center_stack = QStackedWidget()
@@ -659,7 +653,7 @@ class MainWindow(QMainWindow):
         panel.setMinimumWidth(_LEFT_PANEL_MIN_WIDTH)
         panel.setMaximumWidth(360)
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 6, 6, 6)
+        apply_panel_margins(layout)
         layout.addWidget(self._build_samples_panel(), stretch=1)
         return panel
 
@@ -672,13 +666,13 @@ class MainWindow(QMainWindow):
         self._right_tabs = QTabWidget()
         roi_tab = QWidget()
         roi_layout = QVBoxLayout(roi_tab)
-        roi_layout.setContentsMargins(6, 6, 6, 6)
+        apply_panel_margins(roi_layout)
         roi_layout.addWidget(self._build_unified_orient_roi_panel())
         self._right_tabs.addTab(roi_tab, "Orient && ROI")
 
         sample_tab = QWidget()
         sample_layout = QVBoxLayout(sample_tab)
-        sample_layout.setContentsMargins(6, 6, 6, 6)
+        apply_panel_margins(sample_layout)
         sample_layout.addWidget(self._build_tracking_result_panel())
         sample_layout.addWidget(self._build_notes_panel())
         sample_layout.addStretch()
@@ -686,7 +680,7 @@ class MainWindow(QMainWindow):
 
         analysis_tab = QWidget()
         analysis_tab_layout = QVBoxLayout(analysis_tab)
-        analysis_tab_layout.setContentsMargins(6, 6, 6, 6)
+        apply_panel_margins(analysis_tab_layout)
         self.btn_refresh_analysis = QPushButton("Refresh Analysis")
         self.btn_refresh_analysis.setToolTip(
             "Reload analysis tables from saved tracking and motion-index results."
@@ -713,19 +707,17 @@ class MainWindow(QMainWindow):
     def _build_samples_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(CONTROL_ROW_SPACING)
         self.lbl_workspace = QLabel("—")
         self.lbl_workspace.setWordWrap(False)
-        self.lbl_workspace.setStyleSheet(
-            "color: #9da5b4; font-size: 10px; padding: 2px 0 6px 0;"
-        )
+        apply_small_secondary_style(self.lbl_workspace)
         layout.addWidget(self.lbl_workspace)
         self.combo_filter_group = QComboBox()
         self.combo_filter_group.setVisible(False)
         self.lbl_explorer_empty = QLabel("Create a Condition Group to begin.")
         self.lbl_explorer_empty.setWordWrap(True)
-        self.lbl_explorer_empty.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        apply_muted_hint_style(self.lbl_explorer_empty)
         self.lbl_explorer_empty.setVisible(False)
         layout.addWidget(self.lbl_explorer_empty)
         self.tree_samples = ExplorerTreeWidget()
@@ -784,7 +776,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.edit_export_name)
         self.lbl_auto_export_name = QLabel("Auto name: —")
         self.lbl_auto_export_name.setWordWrap(True)
-        self.lbl_auto_export_name.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(self.lbl_auto_export_name)
         layout.addWidget(self.lbl_auto_export_name)
         return box
 
@@ -800,15 +792,16 @@ class MainWindow(QMainWindow):
     def _build_unified_orient_roi_panel(self) -> QGroupBox:
         box = QGroupBox("Orient and ROI")
         layout = QVBoxLayout(box)
-        layout.setSpacing(8)
+        layout.setSpacing(PANEL_SECTION_SPACING)
 
-        custom = QHBoxLayout()
+        rotation_row = QHBoxLayout()
+        rotation_row.setSpacing(CONTROL_ROW_SPACING)
         angle_label = QLabel("Rotation:")
         angle_label.setSizePolicy(
             QSizePolicy.Policy.Minimum,
             QSizePolicy.Policy.Fixed,
         )
-        custom.addWidget(angle_label)
+        rotation_row.addWidget(angle_label)
         self.spin_custom_angle = NoWheelDoubleSpinBox()
         self.spin_custom_angle.setRange(-180, 180)
         self.spin_custom_angle.setDecimals(1)
@@ -819,43 +812,50 @@ class MainWindow(QMainWindow):
         self.btn_apply_custom = QPushButton("Apply")
         self.btn_apply_custom.clicked.connect(self._on_apply_custom_angle)
         self._configure_orient_roi_control(self.btn_apply_custom)
-        custom.addWidget(self.spin_custom_angle)
-        custom.addWidget(self.btn_apply_custom)
-        custom.addStretch()
-        layout.addLayout(custom)
+        rotation_row.addWidget(self.spin_custom_angle)
+        rotation_row.addWidget(self.btn_apply_custom)
+        rotation_row.addStretch()
+        layout.addLayout(rotation_row)
 
         self.chk_mirror_y = QCheckBox("Mirror Y-Axis")
         self.chk_mirror_y.setToolTip("Mirror the data left-right before ROI and tracking.")
         self.chk_mirror_y.toggled.connect(self._on_mirror_y_axis)
         layout.addWidget(self.chk_mirror_y)
 
-        orient_extras = QHBoxLayout()
+        orient_actions_row = QHBoxLayout()
+        orient_actions_row.setSpacing(PANEL_SECTION_SPACING)
         self.btn_flip = QPushButton("Flip 180°")
         self.btn_flip.clicked.connect(self._on_flip_180)
+        configure_orient_panel_action_button(self.btn_flip)
         self.btn_reset_orientation = QPushButton("Reset Orientation")
         self.btn_reset_orientation.clicked.connect(self._on_reset_orientation)
-        orient_extras.addWidget(self.btn_flip)
-        orient_extras.addWidget(self.btn_reset_orientation)
-        layout.addLayout(orient_extras)
+        configure_orient_panel_action_button(self.btn_reset_orientation)
+        orient_actions_row.addWidget(self.btn_flip, stretch=1)
+        orient_actions_row.addWidget(self.btn_reset_orientation, stretch=1)
+        layout.addLayout(orient_actions_row)
 
+        roi_section = QVBoxLayout()
+        roi_section.setSpacing(ROI_HINT_STATUS_SPACING)
         self.btn_roi_actions = QPushButton("ROI Actions")
         self.btn_roi_actions.setToolTip(
             "Suggest or clear the analysis ROI for the current preview."
         )
+        configure_orient_panel_action_button(self.btn_roi_actions)
         self._roi_actions_menu = QMenu(self)
         self._populate_roi_actions_menu(self._roi_actions_menu)
         self.btn_roi_actions.setMenu(self._roi_actions_menu)
-        layout.addWidget(self.btn_roi_actions)
+        roi_section.addWidget(self.btn_roi_actions)
 
         roi_hint = QLabel("Right-click the preview to suggest or clear ROI.")
         roi_hint.setWordWrap(True)
-        roi_hint.setStyleSheet("color: #888; font-size: 11px;")
-        layout.addWidget(roi_hint)
+        apply_hint_style(roi_hint)
+        roi_section.addWidget(roi_hint)
 
         self.lbl_roi_save_status = QLabel("—")
         self.lbl_roi_save_status.setWordWrap(True)
         self._set_roi_save_status("No ROI saved yet", saved=False)
-        layout.addWidget(self.lbl_roi_save_status)
+        roi_section.addWidget(self.lbl_roi_save_status)
+        layout.addLayout(roi_section)
 
         layout.addStretch()
         layout.addWidget(self._build_export_name_panel())
@@ -994,8 +994,8 @@ class MainWindow(QMainWindow):
             "Draft point-tracking parameters used in Metric Analysis View."
         )
         layout = QVBoxLayout(box)
-        layout.setSpacing(10)
-        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(FORM_SECTION_SPACING)
+        apply_form_group_margins(layout)
         rows: list[tuple[str, QWidget, str]] = [
             ("Tracking Method", self.combo_track_method, self.combo_track_method.toolTip()),
             ("Starting Points", self.spin_track_points, self.spin_track_points.toolTip()),
@@ -1036,15 +1036,15 @@ class MainWindow(QMainWindow):
         self._create_tracking_setting_widgets()
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        apply_panel_inner_margins(layout)
+        layout.setSpacing(FORM_SECTION_SPACING)
 
         hint = QLabel(
             "Edit tracking parameters below while previewing the cropped ROI. "
             "Changes auto-refresh tracking for the current sample."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(hint)
         layout.addWidget(hint)
         layout.addWidget(self._build_tracking_settings_form(), stretch=1)
         return page
@@ -1117,7 +1117,7 @@ class MainWindow(QMainWindow):
 
         self.lbl_of_qc = QLabel("QC: —")
         self.lbl_of_qc.setWordWrap(True)
-        self.lbl_of_qc.setStyleSheet("color: #aaa; font-size: 11px;")
+        apply_hint_style(self.lbl_of_qc)
 
         self._optical_flow_metric_widgets = (
             self.spin_of_mask_percentile,
@@ -1147,9 +1147,14 @@ class MainWindow(QMainWindow):
     def _build_optical_flow_overlay_panel(self) -> QGroupBox:
         box = QGroupBox("Optical Flow Overlay")
         layout = QVBoxLayout(box)
-        layout.setSpacing(6)
-        layout.setContentsMargins(8, 10, 8, 6)
-        self.chk_show_of_overlay.setStyleSheet("font-size: 11px;")
+        layout.setSpacing(PANEL_INNER_MARGIN)
+        layout.setContentsMargins(
+            PANEL_INNER_MARGIN,
+            FORM_SECTION_SPACING,
+            PANEL_INNER_MARGIN,
+            PANEL_INNER_MARGIN,
+        )
+        self.chk_show_of_overlay.setStyleSheet(STYLE_CHECKBOX_COMPACT)
         layout.addWidget(self.chk_show_of_overlay)
         self._add_tracking_setting_row(
             layout,
@@ -1168,7 +1173,12 @@ class MainWindow(QMainWindow):
     def _build_optical_flow_qc_panel(self) -> QGroupBox:
         box = QGroupBox("Optical Flow QC")
         layout = QVBoxLayout(box)
-        layout.setContentsMargins(8, 10, 8, 6)
+        layout.setContentsMargins(
+            PANEL_INNER_MARGIN,
+            FORM_SECTION_SPACING,
+            PANEL_INNER_MARGIN,
+            PANEL_INNER_MARGIN,
+        )
         layout.addWidget(self.lbl_of_qc)
         return box
 
@@ -1178,8 +1188,8 @@ class MainWindow(QMainWindow):
             "Dense Farnebäck optical-flow parameters used for the draft motion index."
         )
         layout = QVBoxLayout(box)
-        layout.setSpacing(10)
-        layout.setContentsMargins(8, 12, 8, 8)
+        layout.setSpacing(FORM_SECTION_SPACING)
+        apply_form_group_margins(layout)
         rows: list[tuple[str, QWidget, str]] = [
             ("Mask Percentile", self.spin_of_mask_percentile, self.spin_of_mask_percentile.toolTip()),
             ("Gaussian Blur Kernel", self.combo_of_blur, self.combo_of_blur.toolTip()),
@@ -1197,7 +1207,7 @@ class MainWindow(QMainWindow):
             "Tracking settings on the other preview mode panel."
         )
         units_hint.setWordWrap(True)
-        units_hint.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(units_hint)
         layout.addWidget(units_hint)
         return box
 
@@ -1208,14 +1218,14 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(10)
+        apply_panel_inner_margins(layout)
+        layout.setSpacing(FORM_SECTION_SPACING)
         hint = QLabel(
             "Edit optical-flow parameters below while previewing the cropped ROI. "
             "Changes auto-recompute the draft optical-flow motion index."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        apply_hint_style(hint)
         layout.addWidget(hint)
         layout.addWidget(self._build_optical_flow_settings_form())
         layout.addWidget(self._build_optical_flow_overlay_panel())
@@ -1229,12 +1239,12 @@ class MainWindow(QMainWindow):
         return page
 
     def _build_tracking_result_panel(self) -> QGroupBox:
-        box = QGroupBox("Tracking / Motion Index Results: No sample selected")
+        box = QGroupBox(tracking_result_group_title())
         self.grp_tracking_result = box
         layout = QVBoxLayout(box)
         self.lbl_tracking_result = QLabel("Not generated yet")
         self.lbl_tracking_result.setWordWrap(True)
-        self.lbl_tracking_result.setStyleSheet("font-size: 12px;")
+        apply_body_label_style(self.lbl_tracking_result)
         layout.addWidget(self.lbl_tracking_result)
         return box
 
@@ -1252,6 +1262,80 @@ class MainWindow(QMainWindow):
         btn.setToolTip(tooltip)
         btn.clicked.connect(slot)
         return btn
+
+    @staticmethod
+    def _hide_widgets(widgets: tuple[QWidget, ...]) -> None:
+        for widget in widgets:
+            widget.hide()
+
+    def _create_playback_play_button(self, *, tooltip: str) -> QPushButton:
+        btn = QPushButton("Play")
+        btn.setToolTip(tooltip)
+        btn.clicked.connect(self._playback_toggle)
+        return btn
+
+    @staticmethod
+    def _create_playback_frame_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setMinimumWidth(PLAYBACK_FRAME_LABEL_MIN_WIDTH)
+        return label
+
+    @staticmethod
+    def _create_playback_slider(*, value_changed) -> QSlider:
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setMinimumWidth(PLAYBACK_SLIDER_MIN_WIDTH)
+        slider.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        slider.valueChanged.connect(value_changed)
+        return slider
+
+    @staticmethod
+    def _create_playback_speed_label() -> QLabel:
+        return QLabel("Speed:")
+
+    def _create_playback_speed_combo(self, *, value_changed) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(list(_PLAYBACK_SPEED_OPTIONS))
+        combo.setCurrentText("1×")
+        combo.setMinimumWidth(PLAYBACK_SPEED_COMBO_MIN_WIDTH)
+        combo.setSizePolicy(
+            QSizePolicy.Policy.Fixed,
+            QSizePolicy.Policy.Fixed,
+        )
+        combo.currentTextChanged.connect(value_changed)
+        return combo
+
+    @staticmethod
+    def _assemble_playback_controls_layout(
+        *,
+        play_button: QPushButton,
+        frame_label: QLabel,
+        frame_slider: QSlider,
+        speed_label: QLabel,
+        speed_combo: QComboBox,
+        speed_row_before_stretch: tuple[QWidget, ...] = (),
+        speed_row_after_stretch: tuple[QWidget, ...] = (),
+    ) -> QVBoxLayout:
+        """Shared two-row playback layout for full-sample and cropped preview."""
+        layout = QVBoxLayout()
+        layout.setSpacing(CONTROL_ROW_SPACING)
+        transport_row = QHBoxLayout()
+        transport_row.addWidget(play_button)
+        transport_row.addWidget(frame_label)
+        transport_row.addWidget(frame_slider, stretch=1)
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(speed_label)
+        speed_row.addWidget(speed_combo)
+        for widget in speed_row_before_stretch:
+            speed_row.addWidget(widget)
+        speed_row.addStretch()
+        for widget in speed_row_after_stretch:
+            speed_row.addWidget(widget)
+        layout.addLayout(transport_row)
+        layout.addLayout(speed_row)
+        return layout
 
     def _status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 8000)
@@ -1518,17 +1602,19 @@ class MainWindow(QMainWindow):
 
     def _tracking_result_group_title(self, sample_id: Optional[str] = None) -> str:
         if sample_id is None:
-            return "Tracking / Motion Index Results: No sample selected"
+            return tracking_result_group_title()
         sample = self._sample_row_for_id(sample_id) or self._current_sample
-        title = self._sample_display_title(sample)
-        if title:
-            return f"{title}'s Tracking Result"
-        return f"{sample_id}'s Tracking Result"
+        display = self._sample_display_title(sample)
+        if not display:
+            display = sample_id
+        return tracking_result_group_title(display)
 
     def _update_metric_analysis_button_visibility(self) -> None:
         has_sample = (
             self._current_sample_id is not None and self._base_frame is not None
         )
+        if hasattr(self, "_metric_status_host"):
+            self._metric_status_host.setVisible(has_sample)
         self.btn_metric_analysis.setVisible(
             has_sample and not self._metric_analysis_view_active
         )
@@ -2319,7 +2405,7 @@ class MainWindow(QMainWindow):
     def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
         sid = sample_id or self._current_sample_id
         if sid is None:
-            self.grp_tracking_result.setTitle("Tracking Result: No sample selected")
+            self.grp_tracking_result.setTitle(self._tracking_result_group_title())
             self.lbl_tracking_result.setText("")
             return
         if sid != self._current_sample_id:
@@ -2732,11 +2818,8 @@ class MainWindow(QMainWindow):
             self._autosave_roi(quiet=True)
 
     def _set_roi_save_status(self, text: str, *, saved: bool = True) -> None:
-        color = "#9ad4c8" if saved else "#ccaa66"
         self.lbl_roi_save_status.setText(text)
-        self.lbl_roi_save_status.setStyleSheet(
-            f"color: {color}; font-size: 12px; padding: 2px 0;"
-        )
+        apply_status_style(self.lbl_roi_save_status, saved=saved)
 
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
         if self._project_root is None or self._current_sample is None:

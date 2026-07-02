@@ -22,6 +22,10 @@ from actintrack_app.analysis_service import (
     BreedSummaryRow,
     SampleAnalysisRow,
 )
+from actintrack_app.gui_styles import (
+    apply_hint_italic_style,
+    apply_panel_inner_margins,
+)
 
 
 def _fmt_float(value: Optional[float], *, places: int = 4) -> str:
@@ -61,11 +65,11 @@ class AnalysisViewWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        apply_panel_inner_margins(layout)
 
         self.lbl_empty = QLabel("")
         self.lbl_empty.setWordWrap(True)
-        self.lbl_empty.setStyleSheet("color: #888; font-style: italic;")
+        apply_hint_italic_style(self.lbl_empty)
         self.lbl_empty.hide()
         layout.addWidget(self.lbl_empty)
 
