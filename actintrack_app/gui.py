@@ -2913,12 +2913,16 @@ class MainWindow(QMainWindow):
     def on_roi_changed(self, roi: Optional[RectROI]) -> None:
         if roi is None:
             return
+        if self._current_sample_id:
+            self._tracking_result_stale_by_sample[self._current_sample_id] = True
+            self._optical_flow_stale_by_sample[self._current_sample_id] = True
         self._roi_user_adjusted = True
         self._roi_autosave_pending = True
         self._set_roi_save_status("Unsaved changes", saved=False)
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
         self._schedule_debounced_metrics(show_scheduled=False)
+        self._update_metric_freshness_label()
 
     def on_roi_edit_finished(self) -> None:
         self._autosave_roi(quiet=True)

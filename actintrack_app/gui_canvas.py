@@ -38,6 +38,19 @@ class DragMode(Enum):
     RESIZE = auto()
 
 
+def _roi_geometry_equal(
+    left: Optional[RectROI], right: Optional[RectROI]
+) -> bool:
+    if left is None or right is None:
+        return left is right
+    return (left.x, left.y, left.width, left.height) == (
+        right.x,
+        right.y,
+        right.width,
+        right.height,
+    )
+
+
 class ImageCanvas(QLabel):
     """Displays oriented frame with adjustable rectangular analysis ROI."""
 
@@ -99,11 +112,14 @@ class ImageCanvas(QLabel):
             self._roi = roi
             return
         if roi is None:
-            self._roi = None
+            new_roi = None
         else:
-            self._roi = roi.clamp(self._frame.shape[1], self._frame.shape[0])
+            new_roi = roi.clamp(self._frame.shape[1], self._frame.shape[0])
+        if _roi_geometry_equal(self._roi, new_roi):
+            return
+        self._roi = new_roi
         self._redraw()
-        if roi is not None:
+        if new_roi is not None:
             self._main_window.on_roi_changed(self._roi)
 
     def rect_roi(self) -> Optional[RectROI]:
