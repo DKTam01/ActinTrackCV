@@ -84,7 +84,6 @@ from actintrack_app.gui_menus import (
 from actintrack_app.gui_canvas import ImageCanvas
 from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
 from actintrack_app.image_processing import TrackingCrop, detect_tracking_crop
-from actintrack_app.export_naming import motion_index_summary_json_path
 from actintrack_app.metadata import (
     load_samples_csv,
     get_sample_annotation,
@@ -149,7 +148,6 @@ from actintrack_app.orientation import (
 )
 from actintrack_app.project_manager import (
     create_project_structure,
-    get_processed_batch_dir,
     is_valid_project,
 )
 from actintrack_app.motion_index import (
@@ -208,14 +206,14 @@ from actintrack_app.utils import (
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
 from actintrack_app import gui_dialogs
+from actintrack_app.gui_result_loaders import (
+    load_latest_optical_flow_result_view,
+    load_latest_tracking_result_view,
+)
 from actintrack_app.gui_result_views import (
     OpticalFlowResultView,
     SampleTrackingResultView,
     format_tracking_result_panel_lines,
-    optical_flow_result_view_from_dict,
-    optical_flow_result_view_from_result,
-    tracking_result_view_from_dict,
-    tracking_result_view_from_preview,
 )
 from actintrack_app.debug_log import breadcrumb
 from actintrack_app.__version__ import __version__
@@ -2175,20 +2173,11 @@ class MainWindow(QMainWindow):
     def load_latest_optical_flow_result_for_sample(
         self, sample_id: str
     ) -> Optional[OpticalFlowResultView]:
-        if self._project_root is not None:
-            from actintrack_app.schema_compat import resolve_draft_optical_flow_path
-
-            draft_path = resolve_draft_optical_flow_path(self._project_root, sample_id)
-            if draft_path is not None:
-                try:
-                    data = json.loads(draft_path.read_text(encoding="utf-8"))
-                    return optical_flow_result_view_from_dict(data)
-                except (OSError, json.JSONDecodeError):
-                    pass
-        cached = self._optical_flow_results_by_sample.get(sample_id)
-        if cached is not None:
-            return optical_flow_result_view_from_result(cached)
-        return None
+        return load_latest_optical_flow_result_view(
+            sample_id,
+            project_root=self._project_root,
+            cached_result=self._optical_flow_results_by_sample.get(sample_id),
+        )
 
     def _run_draft_tracking_for_snapshot(
         self,
@@ -2291,51 +2280,15 @@ class MainWindow(QMainWindow):
             return None
         return rows.iloc[0].to_dict()
 
-    def _motion_index_json_path_for_sample(self, sample: dict[str, Any]) -> Optional[Path]:
-        if self._project_root is None:
-            return None
-        group = str(sample.get("group", "")).strip()
-        batch_name = str(sample.get("batch_name", "")).strip()
-        final_name = str(sample.get("final_export_name", "")).strip()
-        if not group or not batch_name or not final_name:
-            return None
-        batch_dir = get_processed_batch_dir(self._project_root, group, batch_name)
-        path = motion_index_summary_json_path(batch_dir, final_name)
-        return path if path.is_file() else None
-
     def load_latest_tracking_result_for_sample(
         self, sample_id: str
     ) -> Optional[SampleTrackingResultView]:
-        sample = self._sample_row_for_id(sample_id)
-        if self._project_root is not None:
-            if sample is not None:
-                summary_path = self._motion_index_json_path_for_sample(sample)
-                if summary_path is not None:
-                    try:
-                        data = json.loads(summary_path.read_text(encoding="utf-8"))
-                        return tracking_result_view_from_dict(data)
-                    except (OSError, json.JSONDecodeError):
-                        pass
-            from actintrack_app.schema_compat import resolve_draft_tracking_path
-
-            draft_path = resolve_draft_tracking_path(self._project_root, sample_id)
-            if draft_path is not None:
-                try:
-                    data = json.loads(draft_path.read_text(encoding="utf-8"))
-                    return tracking_result_view_from_dict(data)
-                except (OSError, json.JSONDecodeError):
-                    pass
-        cached = self._tracking_results_by_sample.get(sample_id)
-        if cached is not None:
-            return tracking_result_view_from_preview(cached)
-        if sample is not None:
-            proc_status = str(sample.get("processing_status", ""))
-            if proc_status == STATUS_MOTION_INDEX_FAILED:
-                return SampleTrackingResultView(
-                    status="failed",
-                    failure_reason="Motion index generation failed.",
-                )
-        return None
+        return load_latest_tracking_result_view(
+            sample_id,
+            project_root=self._project_root,
+            sample_row=self._sample_row_for_id(sample_id),
+            cached_preview=self._tracking_results_by_sample.get(sample_id),
+        )
 
     def _render_tracking_result_panel(
         self,
