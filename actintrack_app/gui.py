@@ -207,6 +207,7 @@ from actintrack_app.utils import (
     SCOPE_SELECTED,
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
+from actintrack_app import gui_dialogs
 from actintrack_app.debug_log import breadcrumb
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
@@ -428,7 +429,6 @@ class MainWindow(QMainWindow):
         self._last_import_breed: Optional[str] = None
         self._roi_user_adjusted = False
         self._loaded_annotation_source = "manual"
-        self._last_motion_index_result: Optional[Any] = None
         self._preview_mode = "full"
         self._preview_playing = False
         self._preview_frame_index = 0
@@ -1290,6 +1290,16 @@ class MainWindow(QMainWindow):
     def _status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 8000)
 
+    def _require_project_root(self) -> Path | None:
+        if self._project_root is not None:
+            return self._project_root
+        gui_dialogs.warning(
+            self,
+            "Workspace Required",
+            "Open or create a workspace first.",
+        )
+        return None
+
     _SELECT_SAMPLE_HINT = "Select a sample to preview."
 
     def _set_preview_mode_banner(self, text: str | None) -> None:
@@ -1410,12 +1420,7 @@ class MainWindow(QMainWindow):
         refresh.setEnabled(self._project_root is not None)
 
     def _on_refresh_explorer(self) -> None:
-        if self._project_root is None:
-            QMessageBox.warning(
-                self,
-                "Refresh Explorer",
-                "Open or create a workspace first.",
-            )
+        if self._require_project_root() is None:
             return
         self._refresh_sample_list()
         self._status("Explorer refreshed from workspace metadata.")
@@ -2891,11 +2896,6 @@ class MainWindow(QMainWindow):
             return None
         return max(stamps)
 
-    def render_metric_freshness_text(self, sid: Optional[str]) -> str:
-        """Backward-compatible single-line summary (status only)."""
-        status_line, _ = self.render_metric_display_lines(sid)
-        return status_line
-
     def render_metric_display_lines(
         self, sid: Optional[str]
     ) -> tuple[str, str]:
@@ -3106,6 +3106,12 @@ class MainWindow(QMainWindow):
     def _on_run_metrics_clicked(self) -> None:
         self.run_metrics_now_for_current_sample()
 
+    def _report_metric_view_blocked(self, message: str, *, quiet: bool) -> None:
+        if quiet:
+            self._show_metric_analysis_placeholder(message)
+        else:
+            gui_dialogs.warning(self, _METRIC_ANALYSIS_VIEW_LABEL, message)
+
     def enter_metric_analysis_view_for_current_sample(
         self,
         *,
@@ -3127,10 +3133,7 @@ class MainWindow(QMainWindow):
                 "Metric Analysis View is unavailable because this Sample "
                 "does not have a saved ROI."
             )
-            if quiet:
-                self._show_metric_analysis_placeholder(message)
-            else:
-                QMessageBox.warning(self, _METRIC_ANALYSIS_VIEW_LABEL, message)
+            self._report_metric_view_blocked(message, quiet=quiet)
             return False
 
         path = self._sample_file_path()
@@ -3139,10 +3142,7 @@ class MainWindow(QMainWindow):
                 "Metric Analysis View is unavailable because this Sample "
                 "does not have valid Data."
             )
-            if quiet:
-                self._show_metric_analysis_placeholder(message)
-            else:
-                QMessageBox.warning(self, _METRIC_ANALYSIS_VIEW_LABEL, message)
+            self._report_metric_view_blocked(message, quiet=quiet)
             return False
         if not is_supported_video_path(path):
             message = (
@@ -3172,10 +3172,7 @@ class MainWindow(QMainWindow):
                 f"{params.template_patch_size_px} and search radius "
                 f"{params.search_radius_px}."
             )
-            if quiet:
-                self._show_metric_analysis_placeholder(message)
-            else:
-                QMessageBox.warning(self, _METRIC_ANALYSIS_VIEW_LABEL, message)
+            self._report_metric_view_blocked(message, quiet=quiet)
             return False
 
         if not quiet:
@@ -3189,10 +3186,7 @@ class MainWindow(QMainWindow):
             )
             analysis = analyze_cropped_preview(frames, params=params)
         except Exception as exc:
-            if quiet:
-                self._show_metric_analysis_placeholder(str(exc))
-            else:
-                QMessageBox.warning(self, _METRIC_ANALYSIS_VIEW_LABEL, str(exc))
+            self._report_metric_view_blocked(str(exc), quiet=quiet)
             return False
 
         self._enter_cropped_preview_mode(analysis, params=params)
@@ -3308,11 +3302,6 @@ class MainWindow(QMainWindow):
         if self._base_frame is not None:
             self._sync_sample_frame_ui(self._frame_index, self._total_frames)
             self._refresh_display(keep_roi=True)
-
-    def _preview_playback_interval_ms(self) -> int:
-        return self._playback_interval_ms_for_speed_text(
-            self.combo_preview_speed.currentText()
-        )
 
     def _on_preview_timer_tick(self) -> None:
         if self._preview_mode == "cropped_tracking" and self._cropped_preview is not None:
@@ -3643,13 +3632,13 @@ class MainWindow(QMainWindow):
         if scope == SCOPE_SELECTED:
             selected = self._selected_sample_ids()
             if not selected:
-                QMessageBox.warning(self, "Propagate", "Select target samples in the list.")
+                gui_dialogs.warning(self, "Propagate", "Select target samples in the list.")
                 return
         targets = resolve_propagation_targets(
             self._project_root, source_id, scope, selected
         )
         if not targets:
-            QMessageBox.information(self, "Propagate", "No target samples for this scope.")
+            gui_dialogs.information(self, "Propagate", "No target samples for this scope.")
             return
         crop_data = load_crop_metadata(self._project_root / METADATA_DIR / CROP_METADATA_JSON)
         src_orient = source_ann.get("oriented_dimensions", {})
@@ -3685,9 +3674,7 @@ class MainWindow(QMainWindow):
                     )
                 to_write.append(ann)
             except (MediaLoadError, ValueError) as e:
-                QMessageBox.warning(
-                    self, "Propagate", f"Skipped {tid}: {e}"
-                )
+                gui_dialogs.warning(self, "Propagate", f"Skipped {tid}: {e}")
         if not to_write:
             QMessageBox.information(
                 self,
@@ -3885,24 +3872,6 @@ class MainWindow(QMainWindow):
                 ids.append(str(data["sample_id"]))
         return ids
 
-    def _navigate_sample(self, delta: int) -> None:
-        rows = self._iter_sample_tree_items()
-        if not rows:
-            return
-        current = self.tree_samples.currentItem()
-        try:
-            pos = rows.index(current)  # type: ignore[arg-type]
-        except ValueError:
-            pos = 0
-        pos = max(0, min(len(rows) - 1, pos + delta))
-        self.tree_samples.setCurrentItem(rows[pos])
-
-    def _on_prev_sample(self) -> None:
-        self._navigate_sample(-1)
-
-    def _on_next_sample(self) -> None:
-        self._navigate_sample(1)
-
     # --- Project / import (unchanged core) ---
 
     def _load_project(self, root: Path, status_msg: str) -> None:
@@ -3928,7 +3897,7 @@ class MainWindow(QMainWindow):
             self._refresh_sample_list()
             self._status(f"{status_msg}: {root}")
         except OSError as e:
-            QMessageBox.critical(self, "Project Error", str(e))
+            gui_dialogs.critical(self, "Project Error", str(e))
 
     def _set_last_import_breed(self, breed: str | None) -> None:
         if not breed or self._project_root is None:
@@ -3992,12 +3961,7 @@ class MainWindow(QMainWindow):
         self.combo_filter_group.blockSignals(False)
 
     def _on_create_condition_group(self) -> None:
-        if self._project_root is None:
-            QMessageBox.warning(
-                self,
-                "New Condition Group",
-                "Open or create a workspace first.",
-            )
+        if self._require_project_root() is None:
             return
         name, ok = QInputDialog.getText(
             self,
@@ -4009,7 +3973,7 @@ class MainWindow(QMainWindow):
         try:
             record = create_condition_group(self._project_root, name)
         except ValueError as exc:
-            QMessageBox.warning(self, "New Condition Group", str(exc))
+            gui_dialogs.warning(self, "New Condition Group", str(exc))
             return
         self._refresh_condition_group_combo(select=record.id)
         self._refresh_sample_list()
@@ -4040,7 +4004,7 @@ class MainWindow(QMainWindow):
                 self._project_root, current, new_name.strip()
             )
         except (ValueError, OSError) as exc:
-            QMessageBox.warning(self, "Rename Condition Group", str(exc))
+            gui_dialogs.warning(self, "Rename Condition Group", str(exc))
             return
         self._set_last_import_breed(current)
         self._refresh_condition_group_combo(select=current)
@@ -4081,7 +4045,7 @@ class MainWindow(QMainWindow):
         try:
             delete_empty_condition_group(self._project_root, current)
         except ValueError as exc:
-            QMessageBox.warning(self, "Delete Condition Group", str(exc))
+            gui_dialogs.warning(self, "Delete Condition Group", str(exc))
             return
         current_name = get_condition_group_name(self._project_root, current)
         self._refresh_condition_group_combo()
@@ -4197,7 +4161,7 @@ class MainWindow(QMainWindow):
     def _pick_batch_name_to_rename(self, group: str) -> str | None:
         batches = list_batches(self._project_root, group) if self._project_root else []
         if not batches:
-            QMessageBox.information(
+            gui_dialogs.information(
                 self, "Rename Sample", "No samples exist for this condition group."
             )
             return None
@@ -4216,12 +4180,7 @@ class MainWindow(QMainWindow):
         return names[labels.index(picked)]
 
     def _on_add_sample(self, group: str | None = None) -> None:
-        if self._project_root is None:
-            QMessageBox.warning(
-                self,
-                "Add Sample",
-                "Open or create a workspace first.",
-            )
+        if self._require_project_root() is None:
             return
         breed = group or self._current_condition_group()
         if not breed:
@@ -4252,7 +4211,7 @@ class MainWindow(QMainWindow):
         if not successes:
             summary = format_sample_import_summary(results, total_selected=len(sources))
             breadcrumb("gui.add_sample: all failed", count=len(failures))
-            QMessageBox.warning(self, "Add Sample", summary)
+            gui_dialogs.warning(self, "Add Sample", summary)
             return
         breadcrumb(
             "gui.add_sample: create returned, refreshing UI",
@@ -4272,7 +4231,7 @@ class MainWindow(QMainWindow):
         self._refresh_analysis_if_visible()
         if failures:
             summary = format_sample_import_summary(results, total_selected=len(sources))
-            QMessageBox.warning(self, "Add Sample", summary)
+            gui_dialogs.warning(self, "Add Sample", summary)
         if len(sources) == 1:
             label = display_sample_label(
                 int(batch.get("batch_number", 1) or 1),
@@ -4329,9 +4288,6 @@ class MainWindow(QMainWindow):
                 self.tree_samples.setCurrentItem(item)
                 return
 
-    def _on_new_batch(self) -> None:
-        self._on_add_sample()
-
     def _on_rename_batch(self) -> None:
         if self._project_root is None:
             return
@@ -4351,7 +4307,7 @@ class MainWindow(QMainWindow):
             rename_batch(self._project_root, group, old, new_name.strip())
             self._refresh_sample_list()
         except (ValueError, OSError) as e:
-            QMessageBox.critical(self, "Rename Sample", str(e))
+            gui_dialogs.critical(self, "Rename Sample", str(e))
 
     def _update_workspace_label(self) -> None:
         if self._project_root is None:
@@ -4536,7 +4492,7 @@ class MainWindow(QMainWindow):
             df, _missing_ids = sync_samples_with_disk(self._project_root)
         except Exception as e:
             self.tree_samples.blockSignals(False)
-            QMessageBox.warning(self, "Metadata", str(e))
+            gui_dialogs.warning(self, "Metadata", str(e))
             return
 
         records = list_condition_group_records(self._project_root)
@@ -4578,9 +4534,6 @@ class MainWindow(QMainWindow):
         current = self.tree_samples.currentItem()
         if current is not None and self._is_sample_tree_item(current):
             self._load_sample_from_tree_item(current)
-
-    def _on_refresh_samples(self) -> None:
-        self._on_refresh_explorer()
 
     def _on_remove_missing_samples(self) -> None:
         if self._project_root is None:
@@ -4678,23 +4631,10 @@ class MainWindow(QMainWindow):
             self._preview_page.update()
         self._update_metric_freshness_label()
 
-    def _on_sample_selected(
-        self,
-        current: Optional[QTreeWidgetItem],
-        _previous: Optional[QTreeWidgetItem],
-    ) -> None:
-        """Backward-compatible alias for explorer selection."""
-        self._on_explorer_selection_changed(current, _previous)
-
     def _sample_file_path(self) -> Optional[Path]:
         if self._project_root is None or self._current_sample is None:
             return None
         return self._project_root / str(self._current_sample["stored_path"])
-
-    def _restore_annotation(
-        self, ann: dict[str, Any], *, render_canvas: bool = True
-    ) -> None:
-        self._apply_annotation_from_dict(ann, render_canvas=render_canvas)
 
     def _apply_annotation_from_dict(
         self, ann: dict[str, Any], *, render_canvas: bool = True
@@ -4767,7 +4707,7 @@ class MainWindow(QMainWindow):
         path = self._sample_file_path()
         if path is None or not path.exists():
             if render_full_preview:
-                QMessageBox.warning(self, "Load", "File not found.")
+                gui_dialogs.warning(self, "Load", "File not found.")
             return False
         if self._project_root is None or self._current_sample is None:
             return False
@@ -4778,7 +4718,7 @@ class MainWindow(QMainWindow):
             frame, idx, total = load_media_frame(path, ref_idx)
         except MediaLoadError as e:
             if render_full_preview:
-                QMessageBox.critical(self, "Load", str(e))
+                gui_dialogs.critical(self, "Load", str(e))
             return False
         self._base_frame = frame
         self._frame_index = idx
@@ -4806,9 +4746,6 @@ class MainWindow(QMainWindow):
     def _load_full_roi_preview_for_current_sample(self) -> None:
         self._load_sample_data_context(render_full_preview=True)
 
-    def _load_sample_preview(self) -> None:
-        self._load_full_roi_preview_for_current_sample()
-
     def _on_frame_slider(self, value: int) -> None:
         self.spin_frame.blockSignals(True)
         self.spin_frame.setValue(value)
@@ -4834,7 +4771,7 @@ class MainWindow(QMainWindow):
         try:
             frame, idx, total = load_media_frame(path, index)
         except MediaLoadError as e:
-            QMessageBox.critical(self, "Load", str(e))
+            gui_dialogs.critical(self, "Load", str(e))
             return
         self._base_frame = frame
         self._frame_index = idx
@@ -4870,7 +4807,7 @@ class MainWindow(QMainWindow):
             )
             self._status(f"Export name: {result['final_export_name']}")
         except ValueError as e:
-            QMessageBox.warning(self, "Export Name", str(e))
+            gui_dialogs.warning(self, "Export Name", str(e))
             self.edit_export_name.setText(
                 str(self._current_sample.get("final_export_name", auto_name))
             )
@@ -4934,16 +4871,7 @@ class MainWindow(QMainWindow):
         *,
         informative: str = "",
     ) -> bool:
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.NoIcon)
-        box.setWindowTitle(title)
-        box.setText(text)
-        if informative:
-            box.setInformativeText(informative)
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        return box.exec() == QMessageBox.StandardButton.Yes
+        return gui_dialogs.ask_yes_no(self, title, text, informative=informative)
 
     def _ask_remove_workspace_raw(
         self,
@@ -5009,12 +4937,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_explorer_context_menu(self, pos) -> None:
-        if self._project_root is None:
-            QMessageBox.warning(
-                self,
-                "Workspace",
-                "Open or create a workspace first.",
-            )
+        if self._require_project_root() is None:
             return
         item = self.tree_samples.itemAt(pos)
         menu = QMenu(self)
@@ -5081,13 +5004,9 @@ class MainWindow(QMainWindow):
         self._refresh_condition_group_combo(select=group_id)
         self._on_delete_condition_group()
 
-    def _on_sample_list_context_menu(self, pos) -> None:
-        """Backward-compatible alias."""
-        self._on_explorer_context_menu(pos)
-
     def _ctx_replace_sample_data(self, group: str, batch_name: str) -> None:
         if self._project_root is None or not group or not batch_name:
-            QMessageBox.warning(
+            gui_dialogs.warning(
                 self,
                 "Replace Data",
                 "Could not determine the sample for data replacement.",
@@ -5121,10 +5040,10 @@ class MainWindow(QMainWindow):
                 self._project_root, group, batch_name, source
             )
         except ValueError as exc:
-            QMessageBox.warning(self, "Replace Data", str(exc))
+            gui_dialogs.warning(self, "Replace Data", str(exc))
             return
         except (MediaLoadError, OSError) as exc:
-            QMessageBox.warning(self, "Replace Data", f"Import failed: {exc}")
+            gui_dialogs.warning(self, "Replace Data", f"Import failed: {exc}")
             return
         final_batch_name = str(updated.get("batch_name", batch_name))
         self._set_last_import_breed(group)
@@ -5149,7 +5068,7 @@ class MainWindow(QMainWindow):
             self._refresh_sample_list()
             self._select_sample_header(group, sanitize_batch_name(new_name))
         except (ValueError, OSError) as e:
-            QMessageBox.critical(self, "Rename Sample", str(e))
+            gui_dialogs.critical(self, "Rename Sample", str(e))
 
     def _ctx_purge_file_annotations(self, sample_id: str) -> None:
         if self._project_root is None:
@@ -5168,7 +5087,7 @@ class MainWindow(QMainWindow):
             self._after_purge_refresh(prefer_sample_id=sample_id)
             self._show_purge_summary("Purge Complete", stats)
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Purge", str(e))
+            gui_dialogs.warning(self, "Purge", str(e))
 
     def _ctx_purge_file_complete(
         self, sample_id: str, meta: dict[str, Any]
@@ -5212,7 +5131,7 @@ class MainWindow(QMainWindow):
                     delete_empty_batch(self._project_root, group, batch_name)
             self._refresh_sample_list()
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Purge", str(e))
+            gui_dialogs.warning(self, "Purge", str(e))
 
     def _ctx_delete_file(self, sample_id: str, meta: dict[str, Any]) -> None:
         if self._project_root is None:
@@ -5254,7 +5173,7 @@ class MainWindow(QMainWindow):
                     delete_empty_batch(self._project_root, group, batch_name)
                     self._refresh_sample_list()
         except (ValueError, OSError) as e:
-            QMessageBox.critical(self, "Delete Failed", str(e))
+            gui_dialogs.critical(self, "Delete Failed", str(e))
 
     def _ctx_purge_batch_annotations(self, group: str, batch_name: str) -> None:
         if self._project_root is None:
@@ -5274,7 +5193,7 @@ class MainWindow(QMainWindow):
             self._after_purge_refresh()
             self._show_purge_summary("Purge Complete", stats)
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Purge", str(e))
+            gui_dialogs.warning(self, "Purge", str(e))
 
     def _ctx_complete_batch_purge(self, group: str, batch_name: str) -> None:
         if self._project_root is None:
@@ -5307,7 +5226,7 @@ class MainWindow(QMainWindow):
             self._after_purge_refresh()
             self._show_purge_summary("Complete Sample Purge", stats)
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Purge", str(e))
+            gui_dialogs.warning(self, "Purge", str(e))
 
     def _current_selection_in_batch(self, group: str, batch_name: str) -> bool:
         if not self._current_sample:
@@ -5358,7 +5277,7 @@ class MainWindow(QMainWindow):
                 self._refresh_analysis_if_visible()
                 self._status(f'Deleted Sample "{sample_name}"')
         except (ValueError, OSError) as e:
-            QMessageBox.warning(self, "Delete Sample", str(e))
+            gui_dialogs.warning(self, "Delete Sample", str(e))
 
     def _menu_purge_filtered(self) -> None:
         if self._project_root is None:
@@ -5368,7 +5287,7 @@ class MainWindow(QMainWindow):
             return
         ids = dlg.selected_sample_ids()
         if not ids:
-            QMessageBox.information(self, "Purge", "No samples match the filters.")
+            gui_dialogs.information(self, "Purge", "No samples match the filters.")
             return
         if not self._ask_yes_no(
             "Confirm Filtered Purge",
@@ -5403,11 +5322,11 @@ class MainWindow(QMainWindow):
             self._after_purge_refresh()
             self._status(f"Deleted empty sample {sample_label}")
         except ValueError as e:
-            QMessageBox.warning(self, "Delete Sample", str(e))
+            gui_dialogs.warning(self, "Delete Sample", str(e))
 
     def _menu_delete_file_from_batch(self) -> None:
         if self._project_root is None or self._current_sample is None:
-            QMessageBox.warning(self, "Delete", "Select a data file in the explorer first.")
+            gui_dialogs.warning(self, "Delete", "Select a data file in the explorer first.")
             return
         sid = str(self._current_sample["sample_id"])
         self._ctx_delete_file(sid, self._current_sample)
@@ -5428,7 +5347,7 @@ class MainWindow(QMainWindow):
         )
         if readme.is_file():
             text += f"\nSee {readme} for dependencies and workspace setup."
-        QMessageBox.information(self, "How to Run", text)
+        gui_dialogs.information(self, "How to Run", text)
 
     def _menu_about(self) -> None:
         QMessageBox.about(

@@ -547,7 +547,6 @@ def run_motion_index_for_sample(
                 f"{result.track_preview_error}"
             )
 
-        window._last_motion_index_result = result
         window._status("F-actin motion index complete.")
         if hasattr(window, "update_tracking_result_panel"):
             window.update_tracking_result_panel(sample_id)
