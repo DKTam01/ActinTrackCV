@@ -50,7 +50,6 @@ from PyQt6.QtWidgets import (
 )
 
 from actintrack_app.analysis_service import AnalysisReport, build_analysis_report
-from actintrack_app.analysis_view import AnalysisViewWidget
 from actintrack_app.annotation_schema import (
     annotation_from_legacy,
     build_sample_annotation,
@@ -82,7 +81,32 @@ from actintrack_app.gui_menus import (
     refresh_recent_workspaces_menu,
     setup_application_menus,
 )
-from actintrack_app.gui_canvas import ImageCanvas
+from actintrack_app.gui_layout_builders import (
+    DEFAULT_SPLITTER_SIZES as _DEFAULT_SPLITTER_SIZES,
+    LEFT_PANEL_MIN_WIDTH as _LEFT_PANEL_MIN_WIDTH,
+    METRIC_ANALYSIS_VIEW_LABEL as _METRIC_ANALYSIS_VIEW_LABEL,
+    PLAYBACK_SPEED_OPTIONS as _PLAYBACK_SPEED_OPTIONS,
+    RIGHT_PANEL_MIN_WIDTH as _RIGHT_PANEL_MIN_WIDTH,
+    assemble_playback_controls_layout,
+    build_export_name_panel,
+    build_hidden_frame_controls,
+    build_left_sidebar,
+    build_main_workspace,
+    build_notes_panel,
+    build_optical_flow_settings_page,
+    build_right_sidebar,
+    build_samples_panel,
+    build_tracking_result_panel,
+    build_tracking_settings_page,
+    build_unified_orient_roi_panel,
+    configure_orient_roi_control,
+    configure_tracking_field,
+    create_playback_frame_label,
+    create_playback_play_button,
+    create_playback_slider,
+    create_playback_speed_combo,
+    create_playback_speed_label,
+)
 from actintrack_app.gui_styles import (
     CONTROL_ROW_SPACING,
     FORM_SECTION_SPACING,
@@ -163,13 +187,13 @@ from actintrack_app.explorer_sidebar import (
     sample_tree_meta,
     tree_item_condition_group_id,
 )
-from actintrack_app.explorer_tree import ExplorerTreeWidget
 from actintrack_app.recent_workspaces import add_recent
 from actintrack_app.user_preferences import get_last_import_breed, set_last_import_breed
 from actintrack_app.orientation import (
     OrientationState,
     RectROI,
     apply_orientation,
+    crop_rect_roi,
     tracking_crop_to_rect,
 )
 from actintrack_app.project_manager import (
@@ -266,12 +290,6 @@ def _app_qicon() -> Optional[QIcon]:
     return None
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
 DRAFT_TRACKING_DIR = "draft_tracking"
-_METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis"
-
-_LEFT_PANEL_MIN_WIDTH = 200
-_RIGHT_PANEL_MIN_WIDTH = 260
-_DEFAULT_SPLITTER_SIZES = [_LEFT_PANEL_MIN_WIDTH, 900, _RIGHT_PANEL_MIN_WIDTH]
-_PLAYBACK_SPEED_OPTIONS = ("0.25×", "0.5×", "1×", "1.5×", "2×")
 _PLAYBACK_SPEED_MULTIPLIERS = {
     "0.25×": 0.25,
     "0.5×": 0.5,
@@ -476,518 +494,38 @@ class MainWindow(QMainWindow):
         self._load_project(self._workspace_root, "Workspace project loaded")
 
     def _build_ui(self) -> None:
-        central = QWidget()
-        self.setCentralWidget(central)
-        layout = QHBoxLayout(central)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._left_sidebar = self._build_left_sidebar()
-        splitter.addWidget(self._left_sidebar)
-        self._preview_page = QWidget()
-        preview_page = self._preview_page
-        center_layout = QVBoxLayout(preview_page)
-        self.lbl_preview_mode = QLabel("")
-        self.lbl_preview_mode.setWordWrap(True)
-        apply_hint_style(self.lbl_preview_mode)
-        self.lbl_preview_mode.hide()
-        center_layout.addWidget(self.lbl_preview_mode)
-
-        metric_mode_row = QHBoxLayout()
-        self.lbl_metric_mode = QLabel("Preview mode:")
-        self.combo_metric_mode = QComboBox()
-        self.combo_metric_mode.addItem("Template Tracking", "template")
-        self.combo_metric_mode.addItem("Optical Flow (Draft)", "optical_flow")
-        self.combo_metric_mode.currentIndexChanged.connect(self._on_cropped_metric_mode_changed)
-        metric_mode_row.addWidget(self.lbl_metric_mode)
-        metric_mode_row.addWidget(self.combo_metric_mode)
-        metric_mode_row.addStretch()
-        self._metric_mode_widgets = (
-            self.lbl_metric_mode,
-            self.combo_metric_mode,
-        )
-        for widget in self._metric_mode_widgets:
-            widget.hide()
-        center_layout.addLayout(metric_mode_row)
-
-        self.canvas = ImageCanvas(self)
-        center_layout.addWidget(self.canvas, stretch=1)
-
-        self._metric_status_host = QFrame()
-        self._metric_status_host.setObjectName(METRIC_STATUS_PANEL_OBJECT_NAME)
-        self._metric_status_host.setStyleSheet(STYLE_METRIC_STATUS_PANEL)
-        self._metric_status_host.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Fixed,
-        )
-        self._metric_status_host.hide()
-        metric_status_layout = QVBoxLayout(self._metric_status_host)
-        apply_panel_inner_margins(metric_status_layout)
-        metric_status_layout.setSpacing(METRIC_STATUS_INNER_SPACING)
-
-        metric_button_row = QHBoxLayout()
-        metric_button_row.setSpacing(PANEL_SECTION_SPACING)
-        metric_button_row.addStretch()
-        self.btn_metric_analysis = self._tool_button(
-            _METRIC_ANALYSIS_VIEW_LABEL,
-            "Open the cropped ROI metric analysis view with Template Tracking "
-            "and Optical Flow metrics, overlay, and playback.",
-            self._on_show_metric_analysis_view,
-        )
-        self.btn_metric_analysis.hide()
-        metric_button_row.addWidget(self.btn_metric_analysis)
-        self.btn_run_metrics = self._tool_button(
-            "Run Metrics",
-            "Compute Template Tracking and Optical Flow metrics for the current "
-            "Sample using its marked ROI.",
-            self._on_run_metrics_clicked,
-        )
-        self.btn_run_metrics.setEnabled(False)
-        self.btn_run_metrics.hide()
-        metric_button_row.addWidget(self.btn_run_metrics)
-        metric_button_row.addStretch()
-        metric_status_layout.addLayout(metric_button_row)
-
-        metric_status_labels = QVBoxLayout()
-        metric_status_labels.setSpacing(METRIC_STATUS_LABEL_SPACING)
-        self.lbl_metric_status = QLabel("Metric status: Not analyzed")
-        self.lbl_metric_status.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        apply_hint_style(self.lbl_metric_status)
-        self.lbl_metric_status.hide()
-        metric_status_labels.addWidget(self.lbl_metric_status)
-        self.lbl_last_analyzed = QLabel("Last analyzed: —")
-        self.lbl_last_analyzed.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        apply_hint_style(self.lbl_last_analyzed)
-        self.lbl_last_analyzed.hide()
-        metric_status_labels.addWidget(self.lbl_last_analyzed)
-        metric_status_layout.addLayout(metric_status_labels)
-
-        center_layout.addSpacing(PANEL_SECTION_SPACING)
-        center_layout.addWidget(self._metric_status_host)
-
-        self.btn_playback_toggle = self._create_playback_play_button(
-            tooltip="Play or pause through the loaded sample frames.",
-        )
-        self.lbl_sample_frame = self._create_playback_frame_label("Frame —")
-        self.slider_sample_frame = self._create_playback_slider(
-            value_changed=self._on_sample_frame_slider,
-        )
-        self.lbl_sample_playback_speed = self._create_playback_speed_label()
-        self.combo_sample_playback_speed = self._create_playback_speed_combo(
-            value_changed=self._on_sample_playback_speed_changed,
-        )
-        self.chk_playback_loop = QCheckBox("Loop")
-        self.chk_playback_loop.setToolTip(
-            "When checked, playback restarts at the first frame after the last frame."
-        )
-        self.chk_playback_loop.setChecked(True)
-        self._sample_playback_widgets = (
-            self.btn_playback_toggle,
-            self.lbl_sample_frame,
-            self.slider_sample_frame,
-            self.lbl_sample_playback_speed,
-            self.combo_sample_playback_speed,
-            self.chk_playback_loop,
-        )
-        self._hide_widgets(self._sample_playback_widgets)
-        center_layout.addLayout(
-            self._assemble_playback_controls_layout(
-                play_button=self.btn_playback_toggle,
-                frame_label=self.lbl_sample_frame,
-                frame_slider=self.slider_sample_frame,
-                speed_label=self.lbl_sample_playback_speed,
-                speed_combo=self.combo_sample_playback_speed,
-                speed_row_before_stretch=(self.chk_playback_loop,),
-            )
-        )
-
-        self._hidden_frame_host = self._build_hidden_frame_controls()
-        center_layout.addWidget(self._hidden_frame_host)
-
-        self.btn_preview_toggle = self._create_playback_play_button(
-            tooltip="Play or pause cropped preview playback.",
-        )
-        self.lbl_cropped_frame = self._create_playback_frame_label("Frame 1 / 1")
-        self.slider_cropped_frame = self._create_playback_slider(
-            value_changed=self._on_cropped_preview_frame_slider,
-        )
-        self.lbl_preview_speed = self._create_playback_speed_label()
-        self.combo_preview_speed = self._create_playback_speed_combo(
-            value_changed=self._on_preview_speed_changed,
-        )
-        self.btn_return_full_preview = QPushButton("Return to Full Preview")
-        self.btn_return_full_preview.clicked.connect(self._exit_cropped_preview_mode)
-        self.btn_return_full_preview.setSizePolicy(
-            QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Fixed,
-        )
-        self._preview_control_widgets = (
-            self.btn_preview_toggle,
-            self.lbl_cropped_frame,
-            self.slider_cropped_frame,
-            self.lbl_preview_speed,
-            self.combo_preview_speed,
-            self.btn_return_full_preview,
-        )
-        self._hide_widgets(self._preview_control_widgets)
-        center_layout.addLayout(
-            self._assemble_playback_controls_layout(
-                play_button=self.btn_preview_toggle,
-                frame_label=self.lbl_cropped_frame,
-                frame_slider=self.slider_cropped_frame,
-                speed_label=self.lbl_preview_speed,
-                speed_combo=self.combo_preview_speed,
-                speed_row_after_stretch=(self.btn_return_full_preview,),
-            )
-        )
-        self._analysis_view = AnalysisViewWidget()
-        self._center_stack = QStackedWidget()
-        self._center_stack.addWidget(preview_page)
-        self._center_stack.addWidget(self._analysis_view)
-        self._right_sidebar = self._build_right_sidebar()
-        splitter.addWidget(self._center_stack)
-        splitter.addWidget(self._right_sidebar)
-        splitter.setSizes(list(_DEFAULT_SPLITTER_SIZES))
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 0)
-        splitter.setCollapsible(0, False)
-        splitter.setCollapsible(1, False)
-        splitter.setCollapsible(2, False)
-        self._main_splitter = splitter
-        layout.addWidget(splitter)
-        self.setStatusBar(QStatusBar())
+        build_main_workspace(self)
 
     def _build_left_sidebar(self) -> QWidget:
-        """Explorer sidebar (import/setup is in the menu bar)."""
-        panel = QWidget()
-        panel.setMinimumWidth(_LEFT_PANEL_MIN_WIDTH)
-        panel.setMaximumWidth(360)
-        layout = QVBoxLayout(panel)
-        apply_panel_margins(layout)
-        layout.addWidget(self._build_samples_panel(), stretch=1)
-        return panel
+        return build_left_sidebar(self)
 
     def _build_right_sidebar(self) -> QStackedWidget:
-        """Normal tabbed controls, or full-column Advanced Tracking Settings."""
-        stack = QStackedWidget()
-        stack.setMinimumWidth(_RIGHT_PANEL_MIN_WIDTH)
-        stack.setMaximumWidth(380)
-
-        self._right_tabs = QTabWidget()
-        roi_tab = QWidget()
-        roi_layout = QVBoxLayout(roi_tab)
-        apply_panel_margins(roi_layout)
-        roi_layout.addWidget(self._build_unified_orient_roi_panel())
-        self._right_tabs.addTab(roi_tab, "Orient && ROI")
-
-        sample_tab = QWidget()
-        sample_layout = QVBoxLayout(sample_tab)
-        apply_panel_margins(sample_layout)
-        sample_layout.addWidget(self._build_tracking_result_panel())
-        sample_layout.addWidget(self._build_notes_panel())
-        sample_layout.addStretch()
-        self._right_tabs.addTab(sample_tab, "Sample")
-
-        analysis_tab = QWidget()
-        analysis_tab_layout = QVBoxLayout(analysis_tab)
-        apply_panel_margins(analysis_tab_layout)
-        self.btn_refresh_analysis = QPushButton("Refresh Analysis")
-        self.btn_refresh_analysis.setToolTip(
-            "Reload analysis tables from saved tracking and motion-index results."
-        )
-        self.btn_refresh_analysis.clicked.connect(self.refresh_analysis_view)
-        analysis_tab_layout.addWidget(self.btn_refresh_analysis)
-        self.btn_return_to_samples = QPushButton("Return to Samples")
-        self.btn_return_to_samples.setToolTip(
-            "Leave Analysis and return to the sample preview workflow."
-        )
-        self.btn_return_to_samples.clicked.connect(self._on_return_to_samples)
-        analysis_tab_layout.addWidget(self.btn_return_to_samples)
-        analysis_tab_layout.addStretch()
-        self._right_tabs.addTab(analysis_tab, "Analysis")
-
-        self._right_tabs.currentChanged.connect(self._on_right_tab_changed)
-
-        stack.addWidget(self._right_tabs)
-        stack.addWidget(self._build_tracking_settings_page())
-        stack.addWidget(self._build_optical_flow_settings_page())
-        self._right_stack = stack
-        return stack
+        return build_right_sidebar(self)
 
     def _build_samples_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(CONTROL_ROW_SPACING)
-        self.lbl_workspace = QLabel("—")
-        self.lbl_workspace.setWordWrap(False)
-        apply_small_secondary_style(self.lbl_workspace)
-        layout.addWidget(self.lbl_workspace)
-        self.combo_filter_group = QComboBox()
-        self.combo_filter_group.setVisible(False)
-        self.lbl_explorer_empty = QLabel("Create a Condition Group to begin.")
-        self.lbl_explorer_empty.setWordWrap(True)
-        apply_muted_hint_style(self.lbl_explorer_empty)
-        self.lbl_explorer_empty.setVisible(False)
-        layout.addWidget(self.lbl_explorer_empty)
-        self.tree_samples = ExplorerTreeWidget()
-        self.tree_samples.setHeaderHidden(True)
-        self.tree_samples.setRootIsDecorated(True)
-        self.tree_samples.setAlternatingRowColors(False)
-        self.tree_samples.setStyleSheet(
-            "QTreeWidget { background: palette(base); border: none; }"
-            "QTreeWidget::item:selected {"
-            "  background: palette(highlight);"
-            "  color: palette(highlighted-text);"
-            "}"
-        )
-        self.tree_samples.setSelectionMode(
-            QAbstractItemView.SelectionMode.ExtendedSelection
-        )
-        self.tree_samples.currentItemChanged.connect(self._on_explorer_selection_changed)
-        self.tree_samples.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self.tree_samples.customContextMenuRequested.connect(
-            self._on_explorer_context_menu
-        )
-        self.tree_samples.sample_drop_requested.connect(
-            self._on_explorer_sample_dropped
-        )
-        layout.addWidget(self.tree_samples, stretch=1)
-        return panel
+        return build_samples_panel(self)
 
     def _build_hidden_frame_controls(self) -> QWidget:
-        """Frame index widgets kept for navigation logic; not shown in the sidebar."""
-        host = QWidget()
-        host.setFixedHeight(0)
-        host.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
-        layout = QVBoxLayout(host)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.lbl_frame_info = QLabel("Frame: —")
-        self.slider_frame = QSlider(Qt.Orientation.Horizontal)
-        self.slider_frame.valueChanged.connect(self._on_frame_slider)
-        self.spin_frame = NoWheelSpinBox()
-        self.spin_frame.valueChanged.connect(self._on_frame_spin)
-        layout.addWidget(self.lbl_frame_info)
-        layout.addWidget(self.slider_frame)
-        layout.addWidget(self.spin_frame)
-        return host
+        return build_hidden_frame_controls(self)
 
     def _build_export_name_panel(self) -> QWidget:
-        section = QWidget()
-        layout = QVBoxLayout(section)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(ROI_HINT_STATUS_SPACING)
-        export_label = QLabel("Export name")
-        apply_small_secondary_style(export_label)
-        layout.addWidget(export_label)
-        self.edit_export_name = QLineEdit()
-        self.edit_export_name.setPlaceholderText(
-            "auto-generated from condition group and sample"
-        )
-        self.edit_export_name.editingFinished.connect(self._on_export_name_edited)
-        layout.addWidget(self.edit_export_name)
-        self.lbl_auto_export_name = QLabel("Auto name: —")
-        self.lbl_auto_export_name.setWordWrap(True)
-        apply_hint_style(self.lbl_auto_export_name)
-        layout.addWidget(self.lbl_auto_export_name)
-        return section
+        return build_export_name_panel(self)
 
     @staticmethod
     def _configure_orient_roi_control(widget: QWidget) -> None:
-        widget.setSizePolicy(
-            QSizePolicy.Policy.Preferred,
-            QSizePolicy.Policy.Fixed,
-        )
-        if isinstance(widget, QDoubleSpinBox):
-            widget.setMaximumWidth(72)
+        configure_orient_roi_control(widget)
 
     def _build_unified_orient_roi_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(PANEL_SECTION_SPACING)
-
-        rotation_row = QHBoxLayout()
-        rotation_row.setSpacing(CONTROL_ROW_SPACING)
-        angle_label = QLabel("Rotation:")
-        angle_label.setSizePolicy(
-            QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Fixed,
-        )
-        rotation_row.addWidget(angle_label)
-        self.spin_custom_angle = NoWheelDoubleSpinBox()
-        self.spin_custom_angle.setRange(-180, 180)
-        self.spin_custom_angle.setDecimals(1)
-        self.spin_custom_angle.setButtonSymbols(
-            QAbstractSpinBox.ButtonSymbols.NoButtons
-        )
-        self._configure_orient_roi_control(self.spin_custom_angle)
-        self.btn_apply_custom = QPushButton("Apply")
-        self.btn_apply_custom.clicked.connect(self._on_apply_custom_angle)
-        self._configure_orient_roi_control(self.btn_apply_custom)
-        rotation_row.addWidget(self.spin_custom_angle)
-        rotation_row.addWidget(self.btn_apply_custom)
-        rotation_row.addStretch()
-        layout.addLayout(rotation_row)
-
-        self.chk_mirror_y = QCheckBox("Mirror Y-Axis")
-        self.chk_mirror_y.setToolTip("Mirror the data left-right before ROI and tracking.")
-        self.chk_mirror_y.toggled.connect(self._on_mirror_y_axis)
-        layout.addWidget(self.chk_mirror_y)
-
-        orient_actions_row = QHBoxLayout()
-        orient_actions_row.setSpacing(PANEL_SECTION_SPACING)
-        self.btn_flip = QPushButton("Flip 180°")
-        self.btn_flip.clicked.connect(self._on_flip_180)
-        configure_orient_panel_action_button(self.btn_flip)
-        self.btn_reset_orientation = QPushButton("Reset Orientation")
-        self.btn_reset_orientation.clicked.connect(self._on_reset_orientation)
-        configure_orient_panel_action_button(self.btn_reset_orientation)
-        orient_actions_row.addWidget(self.btn_flip, stretch=1)
-        orient_actions_row.addWidget(self.btn_reset_orientation, stretch=1)
-        layout.addLayout(orient_actions_row)
-
-        roi_section = QVBoxLayout()
-        roi_section.setSpacing(ROI_HINT_STATUS_SPACING)
-        self.btn_roi_actions = QPushButton("ROI Actions")
-        self.btn_roi_actions.setToolTip(
-            "Suggest or clear the analysis ROI for the current preview."
-        )
-        configure_orient_panel_action_button(self.btn_roi_actions)
-        self._roi_actions_menu = QMenu(self)
-        self._populate_roi_actions_menu(self._roi_actions_menu)
-        self.btn_roi_actions.setMenu(self._roi_actions_menu)
-        roi_section.addWidget(self.btn_roi_actions)
-
-        roi_hint = QLabel("Right-click the preview to suggest or clear ROI.")
-        roi_hint.setWordWrap(True)
-        apply_hint_style(roi_hint)
-        roi_section.addWidget(roi_hint)
-
-        self.lbl_roi_save_status = QLabel("—")
-        self.lbl_roi_save_status.setWordWrap(True)
-        self._set_roi_save_status("No ROI saved yet", saved=False)
-        roi_section.addWidget(self.lbl_roi_save_status)
-        layout.addLayout(roi_section)
-
-        layout.addStretch()
-        layout.addSpacing(FORM_SECTION_SPACING)
-        layout.addWidget(self._build_export_name_panel())
-        self.btn_process = self._tool_button(
-            "Export ROI",
-            "Crop and export processed outputs to the processed/ folder.",
-            self._on_process_sample,
-        )
-        layout.addWidget(self.btn_process)
-        return panel
+        return build_unified_orient_roi_panel(self)
 
     @staticmethod
     def _configure_tracking_field(widget: QWidget, *, full_column: bool = False) -> None:
-        widget.setMinimumWidth(160 if full_column else 140)
-        widget.setMinimumHeight(36 if full_column else 30)
-        policy = QSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-        widget.setSizePolicy(policy)
+        configure_tracking_field(widget, full_column=full_column)
 
     def _create_tracking_setting_widgets(self) -> None:
-        defaults = MotionIndexParams()
-        self.combo_track_method = QComboBox()
-        self.combo_track_method.addItem(
-            "Brightest nearby points",
-            TRACKING_METHOD_BRIGHTEST_LOCAL,
-        )
-        self.combo_track_method.addItem("Template matching", TRACKING_METHOD_TEMPLATE)
-        method_index = self.combo_track_method.findData(defaults.tracking_method)
-        self.combo_track_method.setCurrentIndex(max(0, method_index))
-        self.combo_track_method.setToolTip(
-            "How each point is matched in the next frame. Brightest nearby points "
-            "uses traditional local brightness matching."
-        )
+        from actintrack_app.gui_layout_builders import create_tracking_setting_widgets
 
-        self.spin_track_points = NoWheelSpinBox()
-        self.spin_track_points.setRange(1, 50)
-        self.spin_track_points.setValue(defaults.num_starting_points)
-        self.spin_track_points.setToolTip(
-            "Number of bright F-actin signal points selected in the first frame."
-        )
-
-        self.spin_track_spacing = NoWheelSpinBox()
-        self.spin_track_spacing.setRange(1, 200)
-        self.spin_track_spacing.setValue(defaults.min_point_spacing_px)
-        self.spin_track_spacing.setToolTip(
-            "Minimum pixel distance between starting points so they are spread out."
-        )
-
-        self.spin_track_search = NoWheelSpinBox()
-        self.spin_track_search.setRange(1, 100)
-        self.spin_track_search.setValue(defaults.search_radius_px)
-        self.spin_track_search.setToolTip(
-            "Maximum pixel distance a point can move between frames."
-        )
-
-        self.spin_track_patch = NoWheelSpinBox()
-        self.spin_track_patch.setRange(3, 101)
-        self.spin_track_patch.setSingleStep(2)
-        self.spin_track_patch.setValue(defaults.template_patch_size_px)
-        self.spin_track_patch.setToolTip(
-            "Size of the local bright-region centroid patch, and template patch "
-            "when template matching is selected. Must be odd."
-        )
-
-        self.spin_track_confidence = NoWheelDoubleSpinBox()
-        self.spin_track_confidence.setRange(0.0, 1.0)
-        self.spin_track_confidence.setDecimals(2)
-        self.spin_track_confidence.setSingleStep(0.05)
-        self.spin_track_confidence.setValue(defaults.min_template_confidence)
-        self.spin_track_confidence.setToolTip(
-            "Lowest accepted match score. For brightest-point tracking this is a "
-            "normalized local brightness threshold."
-        )
-
-        self.spin_track_lookahead = NoWheelSpinBox()
-        self.spin_track_lookahead.setRange(0, 3)
-        self.spin_track_lookahead.setValue(defaults.lookahead_frames)
-        self.spin_track_lookahead.setToolTip(
-            "Number of future frames to check if a point is temporarily lost."
-        )
-
-        
-        self.spin_track_mpp = NoWheelDoubleSpinBox()
-        self.spin_track_mpp.setRange(0.001, 10.0)
-        self.spin_track_mpp.setDecimals(4)
-        self.spin_track_mpp.setValue(defaults.microns_per_pixel)
-        self.spin_track_mpp.setToolTip(
-            "Physical image scale used to convert pixels to microns."
-        )
-
-        self.spin_track_spf = NoWheelDoubleSpinBox()
-        self.spin_track_spf.setRange(0.001, 60.0)
-        self.spin_track_spf.setDecimals(4)
-        self.spin_track_spf.setValue(defaults.seconds_per_frame)
-        self.spin_track_spf.setToolTip(
-            "Time interval between frames used to convert displacement to velocity."
-        )
-
-        self._tracking_setting_widgets = (
-            self.combo_track_method,
-            self.spin_track_points,
-            self.spin_track_spacing,
-            self.spin_track_search,
-            self.spin_track_patch,
-            self.spin_track_confidence,
-            self.spin_track_lookahead,
-            self.spin_track_mpp,
-            self.spin_track_spf,
-        )
-        for widget in self._tracking_setting_widgets:
-            self._configure_tracking_field(widget, full_column=True)
-            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                widget.valueChanged.connect(self._on_tracking_setting_changed)
-            elif isinstance(widget, QComboBox):
-                widget.currentIndexChanged.connect(self._on_tracking_setting_changed)
+        create_tracking_setting_widgets(self)
 
     @staticmethod
     def _add_tracking_setting_row(
@@ -996,280 +534,46 @@ class MainWindow(QMainWindow):
         widget: QWidget,
         tooltip: str,
     ) -> None:
-        label = QLabel(label_text)
-        label.setWordWrap(True)
-        label.setToolTip(tooltip)
-        widget.setToolTip(tooltip)
-        layout.addWidget(label)
-        layout.addWidget(widget)
+        from actintrack_app.gui_layout_builders import add_tracking_setting_row
+
+        add_tracking_setting_row(layout, label_text, widget, tooltip)
 
     def _build_tracking_settings_form(self) -> QGroupBox:
-        box = QGroupBox("Advanced Tracking Settings")
-        box.setToolTip(
-            "Preview tracking parameters used in Metric Analysis."
-        )
-        layout = QVBoxLayout(box)
-        layout.setSpacing(FORM_SECTION_SPACING)
-        apply_form_group_margins(layout)
-        rows: list[tuple[str, QWidget, str]] = [
-            ("Tracking Method", self.combo_track_method, self.combo_track_method.toolTip()),
-            ("Starting Points", self.spin_track_points, self.spin_track_points.toolTip()),
-            (
-                "Minimum Point Spacing (px)",
-                self.spin_track_spacing,
-                self.spin_track_spacing.toolTip(),
-            ),
-            (
-                "Search Radius (px)",
-                self.spin_track_search,
-                self.spin_track_search.toolTip(),
-            ),
-            (
-                "Template Patch Size (px)",
-                self.spin_track_patch,
-                self.spin_track_patch.toolTip(),
-            ),
-            (
-                "Minimum Match Confidence",
-                self.spin_track_confidence,
-                self.spin_track_confidence.toolTip(),
-            ),
-            (
-                "Lookahead Frames",
-                self.spin_track_lookahead,
-                self.spin_track_lookahead.toolTip(),
-            ),
-            ("Microns per Pixel", self.spin_track_mpp, self.spin_track_mpp.toolTip()),
-            ("Seconds per Frame", self.spin_track_spf, self.spin_track_spf.toolTip()),
-        ]
-        for label_text, widget, tooltip in rows:
-            self._add_tracking_setting_row(layout, label_text, widget, tooltip)
-        layout.addStretch()
-        return box
+        from actintrack_app.gui_layout_builders import build_tracking_settings_form
+
+        return build_tracking_settings_form(self)
 
     def _build_tracking_settings_page(self) -> QWidget:
-        self._create_tracking_setting_widgets()
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        apply_panel_inner_margins(layout)
-        layout.setSpacing(FORM_SECTION_SPACING)
-
-        hint = QLabel(
-            "Edit tracking parameters below while previewing the cropped ROI. "
-            "Changes auto-refresh tracking for the current sample."
-        )
-        hint.setWordWrap(True)
-        apply_hint_style(hint)
-        layout.addWidget(hint)
-        layout.addWidget(self._build_tracking_settings_form(), stretch=1)
-        return page
+        return build_tracking_settings_page(self)
 
     def _create_optical_flow_setting_widgets(self) -> None:
-        defaults = OpticalFlowSettings()
-        self.spin_of_mask_percentile = NoWheelDoubleSpinBox()
-        self.spin_of_mask_percentile.setRange(0.0, 100.0)
-        self.spin_of_mask_percentile.setDecimals(1)
-        self.spin_of_mask_percentile.setValue(defaults.mask_percentile)
-        self.spin_of_mask_percentile.setToolTip(
-            "Include pixels brighter than this percentile in optical-flow averaging."
-        )
+        from actintrack_app.gui_layout_builders import create_optical_flow_setting_widgets
 
-        self.combo_of_blur = QComboBox()
-        self.combo_of_blur.addItem("Off (0)", 0)
-        self.combo_of_blur.addItem("3", 3)
-        self.combo_of_blur.addItem("5", 5)
-        self.combo_of_blur.setCurrentIndex(1)
-        self.combo_of_blur.setToolTip("Light Gaussian blur applied before optical flow.")
-
-        self.spin_of_pyr_scale = NoWheelDoubleSpinBox()
-        self.spin_of_pyr_scale.setRange(0.01, 0.99)
-        self.spin_of_pyr_scale.setDecimals(2)
-        self.spin_of_pyr_scale.setSingleStep(0.05)
-        self.spin_of_pyr_scale.setValue(defaults.pyr_scale)
-
-        self.spin_of_levels = NoWheelSpinBox()
-        self.spin_of_levels.setRange(1, 8)
-        self.spin_of_levels.setValue(defaults.levels)
-
-        self.spin_of_winsize = NoWheelSpinBox()
-        self.spin_of_winsize.setRange(3, 99)
-        self.spin_of_winsize.setSingleStep(2)
-        self.spin_of_winsize.setValue(defaults.winsize)
-
-        self.spin_of_iterations = NoWheelSpinBox()
-        self.spin_of_iterations.setRange(1, 20)
-        self.spin_of_iterations.setValue(defaults.iterations)
-
-        self.spin_of_poly_n = NoWheelSpinBox()
-        self.spin_of_poly_n.setRange(3, 15)
-        self.spin_of_poly_n.setSingleStep(2)
-        self.spin_of_poly_n.setValue(defaults.poly_n)
-
-        self.spin_of_poly_sigma = NoWheelDoubleSpinBox()
-        self.spin_of_poly_sigma.setRange(0.1, 5.0)
-        self.spin_of_poly_sigma.setDecimals(2)
-        self.spin_of_poly_sigma.setValue(defaults.poly_sigma)
-
-        viz_defaults = OpticalFlowVisualizationSettings()
-        self.chk_show_of_overlay = QCheckBox("Show Optical Flow Overlay")
-        self.chk_show_of_overlay.setChecked(True)
-        self.chk_show_of_overlay.setToolTip(
-            "Draw sampled optical-flow arrows on the cropped ROI preview."
-        )
-        self.chk_show_of_overlay.toggled.connect(self._on_show_of_overlay_changed)
-
-        self.spin_of_arrow_spacing = NoWheelSpinBox()
-        self.spin_of_arrow_spacing.setRange(8, 40)
-        self.spin_of_arrow_spacing.setValue(viz_defaults.arrow_spacing_px)
-        self.spin_of_arrow_spacing.valueChanged.connect(self._on_of_viz_setting_changed)
-
-        self.spin_of_arrow_scale = NoWheelDoubleSpinBox()
-        self.spin_of_arrow_scale.setRange(0.1, 20.0)
-        self.spin_of_arrow_scale.setDecimals(1)
-        self.spin_of_arrow_scale.setSingleStep(0.5)
-        self.spin_of_arrow_scale.setValue(viz_defaults.arrow_scale)
-        self.spin_of_arrow_scale.valueChanged.connect(self._on_of_viz_setting_changed)
-
-        self.lbl_of_qc = QLabel("QC: —")
-        self.lbl_of_qc.setWordWrap(True)
-        apply_hint_style(self.lbl_of_qc)
-
-        self._optical_flow_metric_widgets = (
-            self.spin_of_mask_percentile,
-            self.combo_of_blur,
-            self.spin_of_pyr_scale,
-            self.spin_of_levels,
-            self.spin_of_winsize,
-            self.spin_of_iterations,
-            self.spin_of_poly_n,
-            self.spin_of_poly_sigma,
-        )
-        self._optical_flow_setting_widgets = (
-            *self._optical_flow_metric_widgets,
-            self.chk_show_of_overlay,
-            self.spin_of_arrow_spacing,
-            self.spin_of_arrow_scale,
-        )
-        for widget in self._optical_flow_metric_widgets:
-            self._configure_tracking_field(widget, full_column=True)
-            if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                widget.valueChanged.connect(self._on_optical_flow_setting_changed)
-            elif isinstance(widget, QComboBox):
-                widget.currentIndexChanged.connect(self._on_optical_flow_setting_changed)
-        for widget in (self.spin_of_arrow_spacing, self.spin_of_arrow_scale):
-            self._configure_tracking_field(widget, full_column=True)
+        create_optical_flow_setting_widgets(self)
 
     def _build_optical_flow_overlay_panel(self) -> QGroupBox:
-        box = QGroupBox("Optical Flow Overlay")
-        layout = QVBoxLayout(box)
-        layout.setSpacing(PANEL_INNER_MARGIN)
-        layout.setContentsMargins(
-            PANEL_INNER_MARGIN,
-            FORM_SECTION_SPACING,
-            PANEL_INNER_MARGIN,
-            PANEL_INNER_MARGIN,
-        )
-        self.chk_show_of_overlay.setStyleSheet(STYLE_CHECKBOX_COMPACT)
-        layout.addWidget(self.chk_show_of_overlay)
-        self._add_tracking_setting_row(
-            layout,
-            "Arrow Spacing (px)",
-            self.spin_of_arrow_spacing,
-            "Grid spacing for sampled flow arrows.",
-        )
-        self._add_tracking_setting_row(
-            layout,
-            "Arrow Scale",
-            self.spin_of_arrow_scale,
-            "Multiplier for arrow length relative to flow magnitude.",
-        )
-        return box
+        from actintrack_app.gui_layout_builders import build_optical_flow_overlay_panel
+
+        return build_optical_flow_overlay_panel(self)
 
     def _build_optical_flow_qc_panel(self) -> QGroupBox:
-        box = QGroupBox("Optical Flow QC")
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(
-            PANEL_INNER_MARGIN,
-            FORM_SECTION_SPACING,
-            PANEL_INNER_MARGIN,
-            PANEL_INNER_MARGIN,
-        )
-        layout.addWidget(self.lbl_of_qc)
-        return box
+        from actintrack_app.gui_layout_builders import build_optical_flow_qc_panel
+
+        return build_optical_flow_qc_panel(self)
 
     def _build_optical_flow_settings_form(self) -> QGroupBox:
-        box = QGroupBox("Optical Flow Advanced Settings")
-        box.setToolTip(
-            "Dense Farnebäck optical-flow parameters for the preview motion index."
-        )
-        layout = QVBoxLayout(box)
-        layout.setSpacing(FORM_SECTION_SPACING)
-        apply_form_group_margins(layout)
-        rows: list[tuple[str, QWidget, str]] = [
-            ("Mask Percentile", self.spin_of_mask_percentile, self.spin_of_mask_percentile.toolTip()),
-            ("Gaussian Blur Kernel", self.combo_of_blur, self.combo_of_blur.toolTip()),
-            ("Farnebäck pyr_scale", self.spin_of_pyr_scale, ""),
-            ("Farnebäck levels", self.spin_of_levels, ""),
-            ("Farnebäck winsize", self.spin_of_winsize, ""),
-            ("Farnebäck iterations", self.spin_of_iterations, ""),
-            ("Farnebäck poly_n", self.spin_of_poly_n, ""),
-            ("Farnebäck poly_sigma", self.spin_of_poly_sigma, ""),
-        ]
-        for label_text, widget, tooltip in rows:
-            self._add_tracking_setting_row(layout, label_text, widget, tooltip)
-        units_hint = QLabel(
-            "Microns per Pixel and Seconds per Frame are shared with Template "
-            "Tracking settings on the other preview mode panel."
-        )
-        units_hint.setWordWrap(True)
-        apply_hint_style(units_hint)
-        layout.addWidget(units_hint)
-        return box
+        from actintrack_app.gui_layout_builders import build_optical_flow_settings_form
+
+        return build_optical_flow_settings_form(self)
 
     def _build_optical_flow_settings_page(self) -> QWidget:
-        self._create_optical_flow_setting_widgets()
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        apply_panel_inner_margins(layout)
-        layout.setSpacing(FORM_SECTION_SPACING)
-        hint = QLabel(
-            "Edit optical-flow parameters below while previewing the cropped ROI. "
-            "Changes auto-recompute the preview optical-flow motion index."
-        )
-        hint.setWordWrap(True)
-        apply_hint_style(hint)
-        layout.addWidget(hint)
-        layout.addWidget(self._build_optical_flow_settings_form())
-        layout.addWidget(self._build_optical_flow_overlay_panel())
-        layout.addWidget(self._build_optical_flow_qc_panel())
-        layout.addStretch()
-        scroll.setWidget(content)
-        page = QWidget()
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-        return page
+        return build_optical_flow_settings_page(self)
 
     def _build_tracking_result_panel(self) -> QGroupBox:
-        box = QGroupBox(tracking_result_group_title())
-        self.grp_tracking_result = box
-        layout = QVBoxLayout(box)
-        self.lbl_tracking_result = QLabel("Not generated yet")
-        self.lbl_tracking_result.setWordWrap(True)
-        apply_body_label_style(self.lbl_tracking_result)
-        layout.addWidget(self.lbl_tracking_result)
-        return box
+        return build_tracking_result_panel(self)
 
     def _build_notes_panel(self) -> QGroupBox:
-        box = QGroupBox("Notes")
-        layout = QVBoxLayout(box)
-        self.txt_notes = QTextEdit()
-        self.txt_notes.setMaximumHeight(70)
-        layout.addWidget(self.txt_notes)
-        return box
+        return build_notes_panel(self)
 
     @staticmethod
     def _tool_button(text: str, tooltip: str, slot) -> QPushButton:
@@ -1284,43 +588,22 @@ class MainWindow(QMainWindow):
             widget.hide()
 
     def _create_playback_play_button(self, *, tooltip: str) -> QPushButton:
-        btn = QPushButton("Play")
-        btn.setToolTip(tooltip)
-        btn.clicked.connect(self._playback_toggle)
-        return btn
+        return create_playback_play_button(self, tooltip=tooltip)
 
     @staticmethod
     def _create_playback_frame_label(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setMinimumWidth(PLAYBACK_FRAME_LABEL_MIN_WIDTH)
-        return label
+        return create_playback_frame_label(text)
 
     @staticmethod
     def _create_playback_slider(*, value_changed) -> QSlider:
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setMinimumWidth(PLAYBACK_SLIDER_MIN_WIDTH)
-        slider.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Fixed,
-        )
-        slider.valueChanged.connect(value_changed)
-        return slider
+        return create_playback_slider(value_changed=value_changed)
 
     @staticmethod
     def _create_playback_speed_label() -> QLabel:
-        return QLabel("Speed:")
+        return create_playback_speed_label()
 
     def _create_playback_speed_combo(self, *, value_changed) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(list(_PLAYBACK_SPEED_OPTIONS))
-        combo.setCurrentText("1×")
-        combo.setMinimumWidth(PLAYBACK_SPEED_COMBO_MIN_WIDTH)
-        combo.setSizePolicy(
-            QSizePolicy.Policy.Fixed,
-            QSizePolicy.Policy.Fixed,
-        )
-        combo.currentTextChanged.connect(value_changed)
-        return combo
+        return create_playback_speed_combo(self, value_changed=value_changed)
 
     @staticmethod
     def _assemble_playback_controls_layout(
@@ -1333,24 +616,15 @@ class MainWindow(QMainWindow):
         speed_row_before_stretch: tuple[QWidget, ...] = (),
         speed_row_after_stretch: tuple[QWidget, ...] = (),
     ) -> QVBoxLayout:
-        """Shared two-row playback layout for full-sample and cropped preview."""
-        layout = QVBoxLayout()
-        layout.setSpacing(CONTROL_ROW_SPACING)
-        transport_row = QHBoxLayout()
-        transport_row.addWidget(play_button)
-        transport_row.addWidget(frame_label)
-        transport_row.addWidget(frame_slider, stretch=1)
-        speed_row = QHBoxLayout()
-        speed_row.addWidget(speed_label)
-        speed_row.addWidget(speed_combo)
-        for widget in speed_row_before_stretch:
-            speed_row.addWidget(widget)
-        speed_row.addStretch()
-        for widget in speed_row_after_stretch:
-            speed_row.addWidget(widget)
-        layout.addLayout(transport_row)
-        layout.addLayout(speed_row)
-        return layout
+        return assemble_playback_controls_layout(
+            play_button=play_button,
+            frame_label=frame_label,
+            frame_slider=frame_slider,
+            speed_label=speed_label,
+            speed_combo=speed_combo,
+            speed_row_before_stretch=speed_row_before_stretch,
+            speed_row_after_stretch=speed_row_after_stretch,
+        )
 
     def _status(self, msg: str) -> None:
         self.statusBar().showMessage(msg, 8000)
@@ -1421,6 +695,50 @@ class MainWindow(QMainWindow):
         if self._current_sample_id is None:
             self.update_tracking_result_panel()
         self._update_metric_analysis_button_visibility()
+        self._refresh_roi_preview_panel()
+
+    def _set_roi_preview_panel_visible(self, visible: bool) -> None:
+        if hasattr(self, "_roi_preview_host"):
+            self._roi_preview_host.setVisible(visible)
+
+    def _set_roi_preview_placeholder(self, message: str) -> None:
+        if not hasattr(self, "lbl_roi_preview_empty"):
+            return
+        self.lbl_roi_preview_empty.setText(message)
+        self.lbl_roi_preview_empty.show()
+        if hasattr(self, "roi_preview_canvas"):
+            self.roi_preview_canvas.hide()
+            self.roi_preview_canvas.clear_preview()
+
+    def _refresh_roi_preview_panel(self) -> None:
+        if not hasattr(self, "roi_preview_canvas"):
+            return
+        if self._metric_analysis_view_active or self._preview_mode == "cropped_tracking":
+            self._set_roi_preview_panel_visible(False)
+            return
+        self._set_roi_preview_panel_visible(True)
+        if self._current_sample is None or self._base_frame is None:
+            self._set_roi_preview_placeholder("Select a sample to preview the ROI.")
+            return
+        roi = self.canvas.rect_roi()
+        if roi is None:
+            self._set_roi_preview_placeholder("Draw an ROI on the preview.")
+            return
+        oriented = self._oriented_frame()
+        if oriented is None:
+            self._set_roi_preview_placeholder("No frame loaded.")
+            return
+        try:
+            cropped = crop_rect_roi(oriented, roi)
+        except (ValueError, IndexError):
+            self._set_roi_preview_placeholder("ROI is outside the frame.")
+            return
+        if cropped.size == 0:
+            self._set_roi_preview_placeholder("ROI crop is empty.")
+            return
+        self.lbl_roi_preview_empty.hide()
+        self.roi_preview_canvas.show()
+        self.roi_preview_canvas.set_preview_frame(cropped)
 
     def _show_tracking_settings_view(self) -> None:
         self._right_stack.setCurrentIndex(1)
@@ -1814,6 +1132,7 @@ class MainWindow(QMainWindow):
         self._sync_metric_mode_combo()
         self._set_tracking_settings_editable(True)
         self._show_cropped_metric_settings_view()
+        self._refresh_roi_preview_panel()
 
     def _reload_metric_analysis_view_for_current_sample(
         self,
@@ -2823,6 +2142,7 @@ class MainWindow(QMainWindow):
     def _refresh_display(self, *, keep_roi: bool = True) -> None:
         oriented = self._oriented_frame()
         if oriented is None:
+            self._refresh_roi_preview_panel()
             return
         roi = self.canvas.rect_roi() if keep_roi else None
         self.canvas.set_frame(oriented, keep_roi=keep_roi)
@@ -2831,6 +2151,7 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         if keep_roi and roi is not None:
             self._autosave_roi(quiet=True)
+        self._refresh_roi_preview_panel()
 
     def _set_roi_save_status(self, text: str, *, saved: bool = True) -> None:
         self.lbl_roi_save_status.setText(text)
@@ -2922,6 +2243,7 @@ class MainWindow(QMainWindow):
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
         self._schedule_debounced_metrics(show_scheduled=False)
+        self._refresh_roi_preview_panel()
         self._update_metric_freshness_label()
 
     def on_roi_edit_finished(self) -> None:
@@ -2936,6 +2258,7 @@ class MainWindow(QMainWindow):
         self._set_roi_save_status("ROI cleared", saved=False)
         self._persist_roi_cleared_for_current_sample()
         self._update_metric_freshness_label()
+        self._refresh_roi_preview_panel()
 
     def _persist_roi_cleared_for_current_sample(self) -> None:
         """Clearing the ROI returns the Sample to Raw and drops stale metrics."""
@@ -3178,6 +2501,7 @@ class MainWindow(QMainWindow):
         else:
             self._status(f"{_METRIC_ANALYSIS_VIEW_LABEL} ready. Press Play to loop.")
         self._update_metric_analysis_button_visibility()
+        self._refresh_roi_preview_panel()
 
     def _exit_cropped_preview_mode(self) -> None:
         if not self._metric_analysis_view_active:
@@ -4559,6 +3883,7 @@ class MainWindow(QMainWindow):
                 self._schedule_debounced_metrics(show_scheduled=False)
         else:
             self._set_roi_save_status("No ROI saved yet", saved=False)
+        self._refresh_roi_preview_panel()
 
     def _apply_auto_suggested_roi(self, *, render_canvas: bool) -> None:
         oriented = self._oriented_frame()

@@ -21,6 +21,8 @@ def _read(rel: str) -> str:
 class UserFacingTerminologyTests(unittest.TestCase):
     def test_gui_has_no_user_facing_breed_labels(self) -> None:
         src = _read("actintrack_app/gui.py")
+        layout_src = _read("actintrack_app/gui_layout_builders.py")
+        combined = src + layout_src
         # The workspace tree and dialog text must not expose "Breed".
         self.assertNotIn('"Breed:"', src)
         self.assertNotIn("this Breed?", src)
@@ -28,77 +30,132 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("Delete this empty Condition Group?", src)
         self.assertIn("Delete this Sample?", src)
         self.assertIn("Condition Group Not Empty", src)
-        self.assertIn("tree_samples", src)
+        self.assertIn("tree_samples", combined)
         self.assertNotIn("Full Sample Preview — orient the data", src)
         self.assertNotIn('"◀ Prev"', src)
         self.assertNotIn('"Next ▶"', src)
         self.assertNotIn("btn_refresh_samples", src)
         self.assertIn("Refresh Explorer", src)
         self.assertIn("_LEFT_PANEL_MIN_WIDTH", src)
-        self.assertIn("setCollapsible", src)
+        self.assertIn("setCollapsible", layout_src)
         self.assertIn("_DEFAULT_SPLITTER_SIZES", src)
-        self.assertNotIn('addTab(preview, "Frame")', src)
+        self.assertNotIn('addTab(preview, "Frame")', combined)
         self.assertNotIn("Selected Data File", src)
-        self.assertIn("btn_playback_toggle", src)
-        self.assertIn("_metric_status_host", src)
-        self.assertIn("btn_run_metrics", src)
-        self.assertIn("lbl_metric_status", src)
-        self.assertIn("lbl_last_analyzed", src)
-        self.assertNotIn("preview_crop_row", src)
-        self.assertNotIn("btn_playback_play", src)
-        self.assertNotIn("btn_playback_pause", src)
-        self.assertIn("Right-click the preview to suggest or clear ROI.", src)
-        self.assertIn("btn_roi_actions", src)
+        self.assertIn("btn_playback_toggle", combined)
+        self.assertIn("_metric_status_host", combined)
+        self.assertIn("btn_run_metrics", combined)
+        self.assertIn("lbl_metric_status", combined)
+        self.assertIn("lbl_last_analyzed", combined)
+        self.assertNotIn("preview_crop_row", combined)
+        self.assertNotIn("btn_playback_play", combined)
+        self.assertNotIn("btn_playback_pause", combined)
         self.assertIn("_populate_roi_actions_menu", src)
-        self.assertIn("slider_sample_frame", src)
-        self.assertIn("lbl_sample_frame", src)
-        self.assertIn("combo_sample_playback_speed", src)
-        self.assertIn("chk_playback_loop", src)
-        self.assertIn("btn_preview_toggle", src)
-        self.assertIn("slider_cropped_frame", src)
-        self.assertIn("lbl_cropped_frame", src)
-        self.assertIn("combo_preview_speed", src)
-        self.assertIn("btn_return_full_preview", src)
+        self.assertIn("build_roi_workflow_strip", layout_src)
+        self.assertIn("slider_sample_frame", combined)
+        self.assertIn("lbl_sample_frame", combined)
+        self.assertIn("combo_sample_playback_speed", combined)
+        self.assertIn("chk_playback_loop", combined)
+        self.assertIn("btn_preview_toggle", combined)
+        self.assertIn("slider_cropped_frame", combined)
+        self.assertIn("lbl_cropped_frame", combined)
+        self.assertIn("combo_preview_speed", combined)
+        self.assertIn("btn_return_full_preview", combined)
         self.assertIn("_assemble_playback_controls_layout", src)
-        self.assertNotIn("preview_transport_row", src)
-        self.assertNotIn("sample_transport_row", src)
+        self.assertNotIn("preview_transport_row", combined)
+        self.assertNotIn("sample_transport_row", combined)
         self.assertIn("_build_hidden_frame_controls", src)
-        self.assertIn("Return to Samples", src)
-        self.assertIn('"Export ROI"', src)
-        self.assertIn("NoWheelSpinBox", src)
-        self.assertIn("NoWheelDoubleSpinBox", src)
-        orient_block = src.split("def _build_unified_orient_roi_panel", 1)[1].split(
-            "def _configure_tracking_field", 1
+        self.assertIn("Return to Samples", layout_src)
+        self.assertIn('"Export ROI"', layout_src)
+        self.assertIn("NoWheelSpinBox", combined)
+        self.assertIn("NoWheelDoubleSpinBox", combined)
+        orient_block = layout_src.split("def build_unified_orient_roi_panel", 1)[1].split(
+            "def create_tracking_setting_widgets", 1
         )[0]
-        sample_tab_block = src.split("sample_tab = QWidget()", 1)[1].split(
+        sample_tab_block = layout_src.split("sample_tab = QWidget()", 1)[1].split(
             "analysis_tab = QWidget()", 1
         )[0]
         self.assertIn("sample_sidebar_display_label(sample)", src)
-        self.assertIn("tracking_result_group_title", src)
-        self.assertNotIn("Tracking Result: No sample selected", src)
-        self.assertNotIn("'s Tracking Result", src)
-        self.assertIn("_build_export_name_panel()", orient_block)
+        self.assertIn("tracking_result_group_title", combined)
+        self.assertNotIn("Tracking Result: No sample selected", combined)
+        self.assertNotIn("'s Tracking Result", combined)
+        self.assertIn("build_export_name_panel(window)", orient_block)
         self.assertIn("configure_orient_panel_action_button", orient_block)
         self.assertNotIn('QGroupBox("Orient and ROI")', orient_block)
         self.assertNotIn('QGroupBox("Export Name")', orient_block)
-        export_name_block = src.split("def _build_export_name_panel", 1)[1].split(
-            "def _configure_orient_roi_control", 1
+        export_name_block = layout_src.split("def build_export_name_panel", 1)[1].split(
+            "def build_unified_orient_roi_panel", 1
         )[0]
         self.assertIn('"Export name"', export_name_block)
         self.assertNotIn('"Export name:"', export_name_block)
         self.assertNotIn('QGroupBox("Export Name")', export_name_block)
         self.assertIn("Scale proportionally to frame size", src)
         self.assertNotIn("Dr. Ju", src)
-        self.assertIn('"Metric Analysis"', src)
+        self.assertIn('"Metric Analysis"', layout_src)
         self.assertNotIn("Select a data file first", src)
-        self.assertIn("roi_section", orient_block)
+        self.assertNotIn("roi_section", orient_block)
         self.assertIn("orient_actions_row", orient_block)
         self.assertNotIn("orient_extras", orient_block)
-        self.assertNotIn("_build_export_name_panel()", sample_tab_block)
+        self.assertNotIn("build_export_name_panel(window)", sample_tab_block)
         self.assertLess(
-            orient_block.index("_build_export_name_panel()"),
-            orient_block.index("self.btn_process ="),
+            orient_block.index("build_export_name_panel(window)"),
+            orient_block.index("window.btn_process ="),
         )
+
+    def test_workbench_center_image_scaffold(self) -> None:
+        layout_src = _read("actintrack_app/gui_layout_builders.py")
+        center_block = layout_src.split("def build_center_preview_page", 1)[1].split(
+            "def build_image_workspace_row", 1
+        )[0]
+        workspace_block = layout_src.split("def build_image_workspace_row", 1)[1].split(
+            "def build_roi_preview_panel", 1
+        )[0]
+        roi_preview_block = layout_src.split("def build_roi_preview_panel", 1)[1].split(
+            "def build_metric_status_strip", 1
+        )[0]
+        self.assertIn("build_image_workspace_row(window)", center_block)
+        self.assertIn("window._main_image_column", workspace_block)
+        self.assertIn("build_roi_workflow_strip(window, main_image_layout)", workspace_block)
+        self.assertIn("build_sample_playback_controls(window, main_image_layout)", workspace_block)
+        self.assertNotIn(
+            "build_sample_playback_controls(window, center_layout)",
+            center_block,
+        )
+        self.assertIn("window.roi_preview_canvas", roi_preview_block)
+        self.assertIn("set_interactive(False)", roi_preview_block)
+        self.assertIn("ROI_PREVIEW_PANEL_OBJECT_NAME", roi_preview_block)
+        self.assertIn("def build_right_sidebar", layout_src)
+        self.assertIn('"Orient && ROI"', layout_src)
+        self.assertIn("build_main_workspace", layout_src)
+        self.assertIn("build_right_sidebar(window)", layout_src)
+
+    def test_roi_workflow_controls_near_image_not_in_orient_panel(self) -> None:
+        layout_src = _read("actintrack_app/gui_layout_builders.py")
+        orient_block = layout_src.split("def build_unified_orient_roi_panel", 1)[1].split(
+            "def create_tracking_setting_widgets", 1
+        )[0]
+        workflow_block = layout_src.split("def build_roi_workflow_strip", 1)[1].split(
+            "def build_metric_status_strip", 1
+        )[0]
+        workspace_block = layout_src.split("def build_image_workspace_row", 1)[1].split(
+            "def build_roi_preview_panel", 1
+        )[0]
+
+        self.assertIn("window.lbl_roi_save_status", workflow_block)
+        self.assertNotIn("window.btn_roi_actions", workflow_block)
+        self.assertNotIn("Right-click the preview to suggest or clear ROI.", workflow_block)
+        self.assertNotIn("window.btn_roi_actions", orient_block)
+        self.assertNotIn("window.lbl_roi_save_status", orient_block)
+        self.assertNotIn("build_roi_workflow_strip", orient_block)
+        self.assertIn("window.chk_mirror_y", orient_block)
+        self.assertIn("window.btn_process", orient_block)
+        self.assertIn("build_export_name_panel(window)", orient_block)
+        self.assertIn("build_roi_workflow_strip(window, main_image_layout)", workspace_block)
+
+    def test_gui_refreshes_roi_preview_panel(self) -> None:
+        src = _read("actintrack_app/gui.py")
+        self.assertIn("def _refresh_roi_preview_panel", src)
+        self.assertIn("crop_rect_roi", src)
+        self.assertIn("_refresh_roi_preview_panel()", src)
 
     def test_preview_canvas_has_roi_context_menu(self) -> None:
         src = _read("actintrack_app/gui_canvas.py")
