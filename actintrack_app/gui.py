@@ -1240,7 +1240,7 @@ class MainWindow(QMainWindow):
             and current.video_path == snapshot.video_path
         )
 
-    def _schedule_debounced_metrics(self, *, show_scheduled: bool = False) -> None:
+    def _schedule_debounced_metrics(self) -> None:
         track_snap = self._capture_tracking_snapshot()
         of_snap = self._capture_optical_flow_snapshot()
         if track_snap is None and of_snap is None:
@@ -1252,8 +1252,6 @@ class MainWindow(QMainWindow):
                 self._clear_of_flow_cache(self._current_sample_id)
             self._pending_optical_flow_snapshot = of_snap
         self._metric_debounce_timer.start()
-        if show_scheduled:
-            self._set_roi_save_status("Metrics scheduled", saved=True)
         self._update_metric_freshness_label()
 
     def _schedule_metric_settings_refresh(self) -> None:
@@ -1371,7 +1369,8 @@ class MainWindow(QMainWindow):
             return False
         if not self._optical_flow_snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Optical flow paused — ROI changed", saved=True)
+                self._status("Optical flow paused — ROI changed")
+                self._update_metric_freshness_label()
             return False
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
@@ -1414,14 +1413,16 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             if not quiet_skip:
-                self._set_roi_save_status("Optical flow failed", saved=False)
+                self._status("Optical flow failed")
+                self._update_metric_freshness_label()
             return False
         finally:
             self._optical_flow_job_running = False
 
         if not self._optical_flow_snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Optical flow paused — settings changed", saved=True)
+                self._status("Optical flow paused — settings changed")
+                self._update_metric_freshness_label()
             return False
 
         self._clear_of_flow_cache(snapshot.sample_id)
@@ -1617,7 +1618,8 @@ class MainWindow(QMainWindow):
             return False
         if not self._snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Tracking paused — ROI changed", saved=True)
+                self._status("Tracking paused — ROI changed")
+                self._update_metric_freshness_label()
             return False
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
@@ -1644,14 +1646,16 @@ class MainWindow(QMainWindow):
             analysis = analyze_cropped_preview(frames, params=params)
         except Exception:
             if not quiet_skip:
-                self._set_roi_save_status("Tracking failed", saved=False)
+                self._status("Tracking failed")
+                self._update_metric_freshness_label()
             return False
         finally:
             self._tracking_job_running = False
 
         if not self._snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Tracking paused — ROI changed", saved=True)
+                self._status("Tracking paused — ROI changed")
+                self._update_metric_freshness_label()
             return False
 
         self._commit_tracking_result(snapshot.sample_id, analysis, params)
@@ -2002,17 +2006,13 @@ class MainWindow(QMainWindow):
         if not sid:
             return
         if sid in self._metrics_inflight:
-            self._set_roi_save_status("Analyzing metrics…", saved=True)
+            self._update_metric_freshness_label()
             return
         if not self._sample_has_valid_data_and_roi(sid):
-            self._set_roi_save_status(
-                "Analysis unavailable — mark an ROI first", saved=False
-            )
             self._update_metric_freshness_label()
             return
         if sid in self._metric_compute_queue:
             self._metric_compute_queue.remove(sid)
-        self._set_roi_save_status("Analyzing metrics…", saved=True)
         self._compute_metrics_for_sample(sid)
 
     # ----- Metric freshness state + rendering ------------------------------
@@ -2162,6 +2162,21 @@ class MainWindow(QMainWindow):
         self.lbl_roi_save_status.setText(text)
         apply_status_style(self.lbl_roi_save_status, saved=saved)
 
+    def _refresh_roi_save_status_from_context(self) -> None:
+        """Refresh ROI-only persistence/edit status for the current sample."""
+        if not hasattr(self, "lbl_roi_save_status"):
+            return
+        if self._current_sample is None:
+            self._set_roi_save_status("No ROI saved yet", saved=False)
+            return
+        if self.canvas.rect_roi() is None:
+            self._set_roi_save_status("No ROI saved yet", saved=False)
+            return
+        if self._roi_user_adjusted or self._roi_autosave_pending:
+            self._set_roi_save_status("Unsaved changes", saved=False)
+            return
+        self._set_roi_save_status("ROI saved", saved=True)
+
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
         if self._project_root is None or self._current_sample is None:
             return False
@@ -2209,8 +2224,7 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._metric_error_by_sample.pop(sid, None)
         self._set_roi_save_status("ROI saved", saved=True)
-        self._schedule_debounced_metrics(show_scheduled=True)
-        self._update_metric_freshness_label()
+        self._schedule_debounced_metrics()
         return True
 
     def _on_apply_custom_angle(self) -> None:
@@ -2247,7 +2261,7 @@ class MainWindow(QMainWindow):
         self._set_roi_save_status("Unsaved changes", saved=False)
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
-        self._schedule_debounced_metrics(show_scheduled=False)
+        self._schedule_debounced_metrics()
         self._refresh_roi_preview_panel()
         self._update_metric_freshness_label()
 
@@ -3790,6 +3804,7 @@ class MainWindow(QMainWindow):
                 placeholder=self._SELECT_SAMPLE_HINT,
             )
             self.update_tracking_result_panel()
+            self._refresh_roi_save_status_from_context()
             return
         if not self._is_sample_tree_item(current):
             return
@@ -3840,7 +3855,7 @@ class MainWindow(QMainWindow):
                     if not self._reload_metric_analysis_view_for_current_sample(
                         resume_playback=resume_playback,
                     ):
-                        self._schedule_debounced_metrics(show_scheduled=False)
+                        self._schedule_debounced_metrics()
             else:
                 self.reset_preview_state(clear_image=True)
                 self.update_tracking_result_panel(sid)
@@ -3848,6 +3863,7 @@ class MainWindow(QMainWindow):
         finally:
             self._preview_page.setUpdatesEnabled(True)
             self._preview_page.update()
+        self._refresh_roi_save_status_from_context()
         self._update_metric_freshness_label()
 
     def _sample_file_path(self) -> Optional[Path]:
@@ -3881,14 +3897,13 @@ class MainWindow(QMainWindow):
             self.canvas.set_rect_roi(None)
         self._loaded_annotation_source = str(ann.get("annotation_source", "manual"))
         self._roi_user_adjusted = False
+        self._roi_autosave_pending = False
         self._update_orientation_label()
-        if self.canvas.rect_roi() is not None:
-            self._set_roi_save_status("ROI saved", saved=True)
-            if render_canvas:
-                self._schedule_debounced_metrics(show_scheduled=False)
-        else:
-            self._set_roi_save_status("No ROI saved yet", saved=False)
+        self._refresh_roi_save_status_from_context()
+        if self.canvas.rect_roi() is not None and render_canvas:
+            self._schedule_debounced_metrics()
         self._refresh_roi_preview_panel()
+        self._update_metric_freshness_label()
 
     def _apply_auto_suggested_roi(self, *, render_canvas: bool) -> None:
         oriented = self._oriented_frame()
@@ -3961,6 +3976,8 @@ class MainWindow(QMainWindow):
             self._set_preview_mode_banner(None)
             self.update_tracking_result_panel()
             self._update_metric_analysis_button_visibility()
+        self._refresh_roi_save_status_from_context()
+        self._update_metric_freshness_label()
         return True
 
     def _load_full_roi_preview_for_current_sample(self) -> None:
