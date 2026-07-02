@@ -79,6 +79,14 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn("'s Tracking Result", src)
         self.assertIn("_build_export_name_panel()", orient_block)
         self.assertIn("configure_orient_panel_action_button", orient_block)
+        self.assertNotIn('QGroupBox("Orient and ROI")', orient_block)
+        self.assertNotIn('QGroupBox("Export Name")', orient_block)
+        export_name_block = src.split("def _build_export_name_panel", 1)[1].split(
+            "def _configure_orient_roi_control", 1
+        )[0]
+        self.assertIn('"Export name"', export_name_block)
+        self.assertNotIn('"Export name:"', export_name_block)
+        self.assertNotIn('QGroupBox("Export Name")', export_name_block)
         self.assertIn("Scale proportionally to frame size", src)
         self.assertNotIn("Dr. Ju", src)
         self.assertIn('"Metric Analysis"', src)

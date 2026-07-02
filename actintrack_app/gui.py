@@ -773,10 +773,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.spin_frame)
         return host
 
-    def _build_export_name_panel(self) -> QGroupBox:
-        box = QGroupBox("Export Name")
-        layout = QVBoxLayout(box)
-        layout.addWidget(QLabel("Export name:"))
+    def _build_export_name_panel(self) -> QWidget:
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(ROI_HINT_STATUS_SPACING)
+        export_label = QLabel("Export name")
+        apply_small_secondary_style(export_label)
+        layout.addWidget(export_label)
         self.edit_export_name = QLineEdit()
         self.edit_export_name.setPlaceholderText(
             "auto-generated from condition group and sample"
@@ -787,7 +791,7 @@ class MainWindow(QMainWindow):
         self.lbl_auto_export_name.setWordWrap(True)
         apply_hint_style(self.lbl_auto_export_name)
         layout.addWidget(self.lbl_auto_export_name)
-        return box
+        return section
 
     @staticmethod
     def _configure_orient_roi_control(widget: QWidget) -> None:
@@ -798,9 +802,10 @@ class MainWindow(QMainWindow):
         if isinstance(widget, QDoubleSpinBox):
             widget.setMaximumWidth(72)
 
-    def _build_unified_orient_roi_panel(self) -> QGroupBox:
-        box = QGroupBox("Orient and ROI")
-        layout = QVBoxLayout(box)
+    def _build_unified_orient_roi_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(PANEL_SECTION_SPACING)
 
         rotation_row = QHBoxLayout()
@@ -867,6 +872,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(roi_section)
 
         layout.addStretch()
+        layout.addSpacing(FORM_SECTION_SPACING)
         layout.addWidget(self._build_export_name_panel())
         self.btn_process = self._tool_button(
             "Export ROI",
@@ -874,7 +880,7 @@ class MainWindow(QMainWindow):
             self._on_process_sample,
         )
         layout.addWidget(self.btn_process)
-        return box
+        return panel
 
     @staticmethod
     def _configure_tracking_field(widget: QWidget, *, full_column: bool = False) -> None:
