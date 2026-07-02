@@ -594,51 +594,46 @@ def build_export_name_panel(window: MainWindow) -> QWidget:
     return section
 
 
-def build_unified_orient_roi_panel(window: MainWindow) -> QWidget:
-    panel = QWidget()
-    layout = QVBoxLayout(panel)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(PANEL_SECTION_SPACING)
-
-    rotation_row = QHBoxLayout()
-    rotation_row.setSpacing(CONTROL_ROW_SPACING)
-    angle_label = QLabel("Rotation:")
-    angle_label.setSizePolicy(
-        QSizePolicy.Policy.Minimum,
-        QSizePolicy.Policy.Fixed,
-    )
-    rotation_row.addWidget(angle_label)
-    window.spin_custom_angle = NoWheelDoubleSpinBox()
+def build_hidden_orientation_controls(window: MainWindow, parent: QWidget) -> None:
+    """Create orientation widgets for backend sync; hidden in Workbench Stage 1."""
+    window.spin_custom_angle = NoWheelDoubleSpinBox(parent)
     window.spin_custom_angle.setRange(-180, 180)
     window.spin_custom_angle.setDecimals(1)
     window.spin_custom_angle.setButtonSymbols(
         QAbstractSpinBox.ButtonSymbols.NoButtons
     )
     configure_orient_roi_control(window.spin_custom_angle)
-    window.btn_apply_custom = QPushButton("Apply")
+    window.spin_custom_angle.hide()
+
+    window.btn_apply_custom = QPushButton("Apply", parent)
     window.btn_apply_custom.clicked.connect(window._on_apply_custom_angle)
     configure_orient_roi_control(window.btn_apply_custom)
-    rotation_row.addWidget(window.spin_custom_angle)
-    rotation_row.addWidget(window.btn_apply_custom)
-    rotation_row.addStretch()
-    layout.addLayout(rotation_row)
+    window.btn_apply_custom.hide()
 
-    window.chk_mirror_y = QCheckBox("Mirror Y-Axis")
+    window.chk_mirror_y = QCheckBox("Mirror Y-Axis", parent)
     window.chk_mirror_y.setToolTip("Mirror the data left-right before ROI and tracking.")
     window.chk_mirror_y.toggled.connect(window._on_mirror_y_axis)
-    layout.addWidget(window.chk_mirror_y)
+    window.chk_mirror_y.hide()
 
-    orient_actions_row = QHBoxLayout()
-    orient_actions_row.setSpacing(PANEL_SECTION_SPACING)
-    window.btn_flip = QPushButton("Flip 180°")
+    window.btn_flip = QPushButton("Flip 180°", parent)
     window.btn_flip.clicked.connect(window._on_flip_180)
     configure_orient_panel_action_button(window.btn_flip)
-    window.btn_reset_orientation = QPushButton("Reset Orientation")
+    window.btn_flip.hide()
+
+    window.btn_reset_orientation = QPushButton("Reset Orientation", parent)
     window.btn_reset_orientation.clicked.connect(window._on_reset_orientation)
     configure_orient_panel_action_button(window.btn_reset_orientation)
-    orient_actions_row.addWidget(window.btn_flip, stretch=1)
-    orient_actions_row.addWidget(window.btn_reset_orientation, stretch=1)
-    layout.addLayout(orient_actions_row)
+    window.btn_reset_orientation.hide()
+
+
+def build_unified_orient_roi_panel(window: MainWindow) -> QWidget:
+    """Export controls for the Orient && ROI sidebar tab."""
+    panel = QWidget()
+    layout = QVBoxLayout(panel)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(PANEL_SECTION_SPACING)
+
+    build_hidden_orientation_controls(window, panel)
 
     layout.addStretch()
     layout.addSpacing(FORM_SECTION_SPACING)
