@@ -1274,14 +1274,19 @@ class MainWindow(QMainWindow):
     def _on_metric_debounce_fired(self) -> None:
         track_snap = self._pending_tracking_snapshot
         of_snap = self._pending_optical_flow_snapshot
-        if track_snap is not None:
-            self._run_draft_tracking_for_snapshot(
-                track_snap,
-                update_cropped_preview=self._preview_mode == "cropped_tracking",
-                quiet_skip=True,
-            )
-        if of_snap is not None:
-            self._run_optical_flow_for_snapshot(of_snap, quiet_skip=True)
+        self._pending_tracking_snapshot = None
+        self._pending_optical_flow_snapshot = None
+        try:
+            if track_snap is not None:
+                self._run_draft_tracking_for_snapshot(
+                    track_snap,
+                    update_cropped_preview=self._preview_mode == "cropped_tracking",
+                    quiet_skip=True,
+                )
+            if of_snap is not None:
+                self._run_optical_flow_for_snapshot(of_snap, quiet_skip=True)
+        finally:
+            self._update_metric_freshness_label()
 
     def _on_metric_settings_debounce_fired(self) -> None:
         if self._preview_mode != "cropped_tracking":

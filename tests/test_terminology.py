@@ -141,6 +141,8 @@ class UserFacingTerminologyTests(unittest.TestCase):
         )[0]
 
         self.assertIn("window.lbl_roi_save_status", workflow_block)
+        self.assertIn("window.lbl_metric_status", workflow_block)
+        self.assertIn("window.lbl_last_analyzed", workflow_block)
         self.assertNotIn("window.btn_roi_actions", workflow_block)
         self.assertNotIn("Right-click the preview to suggest or clear ROI.", workflow_block)
         self.assertNotIn("window.btn_roi_actions", orient_block)
@@ -150,6 +152,28 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("window.btn_process", orient_block)
         self.assertIn("build_export_name_panel(window)", orient_block)
         self.assertIn("build_roi_workflow_strip(window, main_image_layout)", workspace_block)
+
+    def test_metric_status_labels_in_workbench_not_metric_strip(self) -> None:
+        layout_src = _read("actintrack_app/gui_layout_builders.py")
+        gui_src = _read("actintrack_app/gui.py")
+        workflow_block = layout_src.split("def build_roi_workflow_strip", 1)[1].split(
+            "def build_metric_status_strip", 1
+        )[0]
+        metric_strip_block = layout_src.split("def build_metric_status_strip", 1)[1].split(
+            "def build_sample_playback_controls", 1
+        )[0]
+
+        self.assertIn("window.lbl_metric_status", workflow_block)
+        self.assertIn("window.lbl_last_analyzed", workflow_block)
+        self.assertNotIn("window.lbl_metric_status", metric_strip_block)
+        self.assertNotIn("window.lbl_last_analyzed", metric_strip_block)
+        self.assertIn("window.btn_metric_analysis", metric_strip_block)
+        self.assertIn("window.btn_run_metrics", metric_strip_block)
+        self.assertIn("def _update_metric_freshness_label", gui_src)
+        self.assertIn("self.lbl_metric_status.setText", gui_src)
+        self.assertIn("self.lbl_last_analyzed.setText", gui_src)
+        self.assertIn("def build_right_sidebar", layout_src)
+        self.assertIn('"Analysis"', layout_src)
 
     def test_gui_refreshes_roi_preview_panel(self) -> None:
         src = _read("actintrack_app/gui.py")

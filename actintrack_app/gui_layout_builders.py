@@ -370,7 +370,7 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
 
 
 def build_roi_workflow_strip(window: MainWindow, layout: QVBoxLayout) -> None:
-    """ROI save status below the microscope image."""
+    """ROI and metric status below the microscope image."""
     strip = QVBoxLayout()
     strip.setSpacing(ROI_HINT_STATUS_SPACING)
 
@@ -379,10 +379,25 @@ def build_roi_workflow_strip(window: MainWindow, layout: QVBoxLayout) -> None:
     window._set_roi_save_status("No ROI saved yet", saved=False)
     strip.addWidget(window.lbl_roi_save_status)
 
+    metric_status_labels = QVBoxLayout()
+    metric_status_labels.setSpacing(METRIC_STATUS_LABEL_SPACING)
+    window.lbl_metric_status = QLabel("Metric status: Not analyzed")
+    window.lbl_metric_status.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+    apply_hint_style(window.lbl_metric_status)
+    window.lbl_metric_status.hide()
+    metric_status_labels.addWidget(window.lbl_metric_status)
+    window.lbl_last_analyzed = QLabel("Last analyzed: —")
+    window.lbl_last_analyzed.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+    apply_hint_style(window.lbl_last_analyzed)
+    window.lbl_last_analyzed.hide()
+    metric_status_labels.addWidget(window.lbl_last_analyzed)
+    strip.addLayout(metric_status_labels)
+
     layout.addLayout(strip)
 
 
 def build_metric_status_strip(window: MainWindow, center_layout: QVBoxLayout) -> None:
+    """Metric action buttons below the image workspace row."""
     window._metric_status_host = QFrame()
     window._metric_status_host.setObjectName(METRIC_STATUS_PANEL_OBJECT_NAME)
     window._metric_status_host.setStyleSheet(STYLE_METRIC_STATUS_PANEL)
@@ -417,20 +432,6 @@ def build_metric_status_strip(window: MainWindow, center_layout: QVBoxLayout) ->
     metric_button_row.addWidget(window.btn_run_metrics)
     metric_button_row.addStretch()
     metric_status_layout.addLayout(metric_button_row)
-
-    metric_status_labels = QVBoxLayout()
-    metric_status_labels.setSpacing(METRIC_STATUS_LABEL_SPACING)
-    window.lbl_metric_status = QLabel("Metric status: Not analyzed")
-    window.lbl_metric_status.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-    apply_hint_style(window.lbl_metric_status)
-    window.lbl_metric_status.hide()
-    metric_status_labels.addWidget(window.lbl_metric_status)
-    window.lbl_last_analyzed = QLabel("Last analyzed: —")
-    window.lbl_last_analyzed.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-    apply_hint_style(window.lbl_last_analyzed)
-    window.lbl_last_analyzed.hide()
-    metric_status_labels.addWidget(window.lbl_last_analyzed)
-    metric_status_layout.addLayout(metric_status_labels)
 
     center_layout.addSpacing(PANEL_SECTION_SPACING)
     center_layout.addWidget(window._metric_status_host)
