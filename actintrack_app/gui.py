@@ -92,11 +92,9 @@ from actintrack_app.gui_layout_builders import (
     build_hidden_frame_controls,
     build_left_sidebar,
     build_main_workspace,
-    build_notes_panel,
     build_optical_flow_settings_page,
     build_right_sidebar,
     build_samples_panel,
-    build_tracking_result_panel,
     build_tracking_settings_page,
     build_unified_orient_roi_panel,
     configure_orient_roi_control,
@@ -448,6 +446,7 @@ class MainWindow(QMainWindow):
         self._last_import_breed: Optional[str] = None
         self._roi_user_adjusted = False
         self._loaded_annotation_source = "manual"
+        self._loaded_sample_notes = ""
         self._preview_mode = "full"
         self._preview_playing = False
         self._preview_frame_index = 0
@@ -568,12 +567,6 @@ class MainWindow(QMainWindow):
 
     def _build_optical_flow_settings_page(self) -> QWidget:
         return build_optical_flow_settings_page(self)
-
-    def _build_tracking_result_panel(self) -> QGroupBox:
-        return build_tracking_result_panel(self)
-
-    def _build_notes_panel(self) -> QGroupBox:
-        return build_notes_panel(self)
 
     @staticmethod
     def _tool_button(text: str, tooltip: str, slot) -> QPushButton:
@@ -866,8 +859,11 @@ class MainWindow(QMainWindow):
         self._status(f"Moved Sample to Condition Group: {target_name}")
 
     def _on_return_to_samples(self) -> None:
+        if self._center_stack.currentIndex() == 1:
+            self._center_stack.setCurrentIndex(0)
+        self._set_left_explorer_visible(True)
         for i in range(self._right_tabs.count()):
-            if self._right_tabs.tabText(i) == "Sample":
+            if self._right_tabs.tabText(i) == "Orient && ROI":
                 self._right_tabs.setCurrentIndex(i)
                 return
 
@@ -1154,6 +1150,8 @@ class MainWindow(QMainWindow):
         self._current_sample = sample
         sid = str(sample.get("sample_id", "")).strip() if sample else ""
         self._current_sample_id = sid or None
+        if sample is None:
+            self._loaded_sample_notes = ""
         if prev_sid and prev_sid != self._current_sample_id:
             self._of_flow_caches.pop(prev_sid, None)
 
@@ -1727,6 +1725,8 @@ class MainWindow(QMainWindow):
         template_stale: bool = False,
         optical_flow_stale: bool = False,
     ) -> None:
+        if self.__dict__.get("lbl_tracking_result") is None:
+            return
         sid = self._current_sample_id
         of_status = self._optical_flow_qc_status_for_sample(sid) if sid else "Not computed"
         result_obj = self._get_optical_flow_result_object(sid) if sid else None
@@ -1746,6 +1746,8 @@ class MainWindow(QMainWindow):
         self.lbl_tracking_result.setText(text)
 
     def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
+        if self.__dict__.get("lbl_tracking_result") is None:
+            return
         sid = sample_id or self._current_sample_id
         if sid is None:
             self.grp_tracking_result.setTitle(self._tracking_result_group_title())
@@ -2697,7 +2699,7 @@ class MainWindow(QMainWindow):
             roi_original=check.roi_original.clamp(bw, bh),
             original_dimensions={"width": bw, "height": bh},
             oriented_dimensions={"width": ow, "height": oh},
-            notes=self.txt_notes.toPlainText().strip(),
+            notes=self._loaded_sample_notes.strip(),
             annotation_source=ann_src,
             suggestion_method=self._suggestion_method_for_save(),
             roi_method=roi_method,
@@ -3876,7 +3878,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._orientation, roi = annotation_from_legacy(ann)
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
-        self.txt_notes.setPlainText(str(ann.get("notes", "")))
+        self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
             self._refresh_display(keep_roi=False)
             if roi is not None:
@@ -3965,9 +3967,11 @@ class MainWindow(QMainWindow):
         if ann:
             self._apply_annotation_from_dict(ann, render_canvas=render_full_preview)
         elif render_full_preview:
+            self._loaded_sample_notes = ""
             self._refresh_display(keep_roi=False)
             self._apply_auto_suggested_roi(render_canvas=True)
         else:
+            self._loaded_sample_notes = ""
             self.canvas.set_rect_roi(None)
             self._apply_auto_suggested_roi(render_canvas=False)
 

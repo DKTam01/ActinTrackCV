@@ -71,8 +71,8 @@ class UserFacingTerminologyTests(unittest.TestCase):
         orient_block = layout_src.split("def build_unified_orient_roi_panel", 1)[1].split(
             "def create_tracking_setting_widgets", 1
         )[0]
-        sample_tab_block = layout_src.split("sample_tab = QWidget()", 1)[1].split(
-            "analysis_tab = QWidget()", 1
+        right_sidebar_block = layout_src.split("def build_right_sidebar", 1)[1].split(
+            "def build_export_name_panel", 1
         )[0]
         self.assertIn("sample_sidebar_display_label(sample)", src)
         self.assertIn("tracking_result_group_title", combined)
@@ -95,7 +95,7 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn("roi_section", orient_block)
         self.assertIn("orient_actions_row", orient_block)
         self.assertNotIn("orient_extras", orient_block)
-        self.assertNotIn("build_export_name_panel(window)", sample_tab_block)
+        self.assertNotIn('addTab(sample_tab, "Sample")', right_sidebar_block)
         self.assertLess(
             orient_block.index("build_export_name_panel(window)"),
             orient_block.index("window.btn_process ="),
@@ -174,6 +174,28 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("self.lbl_last_analyzed.setText", gui_src)
         self.assertIn("def build_right_sidebar", layout_src)
         self.assertIn('"Analysis"', layout_src)
+
+    def test_sample_tab_and_notes_ui_removed(self) -> None:
+        layout_src = _read("actintrack_app/gui_layout_builders.py")
+        gui_src = _read("actintrack_app/gui.py")
+        samples_panel_block = layout_src.split("def build_samples_panel", 1)[1].split(
+            "def build_center_preview_page", 1
+        )[0]
+        right_sidebar_block = layout_src.split("def build_right_sidebar", 1)[1].split(
+            "def build_export_name_panel", 1
+        )[0]
+
+        self.assertNotIn("sample_tab = QWidget()", layout_src)
+        self.assertNotIn('addTab(sample_tab, "Sample")', layout_src)
+        self.assertNotIn("build_notes_panel", layout_src)
+        self.assertNotIn("build_tracking_result_panel", layout_src)
+        self.assertNotIn("window.txt_notes", layout_src)
+        self.assertNotIn("build_notes_panel(window)", samples_panel_block)
+        self.assertIn('"Orient && ROI"', right_sidebar_block)
+        self.assertIn('"Analysis"', right_sidebar_block)
+        self.assertIn("_loaded_sample_notes", gui_src)
+        self.assertIn("notes=self._loaded_sample_notes", gui_src)
+        self.assertNotIn("txt_notes", gui_src)
 
     def test_gui_refreshes_roi_preview_panel(self) -> None:
         src = _read("actintrack_app/gui.py")

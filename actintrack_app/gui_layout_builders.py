@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QTabWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -51,7 +50,6 @@ from actintrack_app.gui_styles import (
     ROI_HINT_STATUS_SPACING,
     STYLE_CHECKBOX_COMPACT,
     STYLE_METRIC_STATUS_PANEL,
-    apply_body_label_style,
     apply_form_group_margins,
     apply_hint_style,
     apply_muted_hint_style,
@@ -59,7 +57,6 @@ from actintrack_app.gui_styles import (
     apply_panel_margins,
     apply_small_secondary_style,
     configure_orient_panel_action_button,
-    tracking_result_group_title,
 )
 from actintrack_app.motion_index import (
     TRACKING_METHOD_BRIGHTEST_LOCAL,
@@ -549,14 +546,6 @@ def build_right_sidebar(window: MainWindow) -> QStackedWidget:
     roi_layout.addWidget(build_unified_orient_roi_panel(window))
     window._right_tabs.addTab(roi_tab, "Orient && ROI")
 
-    sample_tab = QWidget()
-    sample_layout = QVBoxLayout(sample_tab)
-    apply_panel_margins(sample_layout)
-    sample_layout.addWidget(build_tracking_result_panel(window))
-    sample_layout.addWidget(build_notes_panel(window))
-    sample_layout.addStretch()
-    window._right_tabs.addTab(sample_tab, "Sample")
-
     analysis_tab = QWidget()
     analysis_tab_layout = QVBoxLayout(analysis_tab)
     apply_panel_margins(analysis_tab_layout)
@@ -1015,23 +1004,3 @@ def build_optical_flow_settings_page(window: MainWindow) -> QWidget:
     page_layout.setContentsMargins(0, 0, 0, 0)
     page_layout.addWidget(scroll)
     return page
-
-
-def build_tracking_result_panel(window: MainWindow) -> QGroupBox:
-    box = QGroupBox(tracking_result_group_title())
-    window.grp_tracking_result = box
-    layout = QVBoxLayout(box)
-    window.lbl_tracking_result = QLabel("Not generated yet")
-    window.lbl_tracking_result.setWordWrap(True)
-    apply_body_label_style(window.lbl_tracking_result)
-    layout.addWidget(window.lbl_tracking_result)
-    return box
-
-
-def build_notes_panel(window: MainWindow) -> QGroupBox:
-    box = QGroupBox("Notes")
-    layout = QVBoxLayout(box)
-    window.txt_notes = QTextEdit()
-    window.txt_notes.setMaximumHeight(70)
-    layout.addWidget(window.txt_notes)
-    return box
