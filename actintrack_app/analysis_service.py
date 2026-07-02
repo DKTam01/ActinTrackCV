@@ -498,8 +498,8 @@ def build_analysis_report(root: Path) -> AnalysisReport:
     empty_message = ""
     if not any_samples:
         empty_message = (
-            "No samples found in this workspace. Create samples and import data "
-            "to populate the analysis view."
+            "No samples found in this workspace. Add condition groups and import "
+            "videos to populate the Analysis view."
         )
 
     return AnalysisReport(

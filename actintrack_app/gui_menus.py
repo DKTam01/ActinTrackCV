@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 )
 
 from actintrack_app.condition_group_manager import list_condition_group_records
+from actintrack_app.gui_user_strings import processing_status_display
 
 if TYPE_CHECKING:
     from actintrack_app.gui import MainWindow
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 class PurgeFilteredDialog(QDialog):
     def __init__(self, parent: QWidget, root: Path):
         super().__init__(parent)
-        self.setWindowTitle("Filtered Purge — Preview")
+        self.setWindowTitle("Filtered Cleanup — Preview")
         self._root = Path(root).resolve()
         layout = QVBoxLayout(self)
 
@@ -43,7 +44,7 @@ class PurgeFilteredDialog(QDialog):
         self.edit_batch.setPlaceholderText("Sample name or number (optional)")
         self.combo_status = QComboBox()
         self.combo_status.addItem("(any status)", "")
-        for s in (
+        for code in (
             "raw_imported",
             "unannotated",
             "imported",
@@ -56,26 +57,34 @@ class PurgeFilteredDialog(QDialog):
             "failed",
             "missing_file",
         ):
-            self.combo_status.addItem(s, s)
+            self.combo_status.addItem(processing_status_display(code), code)
         self.combo_file_type = QComboBox()
-        self.combo_file_type.addItem("(any data type)", "")
-        self.combo_file_type.addItem("AVI/MP4 data", "video")
+        self.combo_file_type.addItem("(any type)", "")
+        self.combo_file_type.addItem("Video (AVI/MP4)", "video")
         self.combo_annotation = QComboBox()
-        self.combo_annotation.addItems(
-            ["(any)", "manual", "propagated", "automatic"]
-        )
+        self.combo_annotation.addItem("(any)", "")
+        self.combo_annotation.addItem("Manual", "manual")
+        self.combo_annotation.addItem("Propagated", "propagated")
+        self.combo_annotation.addItem("Automatic", "automatic")
         self.combo_review = QComboBox()
-        self.combo_review.addItems(["(any)", "pending", "approved", "rejected"])
+        self.combo_review.addItem("(any)", "")
+        self.combo_review.addItem("Pending", "pending")
+        self.combo_review.addItem("Approved", "approved")
+        self.combo_review.addItem("Rejected", "rejected")
         form.addRow("Condition Group:", self.combo_group)
         form.addRow("Sample name/number:", self.edit_batch)
-        form.addRow("Processing status:", self.combo_status)
-        form.addRow("Data type:", self.combo_file_type)
+        form.addRow("Sample status:", self.combo_status)
+        form.addRow("File type:", self.combo_file_type)
         form.addRow("Annotation source:", self.combo_annotation)
         form.addRow("Review status:", self.combo_review)
         layout.addLayout(form)
 
         self.list_preview = QListWidget()
-        layout.addWidget(QLabel("Affected data files (annotations/processed will be purged):"))
+        layout.addWidget(
+            QLabel(
+                "Matching samples (annotations and processed outputs will be removed):"
+            )
+        )
         layout.addWidget(self.list_preview)
 
         btn_row = QHBoxLayout()
@@ -110,10 +119,10 @@ class PurgeFilteredDialog(QDialog):
         file_type = self.combo_file_type.currentData() or None
         if file_type == "":
             file_type = None
-        ann = self.combo_annotation.currentText()
-        annotation_source = None if ann.startswith("(") else ann
-        rev = self.combo_review.currentText()
-        review_status = None if rev.startswith("(") else rev
+        ann = self.combo_annotation.currentData()
+        annotation_source = None if ann in (None, "") else str(ann)
+        rev = self.combo_review.currentData()
+        review_status = None if rev in (None, "") else str(rev)
         return {
             "group": group or None,
             "batch_name": batch_name,
@@ -132,10 +141,11 @@ class PurgeFilteredDialog(QDialog):
         for _, row in df.iterrows():
             self.list_preview.addItem(
                 f"{row['sample_id']}  {row.get('final_export_name', '')}  "
-                f"[{row.get('processing_status', '')}]  {row.get('original_filename', '')}"
+                f"[{processing_status_display(str(row.get('processing_status', '')))}]  "
+                f"{row.get('original_filename', '')}"
             )
         if df.empty:
-            self.list_preview.addItem("(no data files match filters)")
+            self.list_preview.addItem("(no samples match filters)")
 
     def selected_sample_ids(self) -> list[str]:
         from actintrack_app.purge_manager import filter_samples_for_purge
@@ -234,7 +244,7 @@ def setup_application_menus(window: "MainWindow") -> None:
     act_purge_cleanup.triggered.connect(lambda: open_purge_cleanup_dialog(window))
     ws_menu.addAction(act_purge_cleanup)
 
-    act_purge_filtered = QAction("Filtered Purge (advanced)…", window)
+    act_purge_filtered = QAction("Advanced Filtered Cleanup…", window)
     act_purge_filtered.triggered.connect(window._menu_purge_filtered)
     ws_menu.addAction(act_purge_filtered)
 
@@ -253,7 +263,7 @@ def setup_application_menus(window: "MainWindow") -> None:
     analysis_menu.addAction(act_view_analysis)
 
     help_menu = mb.addMenu("&Help")
-    act_how = QAction("How to Run App", window)
+    act_how = QAction("Getting Started…", window)
     act_how.triggered.connect(window._menu_how_to_run)
     help_menu.addAction(act_how)
 

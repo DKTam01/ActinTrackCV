@@ -44,12 +44,12 @@ if TYPE_CHECKING:
 PURGE_ACTIONS: list[tuple[str, str, str | None]] = [
     (
         "purge_annotations_file",
-        "1. Purge Annotations Only (selected file)",
+        "1. Clear Annotations Only (selected sample)",
         None,
     ),
     (
         "purge_complete_file",
-        "2. Purge Selected File Completely",
+        "2. Remove Selected Sample Completely",
         None,
     ),
     (
@@ -87,38 +87,37 @@ PURGE_ACTIONS: list[tuple[str, str, str | None]] = [
 ACTION_DESCRIPTIONS = {
     "purge_annotations_file": (
         "Removes ROI annotations, crop metadata, previews, and processed outputs "
-        "for the selected data file. Keeps the file entry, Sample, and the "
-        "workspace's copied video data."
+        "for the selected sample. Keeps the sample entry and the workspace's "
+        "copied video."
     ),
     "purge_complete_file": (
-        "Removes the selected data file from the workspace plus all annotations, "
-        "previews, and processed outputs. Copied video data can be removed if you "
+        "Removes the selected sample from the workspace plus all annotations, "
+        "previews, and processed outputs. Copied video can be removed if you "
         "check the option below. Files outside this workspace are never deleted."
     ),
     "purge_annotations_sample": (
-        "Clears annotations and processed outputs for every data file in the chosen "
-        "Sample. Keeps the Sample label, data entries, and copied video data."
+        "Clears annotations and processed outputs for the chosen sample. "
+        "Keeps the sample label and copied video."
     ),
     "purge_complete_sample": (
-        "Completely removes the Sample from the workspace: its label, all data "
-        "entries (including unannotated), annotations, previews, and processed "
-        "outputs. Copied video data is optional. Files outside this workspace "
-        "are not deleted."
+        "Completely removes the sample from the workspace: its label, annotations, "
+        "previews, and processed outputs. Copied video is optional. Files outside "
+        "this workspace are not deleted."
     ),
     "purge_annotations_breed": (
         "Clears annotations and processed outputs for all samples in the selected "
-        "condition group. Keeps samples and imported data entries."
+        "condition group. Keeps samples and imported videos."
     ),
     "purge_complete_breed": (
-        "Removes all samples and data entries for the selected condition group from "
-        "the app database, plus all annotations and processed outputs."
+        "Removes all samples for the selected condition group from the workspace, "
+        "plus all annotations and processed outputs."
     ),
     "purge_annotations_workspace": (
         "Clears all annotations and processed outputs across the workspace. "
-        "Keeps all samples and imported data entries."
+        "Keeps all condition groups, samples, and imported videos."
     ),
     "purge_complete_workspace": (
-        "Removes all workspace metadata: every condition group, sample, data entry, "
+        "Removes all workspace metadata: every condition group, sample, "
         "annotation, preview, and processed output."
     ),
 }
@@ -146,9 +145,9 @@ class PurgeCleanupDialog(QDialog):
         layout = QVBoxLayout(self)
 
         intro = QLabel(
-            "Choose a cleanup level. “Annotations only” keeps data files and samples in the "
-            "database. “Complete” removes data or sample entries from the app. "
-            "Original files outside the workspace are never deleted."
+            "Choose a cleanup level. “Annotations only” keeps samples and imported "
+            "videos in the workspace. “Complete” removes sample entries from the "
+            "workspace. Original files outside the workspace are never deleted."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
@@ -189,7 +188,7 @@ class PurgeCleanupDialog(QDialog):
         layout.addWidget(scope_box)
 
         self.chk_remove_raw = QCheckBox(
-            "Also remove the workspace's copied video data (default: keep copies)"
+            "Also remove the workspace's copied video (default: keep copies)"
         )
         self.chk_remove_raw.setChecked(False)
         layout.addWidget(self.chk_remove_raw)

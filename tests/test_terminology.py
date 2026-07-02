@@ -79,6 +79,10 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn("'s Tracking Result", src)
         self.assertIn("_build_export_name_panel()", orient_block)
         self.assertIn("configure_orient_panel_action_button", orient_block)
+        self.assertIn("Scale proportionally to frame size", src)
+        self.assertNotIn("Dr. Ju", src)
+        self.assertIn('"Metric Analysis"', src)
+        self.assertNotIn("Select a data file first", src)
         self.assertIn("roi_section", orient_block)
         self.assertIn("orient_actions_row", orient_block)
         self.assertNotIn("orient_extras", orient_block)
@@ -110,13 +114,21 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn('"Breed:"', menus)
         self.assertIn('"Condition Group:"', menus)
 
+        self.assertIn("Getting Started", menus)
+        self.assertNotIn("How to Run App", menus)
+        self.assertIn("Advanced Filtered Cleanup", menus)
+        self.assertNotIn("Filtered Purge (advanced)", menus)
+        self.assertIn("processing_status_display", menus)
+        self.assertNotIn('"proportional_scaled"', menus.split("PropagateDialog")[0])
+
         purge = _read("actintrack_app/purge_cleanup_dialog.py")
+        self.assertNotIn("app database", purge)
+        self.assertIn("copied video", purge)
         self.assertNotIn("Breed Annotations Only", purge)
         self.assertNotIn("Complete Breed Purge", purge)
         self.assertNotIn("raw/", purge)
         self.assertIn("Condition Group Annotations Only", purge)
         self.assertIn("Complete Condition Group Purge", purge)
-        self.assertIn("copied video data", purge)
 
     def test_readme_uses_condition_group(self) -> None:
         readme = _read("README.md")

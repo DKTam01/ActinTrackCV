@@ -266,7 +266,7 @@ def _app_qicon() -> Optional[QIcon]:
     return None
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
 DRAFT_TRACKING_DIR = "draft_tracking"
-_METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis View"
+_METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis"
 
 _LEFT_PANEL_MIN_WIDTH = 200
 _RIGHT_PANEL_MIN_WIDTH = 260
@@ -335,13 +335,13 @@ STATUS_COLORS = {
 class PropagateDialog(QDialog):
     def __init__(self, parent: QWidget, group: str, batch_name: str):
         super().__init__(parent)
-        self.setWindowTitle("Propagate Annotation to Sample")
+        self.setWindowTitle("Propagate ROI")
         layout = QFormLayout(self)
         num = parse_batch_number_from_name(batch_name) or 1
         sample_label = display_sample_label(num, batch_name)
         help_lbl = QLabel(
-            "By default, annotations apply only within the same sample, "
-            "not across other samples in the condition group."
+            "By default, ROI changes apply only to the current sample, "
+            "not to other samples in the condition group."
         )
         help_lbl.setWordWrap(True)
         layout.addRow(help_lbl)
@@ -349,17 +349,23 @@ class PropagateDialog(QDialog):
         self.combo_scope.addItems(
             [
                 f"Same sample ({sample_label})",
-                f"Unprocessed data in {sample_label}",
-                f"All data in condition group {group}",
-                "Currently selected data in list",
+                f"Unprocessed samples in {sample_label}",
+                f"All samples in condition group {group}",
+                "Currently selected samples in Explorer",
             ]
         )
         self.combo_scaling = QComboBox()
-        self.combo_scaling.addItems(
-            ["proportional_scaled", "same_coordinates"]
+        self.combo_scaling.addItem(
+            "Scale proportionally to frame size",
+            "proportional_scaled",
+        )
+        self.combo_scaling.addItem(
+            "Use same pixel coordinates",
+            "same_coordinates",
         )
         self.chk_overwrite = QCheckBox(
-            "Overwrite existing annotations (never overwrites approved/processed without extra confirm)"
+            "Overwrite existing ROIs (approved and processed samples still "
+            "require confirmation)"
         )
         layout.addRow("Propagation scope:", self.combo_scope)
         layout.addRow("ROI scaling:", self.combo_scaling)
@@ -383,11 +389,14 @@ class PropagateDialog(QDialog):
             return SCOPE_SAME_BATCH
         if text.startswith("Unprocessed"):
             return SCOPE_UNPROCESSED_IN_BATCH
-        if text.startswith("All data in condition group"):
+        if text.startswith("All samples in condition group"):
             return SCOPE_ALL_IN_GROUP
         return SCOPE_SELECTED
 
     def scaling_method(self) -> str:
+        data = self.combo_scaling.currentData()
+        if data is not None:
+            return str(data)
         return self.combo_scaling.currentText()
 
     def overwrite(self) -> bool:
@@ -889,7 +898,7 @@ class MainWindow(QMainWindow):
         self.combo_track_method.setCurrentIndex(max(0, method_index))
         self.combo_track_method.setToolTip(
             "How each point is matched in the next frame. Brightest nearby points "
-            "matches Dr. Ju's recommended traditional CV method."
+            "uses traditional local brightness matching."
         )
 
         self.spin_track_points = NoWheelSpinBox()
@@ -991,7 +1000,7 @@ class MainWindow(QMainWindow):
     def _build_tracking_settings_form(self) -> QGroupBox:
         box = QGroupBox("Advanced Tracking Settings")
         box.setToolTip(
-            "Draft point-tracking parameters used in Metric Analysis View."
+            "Preview tracking parameters used in Metric Analysis."
         )
         layout = QVBoxLayout(box)
         layout.setSpacing(FORM_SECTION_SPACING)
@@ -1185,7 +1194,7 @@ class MainWindow(QMainWindow):
     def _build_optical_flow_settings_form(self) -> QGroupBox:
         box = QGroupBox("Optical Flow Advanced Settings")
         box.setToolTip(
-            "Dense Farnebäck optical-flow parameters used for the draft motion index."
+            "Dense Farnebäck optical-flow parameters for the preview motion index."
         )
         layout = QVBoxLayout(box)
         layout.setSpacing(FORM_SECTION_SPACING)
@@ -1222,7 +1231,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(FORM_SECTION_SPACING)
         hint = QLabel(
             "Edit optical-flow parameters below while previewing the cropped ROI. "
-            "Changes auto-recompute the draft optical-flow motion index."
+            "Changes auto-recompute the preview optical-flow motion index."
         )
         hint.setWordWrap(True)
         apply_hint_style(hint)
@@ -1919,7 +1928,7 @@ class MainWindow(QMainWindow):
             self._pending_optical_flow_snapshot = of_snap
         self._metric_debounce_timer.start()
         if show_scheduled:
-            self._set_roi_save_status("Metric calculation scheduled", saved=True)
+            self._set_roi_save_status("Metrics scheduled", saved=True)
         self._update_metric_freshness_label()
 
     def _schedule_metric_settings_refresh(self) -> None:
@@ -2032,7 +2041,7 @@ class MainWindow(QMainWindow):
             return False
         if not self._optical_flow_snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Optical flow skipped: ROI changed", saved=True)
+                self._set_roi_save_status("Optical flow paused — ROI changed", saved=True)
             return False
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
@@ -2082,7 +2091,7 @@ class MainWindow(QMainWindow):
 
         if not self._optical_flow_snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Optical flow skipped: settings changed", saved=True)
+                self._set_roi_save_status("Optical flow paused — settings changed", saved=True)
             return False
 
         self._clear_of_flow_cache(snapshot.sample_id)
@@ -2278,7 +2287,7 @@ class MainWindow(QMainWindow):
             return False
         if not self._snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Tracking skipped: ROI changed", saved=True)
+                self._set_roi_save_status("Tracking paused — ROI changed", saved=True)
             return False
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
@@ -2312,7 +2321,7 @@ class MainWindow(QMainWindow):
 
         if not self._snapshot_matches_current(snapshot):
             if not quiet_skip:
-                self._set_roi_save_status("Tracking skipped: ROI changed", saved=True)
+                self._set_roi_save_status("Tracking paused — ROI changed", saved=True)
             return False
 
         self._commit_tracking_result(snapshot.sample_id, analysis, params)
@@ -2854,10 +2863,10 @@ class MainWindow(QMainWindow):
                 csv_update,
             )
         except OSError as exc:
-            self._set_roi_save_status(f"ROI autosave failed: {exc}", saved=False)
-            self._status(f"ROI autosave failed: {exc}")
+            self._set_roi_save_status(f"Could not save ROI: {exc}", saved=False)
+            self._status(f"Could not save ROI: {exc}")
             if not quiet:
-                QMessageBox.warning(self, "ROI Autosave", f"Could not save ROI:\n{exc}")
+                QMessageBox.warning(self, "Save ROI", f"Could not save ROI:\n{exc}")
             return False
 
         if new_status is not None:
@@ -2867,7 +2876,7 @@ class MainWindow(QMainWindow):
         self._roi_user_adjusted = False
         self._roi_autosave_pending = False
         self._metric_error_by_sample.pop(sid, None)
-        self._set_roi_save_status("ROI autosaved", saved=True)
+        self._set_roi_save_status("ROI saved", saved=True)
         self._schedule_debounced_metrics(show_scheduled=True)
         self._update_metric_freshness_label()
         return True
@@ -2992,7 +3001,7 @@ class MainWindow(QMainWindow):
         if self._project_root is None or self._current_sample is None:
             if not quiet:
                 QMessageBox.warning(
-                    self, _METRIC_ANALYSIS_VIEW_LABEL, "Select a data file first."
+                    self, _METRIC_ANALYSIS_VIEW_LABEL, "Select a sample first."
                 )
             return False
 
@@ -3001,7 +3010,7 @@ class MainWindow(QMainWindow):
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
             message = check.message or (
-                "Metric Analysis View is unavailable because this Sample "
+                "Metric Analysis is unavailable because this Sample "
                 "does not have a saved ROI."
             )
             self._report_metric_view_blocked(message, quiet=quiet)
@@ -3010,14 +3019,14 @@ class MainWindow(QMainWindow):
         path = self._sample_file_path()
         if path is None or not path.exists():
             message = (
-                "Metric Analysis View is unavailable because this Sample "
+                "Metric Analysis is unavailable because this Sample "
                 "does not have valid Data."
             )
             self._report_metric_view_blocked(message, quiet=quiet)
             return False
         if not is_supported_video_path(path):
             message = (
-                "Only AVI and MP4 data files are supported in the current 2D workflow."
+                "Only AVI and MP4 videos are supported."
             )
             if quiet:
                 self._show_metric_analysis_placeholder(message)
@@ -3412,7 +3421,7 @@ class MainWindow(QMainWindow):
             return
         path = self._sample_file_path()
         if path is None or not path.exists():
-            QMessageBox.warning(self, "Export ROI", "Data file not found for this sample.")
+            QMessageBox.warning(self, "Export ROI", "Imported video not found for this sample.")
             return
         if is_wip_sample_path(path):
             QMessageBox.information(
@@ -3561,7 +3570,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Dimension Mismatch",
                 "Some targets differ in size from the source. "
-                "Using same_coordinates may place the ROI incorrectly.\n\n"
+                "Using the same pixel coordinates may place the ROI incorrectly.\n\n"
                 f"{preview}\n\nContinue anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
@@ -4484,7 +4493,7 @@ class MainWindow(QMainWindow):
                 self._set_preview_mode_banner(f"{_METRIC_ANALYSIS_VIEW_LABEL} — loading…")
                 if not self._load_sample_data_context(render_full_preview=False):
                     self._show_metric_analysis_placeholder(
-                        "Metric Analysis View is unavailable because this Sample "
+                        "Metric Analysis is unavailable because this Sample "
                         "does not have valid Data."
                     )
                 else:
@@ -4535,7 +4544,7 @@ class MainWindow(QMainWindow):
         self._roi_user_adjusted = False
         self._update_orientation_label()
         if self.canvas.rect_roi() is not None:
-            self._set_roi_save_status("ROI autosaved", saved=True)
+            self._set_roi_save_status("ROI saved", saved=True)
             if render_canvas:
                 self._schedule_debounced_metrics(show_scheduled=False)
         else:
@@ -4899,7 +4908,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Replace Data",
                 "This sample has ROI, tracking, or processed outputs.\n\n"
-                "Replacing the data file will clear those derived results. Continue?",
+                "Replacing the imported video will clear those derived results. Continue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
@@ -4945,10 +4954,10 @@ class MainWindow(QMainWindow):
         if self._project_root is None:
             return
         if not self._ask_yes_no(
-            "Purge Data Annotations",
-            "Clear annotations, previews, and processed outputs for this data file?",
+            "Purge Sample Annotations",
+            "Clear annotations, previews, and processed outputs for this sample?",
             informative=(
-                "The data entry and the workspace's copied video data will be kept."
+                "The sample entry and the workspace's copied video will be kept."
             ),
         ):
             return
@@ -4966,8 +4975,8 @@ class MainWindow(QMainWindow):
         if self._project_root is None:
             return
         if not self._ask_yes_no(
-            "Remove Data File",
-            "Remove this data file from the workspace?",
+            "Remove Sample",
+            "Remove this sample from the workspace?",
             informative=(
                 "This removes its metadata, annotations, previews, and processed "
                 "outputs. Files on your computer outside this workspace are not "
@@ -5008,8 +5017,8 @@ class MainWindow(QMainWindow):
         if self._project_root is None:
             return
         if not self._ask_yes_no(
-            "Remove Data File",
-            "Remove this data file from the Sample?",
+            "Remove Sample",
+            "Remove this sample and its imported video from the workspace?",
             informative=(
                 "This removes its metadata, annotations, previews, and processed "
                 "outputs. The workspace's copied video data can be removed in the "
@@ -5197,7 +5206,7 @@ class MainWindow(QMainWindow):
 
     def _menu_delete_file_from_batch(self) -> None:
         if self._project_root is None or self._current_sample is None:
-            gui_dialogs.warning(self, "Delete", "Select a data file in the explorer first.")
+            gui_dialogs.warning(self, "Delete", "Select a sample in Explorer first.")
             return
         sid = str(self._current_sample["sample_id"])
         self._ctx_delete_file(sid, self._current_sample)
@@ -5211,14 +5220,15 @@ class MainWindow(QMainWindow):
     def _menu_how_to_run(self) -> None:
         readme = resource_path("README.md")
         text = (
-            "From the ActinTrackCV project folder:\n\n"
-            "  ./run_app.sh\n"
-            "  python run_app.py\n"
-            "  python -m actintrack_app.main\n"
+            "Typical workflow:\n\n"
+            "1. Create or open a workspace (File menu).\n"
+            "2. Add a Condition Group and import AVI/MP4 samples.\n"
+            "3. Orient each video, mark an ROI, and export processed output.\n"
+            "4. Review metrics and open Analysis for condition-group comparisons.\n"
         )
         if readme.is_file():
-            text += f"\nSee {readme} for dependencies and workspace setup."
-        gui_dialogs.information(self, "How to Run", text)
+            text += f"\nFor installation and setup, see:\n{readme}"
+        gui_dialogs.information(self, "Getting Started", text)
 
     def _menu_about(self) -> None:
         QMessageBox.about(
@@ -5228,12 +5238,9 @@ class MainWindow(QMainWindow):
             "ActinTrackCV — Arabidopsis reproductive-cell F-actin fluorescence microscopy: "
             "2D time-lapse preprocessing, orientation, ROI selection, template tracking, "
             "optical-flow motion index, and cropped export for actin cable velocity analysis.\n\n"
-            "Suggest ROI from F-actin Signal is a computer vision helper that looks for areas "
-            "in the image where bright, filament-like F-actin signal is strongest or most "
-            "structured. It proposes a rectangular ROI that may contain usable actin cables "
-            "while avoiding low-signal or blurry regions. The suggested ROI is not guaranteed "
-            "to be correct. Treat it as a draft annotation that you can move, resize, approve, "
-            "or reject.",
+            "Suggest ROI from F-actin Signal proposes a rectangular region where "
+            "bright F-actin signal is strongest. Review, adjust, approve, or clear "
+            "the ROI before export.",
         )
 
     def _confirm_project_root_if_source_folder(self, root: Path) -> Optional[Path]:
@@ -5242,7 +5249,7 @@ class MainWindow(QMainWindow):
         reply = QMessageBox.question(
             self,
             "Use workspace?",
-            "Use workspace root instead of raw_source?",
+            "Use the default workspace folder instead of the development source folder?",
         )
         if reply == QMessageBox.StandardButton.Yes:
             return self._workspace_root
