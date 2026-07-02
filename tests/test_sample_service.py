@@ -33,6 +33,7 @@ from actintrack_app.sample_service import (
     sample_has_derived_state,
     validate_av_mp4_data_file,
 )
+from actintrack_app.schema_compat import draft_optical_flow_path, draft_tracking_path
 from actintrack_app.utils import DATA_FILES_CSV, METADATA_DIR, SAMPLE_REGISTRY_JSON
 
 
@@ -146,6 +147,39 @@ class SampleServiceTests(unittest.TestCase):
         self.assertIsNone(get_batch_by_name(self.root, self.breed, batch["batch_name"]))
         df = load_samples_csv(self.root / METADATA_DIR / DATA_FILES_CSV)
         self.assertTrue(df.empty)
+
+    def test_delete_removes_crop_metadata(self) -> None:
+        batch, row = create_sample_from_data(self.root, self.breed, self.video_a)
+        sid = str(row["sample_id"])
+        crop_path = self.root / METADATA_DIR / "crop_metadata.json"
+        save_sample_crop_annotation(
+            crop_path,
+            sid,
+            {"sample_id": sid, "group": self.breed, "status": "roi_marked"},
+        )
+        self.assertIsNotNone(get_sample_annotation(self.root, sid))
+
+        delete_sample_and_artifacts(self.root, self.breed, batch["batch_name"])
+
+        self.assertIsNone(get_sample_annotation(self.root, sid))
+        df = load_samples_csv(self.root / METADATA_DIR / DATA_FILES_CSV)
+        self.assertTrue(df.empty)
+
+    def test_delete_leaves_draft_metric_json_on_disk(self) -> None:
+        """Current purge path removes CSV/crop rows but not draft metric files."""
+        batch, row = create_sample_from_data(self.root, self.breed, self.video_a)
+        sid = str(row["sample_id"])
+        tracking_draft = draft_tracking_path(self.root, sid)
+        optical_draft = draft_optical_flow_path(self.root, sid)
+        tracking_draft.parent.mkdir(parents=True, exist_ok=True)
+        optical_draft.parent.mkdir(parents=True, exist_ok=True)
+        tracking_draft.write_text('{"num_tracks_with_valid_steps": 1}', encoding="utf-8")
+        optical_draft.write_text('{"has_valid_result": true}', encoding="utf-8")
+
+        delete_sample_and_artifacts(self.root, self.breed, batch["batch_name"])
+
+        self.assertTrue(tracking_draft.is_file())
+        self.assertTrue(optical_draft.is_file())
 
     def test_create_rolls_back_on_import_failure(self) -> None:
         with patch(

@@ -102,6 +102,23 @@ class SampleTransferTests(unittest.TestCase):
         reloaded = df[df["sample_id"].astype(str) == sample_id].iloc[0]
         self.assertEqual(str(reloaded["group"]), self.group_b.id)
 
+    def test_move_preserves_sample_id_and_target_group_paths(self) -> None:
+        row = self._import_sample(self.group_a.id, "stable_id.mp4")
+        sample_id = str(row["sample_id"])
+        batch_name = str(row["batch_name"])
+
+        move_sample_to_condition_group(self.root, sample_id, self.group_b.id)
+
+        df = load_samples_csv(self.root / METADATA_DIR / SAMPLES_CSV)
+        moved = df[df["sample_id"].astype(str) == sample_id].iloc[0]
+        self.assertEqual(str(moved["sample_id"]), sample_id)
+        self.assertEqual(str(moved["group"]), self.group_b.id)
+        self.assertEqual(str(moved["condition_group_id"]), self.group_b.id)
+        self.assertIn(f"{RAW_DIR}/{self.group_b.id}/", str(moved["stored_path"]))
+        self.assertTrue(
+            get_raw_batch_dir(self.root, self.group_b.id, batch_name).is_dir()
+        )
+
     def test_same_group_move_is_no_op(self) -> None:
         row = self._import_sample(self.group_a.id, "noop.mp4")
         sample_id = str(row["sample_id"])
