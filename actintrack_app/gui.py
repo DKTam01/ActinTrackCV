@@ -172,6 +172,7 @@ from actintrack_app.condition_group_manager import (
     list_condition_group_records,
     rename_condition_group,
     resolve_condition_group_id,
+    row_condition_group_id,
 )
 from actintrack_app.explorer_sidebar import (
     ITEM_TYPE_CONDITION_GROUP,
@@ -1431,10 +1432,26 @@ class MainWindow(QMainWindow):
             and str(self._current_sample.get("sample_id", "")) == sample_id
         ):
             return self._current_sample
-        if self._project_root is None:
+        return self._persisted_sample_row_for_id(sample_id)
+
+    def _workspace_project_root(self) -> Path | None:
+        """Return the open workspace root without triggering Qt attribute lookup."""
+        return self.__dict__.get("_project_root")
+
+    def _persisted_sample_row_for_id(
+        self, sample_id: str, *, samples_df: pd.DataFrame | None = None
+    ) -> Optional[dict[str, Any]]:
+        """Load a Sample row from workspace metadata (never the in-memory current sample)."""
+        project_root = self._workspace_project_root()
+        if project_root is None:
             return None
-        df = load_samples_csv(self._project_root / METADATA_DIR / SAMPLES_CSV)
-        rows = df[df["sample_id"].astype(str) == str(sample_id)]
+        sid = str(sample_id).strip()
+        if not sid:
+            return None
+        df = samples_df
+        if df is None:
+            df = load_samples_csv(project_root / METADATA_DIR / SAMPLES_CSV)
+        rows = df[df["sample_id"].astype(str) == sid]
         if rows.empty:
             return None
         return rows.iloc[0].to_dict()
@@ -1604,13 +1621,14 @@ class MainWindow(QMainWindow):
         return orientation, roi
 
     def _sample_video_path(self, sample_id: str) -> Optional[Path]:
-        row = self._sample_row_for_id(sample_id)
-        if row is None or self._project_root is None:
+        row = self._persisted_sample_row_for_id(sample_id)
+        project_root = self._workspace_project_root()
+        if row is None or project_root is None:
             return None
         stored = str(row.get("stored_path", "")).strip()
         if not stored:
             return None
-        path = self._project_root / stored
+        path = project_root / stored
         if not path.is_file() or not is_supported_video_path(path):
             return None
         return path
@@ -1772,8 +1790,10 @@ class MainWindow(QMainWindow):
             return "unavailable"
         return self._compute_metrics_for_sample(sid)
 
-    def _sample_display_label_for_id(self, sample_id: str) -> str:
-        row = self._sample_row_for_id(sample_id)
+    def _sample_display_label_for_id(
+        self, sample_id: str, *, samples_df: pd.DataFrame | None = None
+    ) -> str:
+        row = self._persisted_sample_row_for_id(sample_id, samples_df=samples_df)
         if row:
             return sample_sidebar_display_label(row)
         item = self._find_sample_tree_item(sample_id)
@@ -1787,13 +1807,19 @@ class MainWindow(QMainWindow):
     def _missing_roi_display_names_for_samples(
         self, sample_ids: Sequence[str]
     ) -> list[str]:
+        samples_df: pd.DataFrame | None = None
+        project_root = self._workspace_project_root()
+        if project_root is not None:
+            samples_df = load_samples_csv(project_root / METADATA_DIR / SAMPLES_CSV)
         invalid: list[str] = []
         for sample_id in sample_ids:
             sid = str(sample_id).strip()
             if not sid:
                 continue
             if not self._sample_has_valid_data_and_roi(sid):
-                invalid.append(self._sample_display_label_for_id(sid))
+                invalid.append(
+                    self._sample_display_label_for_id(sid, samples_df=samples_df)
+                )
         return invalid
 
     def _missing_roi_tooltip_for_samples(self, sample_ids: Sequence[str]) -> str:
@@ -2938,9 +2964,13 @@ class MainWindow(QMainWindow):
         return sample_ids
 
     def _sample_ids_for_explorer_group_item(
-        self, group_item: QTreeWidgetItem
+        self,
+        group_item: QTreeWidgetItem,
+        *,
+        condition_group_id: str | None = None,
     ) -> list[str]:
         """Real child Sample IDs under a Condition Group row, in Explorer order."""
+        gid = str(condition_group_id or "").strip() or None
         ids: list[str] = []
         seen: set[str] = set()
         for index in range(group_item.childCount()):
@@ -2948,12 +2978,87 @@ class MainWindow(QMainWindow):
             meta = self._tree_item_meta(child)
             if not meta or meta.get("item_type") != ITEM_TYPE_SAMPLE:
                 continue
+            if gid is not None:
+                child_gid = tree_item_condition_group_id(meta)
+                if child_gid and child_gid != gid:
+                    continue
             sid = str(meta.get("sample_id", "")).strip()
             if not sid or sid in seen:
                 continue
             seen.add(sid)
             ids.append(sid)
         return ids
+
+    def _sample_ids_for_condition_group_from_project(
+        self, condition_group_id: str
+    ) -> list[str]:
+        """Authoritative child Sample IDs for a Condition Group from workspace metadata."""
+        project_root = self._workspace_project_root()
+        if project_root is None:
+            return []
+        gid = str(condition_group_id).strip()
+        if not gid:
+            return []
+        df = load_samples_csv(project_root / METADATA_DIR / SAMPLES_CSV)
+        if df.empty:
+            return []
+        ids: list[str] = []
+        seen: set[str] = set()
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+            if row_condition_group_id(row_dict) != gid:
+                continue
+            sid = str(row_dict.get("sample_id", "")).strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            ids.append(sid)
+        return ids
+
+    def _order_sample_ids_for_condition_group(
+        self,
+        condition_group_id: str,
+        project_ids: list[str],
+        *,
+        group_item: QTreeWidgetItem | None = None,
+    ) -> list[str]:
+        """Merge project Sample IDs with Explorer tree order."""
+        if not project_ids:
+            return []
+        project_set = set(project_ids)
+        tree_ids: list[str] = []
+        gid = str(condition_group_id).strip()
+        if group_item is not None:
+            tree_ids = self._sample_ids_for_explorer_group_item(
+                group_item,
+                condition_group_id=gid,
+            )
+        elif gid and getattr(self, "tree_samples", None) is not None:
+            for index in range(self.tree_samples.topLevelItemCount()):
+                top = self.tree_samples.topLevelItem(index)
+                meta = self._tree_item_meta(top)
+                if (
+                    meta
+                    and meta.get("item_type") == ITEM_TYPE_CONDITION_GROUP
+                    and str(meta.get("condition_group_id", "")).strip() == gid
+                ):
+                    tree_ids = self._sample_ids_for_explorer_group_item(
+                        top,
+                        condition_group_id=gid,
+                    )
+                    break
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for sid in tree_ids:
+            if sid in project_set and sid not in seen:
+                seen.add(sid)
+                ordered.append(sid)
+        for sid in project_ids:
+            if sid not in seen:
+                seen.add(sid)
+                ordered.append(sid)
+        return ordered
 
     def sample_ids_for_condition_group(
         self,
@@ -2962,21 +3067,23 @@ class MainWindow(QMainWindow):
         group_item: QTreeWidgetItem | None = None,
     ) -> list[str]:
         """Return real child Sample IDs for a Condition Group in Explorer order."""
-        if group_item is not None:
-            return self._sample_ids_for_explorer_group_item(group_item)
         gid = str(condition_group_id).strip()
         if not gid:
             return []
-        for index in range(self.tree_samples.topLevelItemCount()):
-            top = self.tree_samples.topLevelItem(index)
-            meta = self._tree_item_meta(top)
-            if (
-                meta
-                and meta.get("item_type") == ITEM_TYPE_CONDITION_GROUP
-                and str(meta.get("condition_group_id", "")).strip() == gid
-            ):
-                return self._sample_ids_for_explorer_group_item(top)
-        return []
+        project_root = self._workspace_project_root()
+        if project_root is None:
+            if group_item is not None:
+                return self._sample_ids_for_explorer_group_item(
+                    group_item,
+                    condition_group_id=gid,
+                )
+            return []
+        project_ids = self._sample_ids_for_condition_group_from_project(gid)
+        return self._order_sample_ids_for_condition_group(
+            gid,
+            project_ids,
+            group_item=group_item,
+        )
 
     def _add_blocked_run_metrics_menu_note(
         self,

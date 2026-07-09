@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 from PyQt6.QtCore import QPoint, Qt
@@ -659,6 +661,241 @@ class ConditionGroupRunMetricsTests(unittest.TestCase):
 
         self.assertEqual(window._current_sample_id, "S0")
         window._load_sample_from_tree_item.assert_not_called()
+
+
+class ConditionGroupMissingRoiTargetingTests(unittest.TestCase):
+    """Integration tests for Condition Group missing-ROI targeting (Phase 5.8D)."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self) -> None:
+        import tempfile
+
+        import cv2
+        import numpy as np
+
+        from actintrack_app.batch_manager import rename_batch
+        from actintrack_app.condition_group_manager import create_condition_group
+        from actintrack_app.metadata import save_sample_crop_annotation
+        from actintrack_app.project_manager import create_project_structure
+        from actintrack_app.sample_service import create_sample_from_data
+        from actintrack_app.sample_transfer import move_sample_to_condition_group
+        from actintrack_app.utils import CROP_METADATA_JSON, METADATA_DIR
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        create_project_structure(self.root)
+        self.group_a = create_condition_group(self.root, "Group A")
+        self.group_b = create_condition_group(self.root, "Group B")
+
+        def write_video(path: Path) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            writer = cv2.VideoWriter(
+                str(path),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                10.0,
+                (32, 32),
+            )
+            for i in range(3):
+                frame = np.zeros((32, 32, 3), dtype=np.uint8)
+                frame[:, :] = (i * 40, 0, 0)
+                writer.write(frame)
+            writer.release()
+
+        def import_sample(group_id: str, filename: str) -> dict:
+            video = self.root / filename
+            write_video(video)
+            _batch, row = create_sample_from_data(self.root, group_id, video)
+            return dict(row)
+
+        def save_roi(sample_id: str, group_id: str) -> None:
+            crop_path = self.root / METADATA_DIR / CROP_METADATA_JSON
+            save_sample_crop_annotation(
+                crop_path,
+                sample_id,
+                {
+                    "sample_id": sample_id,
+                    "group": group_id,
+                    "condition_group_id": group_id,
+                    "rectangle_roi": {"x": 1, "y": 2, "width": 10, "height": 12},
+                    "status": "roi_marked",
+                },
+            )
+
+        self._import_sample = import_sample
+        self._save_roi = save_roi
+        self._rename_batch = rename_batch
+        self._move_sample = move_sample_to_condition_group
+
+        self.row_a1 = import_sample(self.group_a.id, "a1.mp4")
+        self.row_a2 = import_sample(self.group_a.id, "a2.mp4")
+        self.row_b1 = import_sample(self.group_b.id, "b1.mp4")
+        self.row_b2 = import_sample(self.group_b.id, "b2.mp4")
+        save_roi(str(self.row_a2["sample_id"]), self.group_a.id)
+        save_roi(str(self.row_b2["sample_id"]), self.group_b.id)
+
+        self.window = MainWindow.__new__(MainWindow)
+        self.window._project_root = self.root
+        self.window._current_sample_id = str(self.row_b2["sample_id"])
+        self.window._current_sample = dict(self.row_b2)
+        self.window._tree_item_meta = MainWindow._tree_item_meta.__get__(
+            self.window, MainWindow
+        )
+        self.window.tree_samples = MagicMock()
+        self.window.tree_samples.topLevelItemCount.return_value = 0
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _make_group_tree_item(
+        self,
+        group_id: str,
+        *,
+        children: list[dict[str, Any]] | None = None,
+    ) -> QTreeWidgetItem:
+        group = QTreeWidgetItem(["Group"])
+        group.setData(
+            0,
+            Qt.ItemDataRole.UserRole,
+            {
+                "item_type": ITEM_TYPE_CONDITION_GROUP,
+                "condition_group_id": group_id,
+            },
+        )
+        for child_meta in children or []:
+            child = QTreeWidgetItem([child_meta.get("label", "sample")])
+            child.setData(0, Qt.ItemDataRole.UserRole, child_meta)
+            group.addChild(child)
+        return group
+
+    def test_missing_roi_names_target_sample_in_each_group(self) -> None:
+        ids_a = MainWindow.sample_ids_for_condition_group(
+            self.window, self.group_a.id
+        )
+        ids_b = MainWindow.sample_ids_for_condition_group(
+            self.window, self.group_b.id
+        )
+        missing_a = MainWindow._missing_roi_display_names_for_samples(
+            self.window, ids_a
+        )
+        missing_b = MainWindow._missing_roi_display_names_for_samples(
+            self.window, ids_b
+        )
+        self.assertEqual(missing_a, ["a1.mp4"])
+        self.assertEqual(missing_b, ["b1.mp4"])
+
+    def test_stale_tree_child_from_other_group_is_ignored(self) -> None:
+        stale_group = self._make_group_tree_item(
+            self.group_a.id,
+            children=[
+                {
+                    "item_type": ITEM_TYPE_SAMPLE,
+                    "sample_id": str(self.row_a1["sample_id"]),
+                    "group": self.group_a.id,
+                    "batch_name": "a1.mp4",
+                    "label": "a1.mp4",
+                },
+                {
+                    "item_type": ITEM_TYPE_SAMPLE,
+                    "sample_id": str(self.row_b1["sample_id"]),
+                    "group": self.group_b.id,
+                    "batch_name": "b1.mp4",
+                    "label": "b1.mp4",
+                },
+            ],
+        )
+        ids = MainWindow.sample_ids_for_condition_group(
+            self.window,
+            self.group_a.id,
+            group_item=stale_group,
+        )
+        missing = MainWindow._missing_roi_display_names_for_samples(
+            self.window, ids
+        )
+        self.assertEqual(ids, [str(self.row_a1["sample_id"]), str(self.row_a2["sample_id"])])
+        self.assertEqual(missing, ["a1.mp4"])
+
+    def test_renamed_missing_sample_uses_persisted_display_name(self) -> None:
+        self._rename_batch(
+            self.root,
+            self.group_a.id,
+            str(self.row_a1["batch_name"]),
+            "RenamedA1",
+        )
+        self.window._current_sample = {
+            **self.row_a1,
+            "batch_name": str(self.row_a1["batch_name"]),
+        }
+        ids = MainWindow.sample_ids_for_condition_group(
+            self.window, self.group_a.id
+        )
+        missing = MainWindow._missing_roi_display_names_for_samples(
+            self.window, ids
+        )
+        self.assertEqual(missing, ["RenamedA1"])
+
+    def test_moved_missing_sample_updates_group_targeting(self) -> None:
+        sample_id = str(self.row_a1["sample_id"])
+        self._move_sample(self.root, sample_id, self.group_b.id)
+        missing_a = MainWindow._missing_roi_display_names_for_samples(
+            self.window,
+            MainWindow.sample_ids_for_condition_group(self.window, self.group_a.id),
+        )
+        missing_b = MainWindow._missing_roi_display_names_for_samples(
+            self.window,
+            MainWindow.sample_ids_for_condition_group(self.window, self.group_b.id),
+        )
+        self.assertEqual(missing_a, [])
+        self.assertEqual(sorted(missing_b), sorted(["a1.mp4", "b1.mp4"]))
+
+    def test_different_current_selection_does_not_change_group_validation(self) -> None:
+        self.window._current_sample_id = str(self.row_b2["sample_id"])
+        self.window._current_sample = dict(self.row_b2)
+        missing_a = MainWindow._missing_roi_display_names_for_samples(
+            self.window,
+            MainWindow.sample_ids_for_condition_group(self.window, self.group_a.id),
+        )
+        self.assertEqual(missing_a, ["a1.mp4"])
+
+    def test_condition_group_context_menu_uses_project_backed_missing_names(
+        self,
+    ) -> None:
+        group_item = self._make_group_tree_item(self.group_a.id)
+        self.window._require_project_root = MagicMock(return_value=self.root)
+        self.window._ctx_run_metrics_for_condition_group = MagicMock()
+        self.window._on_add_sample = MagicMock()
+        self.window._ctx_rename_condition_group = MagicMock()
+        self.window._ctx_delete_condition_group = MagicMock()
+        self.window._add_explorer_refresh_action = MagicMock()
+        self.window.tree_samples = MagicMock()
+        self.window.tree_samples.viewport.return_value.mapToGlobal.return_value = (
+            QPoint(0, 0)
+        )
+        self.window._tree_item_meta = MagicMock(
+            return_value={
+                "item_type": ITEM_TYPE_CONDITION_GROUP,
+                "condition_group_id": self.group_a.id,
+            }
+        )
+
+        captured: dict[str, QMenu] = {}
+
+        def make_menu(*_args, **_kwargs) -> QMenu:
+            menu = QMenu()
+            captured["menu"] = menu
+            return menu
+
+        with patch("actintrack_app.gui.QMenu", side_effect=make_menu):
+            with patch.object(QMenu, "exec"):
+                self.window.tree_samples.itemAt.return_value = group_item
+                self.window._on_explorer_context_menu(QPoint(0, 0))
+
+        menu = captured["menu"]
+        labels = [action.text() for action in menu.actions() if not action.isSeparator()]
+        self.assertIn("Run Metrics for Condition Group", labels)
+        self.assertIn("    Missing ROI: a1.mp4", labels)
 
 
 if __name__ == "__main__":
