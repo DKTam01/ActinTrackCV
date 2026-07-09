@@ -184,6 +184,12 @@ from actintrack_app.explorer_sidebar import (
     sample_tree_meta,
     tree_item_condition_group_id,
 )
+from actintrack_app.explorer_tree import (
+    collect_condition_group_expansion_state,
+    configure_condition_group_tree_item,
+    default_expanded_state_for_condition_group,
+    restore_selected_sample_by_id,
+)
 from actintrack_app.recent_workspaces import add_recent
 from actintrack_app.user_preferences import get_last_import_breed, set_last_import_breed
 from actintrack_app.orientation import (
@@ -486,6 +492,7 @@ class MainWindow(QMainWindow):
         self._metric_flush_timer.timeout.connect(self._on_metric_flush_timer)
 
         self._splitter_sizes_before_analysis: list[int] | None = None
+        self._explorer_group_expansion_by_id: dict[str, bool] = {}
         self._build_ui()
         self._set_tracking_settings_editable(False)
         setup_application_menus(self)
@@ -856,13 +863,8 @@ class MainWindow(QMainWindow):
 
         was_selected = str(self._current_sample_id or "") == sample_id
         self._refresh_sample_list()
-        item = self._find_sample_tree_item(sample_id)
-        if item is not None:
-            self.tree_samples.setCurrentItem(item)
-            parent = item.parent()
-            if parent is not None:
-                parent.setExpanded(True)
-        elif was_selected:
+        item = restore_selected_sample_by_id(self.tree_samples, sample_id)
+        if item is None and was_selected:
             self._set_active_sample(None)
             self.reset_preview_state(
                 clear_image=True,
@@ -3575,25 +3577,40 @@ class MainWindow(QMainWindow):
         if folder:
             self._load_project(Path(folder), "Project loaded")
 
-    def _collect_expanded_condition_group_ids(self) -> set[str]:
-        expanded: set[str] = set()
-        for top_idx in range(self.tree_samples.topLevelItemCount()):
-            top = self.tree_samples.topLevelItem(top_idx)
-            if top is None or not top.isExpanded():
-                continue
-            meta = self._tree_item_meta(top)
-            if meta and meta.get("item_type") == ITEM_TYPE_CONDITION_GROUP:
-                gid = str(meta.get("condition_group_id", "")).strip()
-                if gid:
-                    expanded.add(gid)
-        return expanded
+    def _remember_explorer_group_expansion(self) -> None:
+        self._explorer_group_expansion_by_id.update(
+            collect_condition_group_expansion_state(self.tree_samples)
+        )
+
+    def _explorer_group_has_tree_children(
+        self,
+        group_id: str,
+        df: pd.DataFrame,
+    ) -> bool:
+        batches = list_batches(self._project_root, group_id)
+        group_df = (
+            df[df["condition_group_id"].astype(str) == group_id]
+            if "condition_group_id" in df.columns
+            else df[df["group"].astype(str) == group_id]
+        )
+        return bool(batches) or not group_df.empty
+
+    def _expanded_state_for_explorer_group(
+        self,
+        group_id: str,
+        *,
+        has_children: bool,
+    ) -> bool:
+        return default_expanded_state_for_condition_group(
+            group_id,
+            has_children=has_children,
+            remembered=self._explorer_group_expansion_by_id,
+        )
 
     def _add_explorer_group_item(
         self,
         group_id: str,
         display_name: str,
-        *,
-        expanded: bool,
     ) -> QTreeWidgetItem:
         item = QTreeWidgetItem([display_name])
         item.setData(
@@ -3601,7 +3618,7 @@ class MainWindow(QMainWindow):
             Qt.ItemDataRole.UserRole,
             condition_group_tree_meta(group_id),
         )
-        item.setExpanded(expanded)
+        configure_condition_group_tree_item(item)
         self.tree_samples.addTopLevelItem(item)
         return item
 
@@ -3718,7 +3735,7 @@ class MainWindow(QMainWindow):
             if self._current_sample
             else None
         )
-        expanded_groups = self._collect_expanded_condition_group_ids()
+        self._remember_explorer_group_expansion()
         self.tree_samples.blockSignals(True)
         self.tree_samples.clear()
         if self._project_root is None:
@@ -3741,23 +3758,24 @@ class MainWindow(QMainWindow):
             return
 
         self.lbl_explorer_empty.setVisible(False)
-        expand_all = not expanded_groups
         for record in records:
-            should_expand = expand_all or record.id in expanded_groups
+            has_children = self._explorer_group_has_tree_children(record.id, df)
+            should_expand = self._expanded_state_for_explorer_group(
+                record.id,
+                has_children=has_children,
+            )
             group_item = self._add_explorer_group_item(
                 record.id,
                 record.name,
-                expanded=should_expand,
             )
             self._populate_explorer_group(group_item, record.id, df)
+            group_item.setExpanded(should_expand)
 
         if keep_id:
-            item = self._find_sample_tree_item(keep_id)
-            if item is not None:
-                self.tree_samples.setCurrentItem(item)
-                parent = item.parent()
-                if parent is not None:
-                    parent.setExpanded(True)
+            item = restore_selected_sample_by_id(self.tree_samples, keep_id)
+            if item is None:
+                self._set_active_sample(None)
+                self._clear_preview_pane()
         else:
             sample_items = self._iter_sample_tree_items()
             if sample_items:

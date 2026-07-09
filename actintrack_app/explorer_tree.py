@@ -35,6 +35,102 @@ from actintrack_app.explorer_sidebar import (
 )
 
 
+def configure_condition_group_tree_item(item: QTreeWidgetItem) -> None:
+    """Condition Groups always show a folder disclosure affordance."""
+    item.setChildIndicatorPolicy(
+        QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+    )
+
+
+def collect_condition_group_expansion_state(tree: QTreeWidget) -> dict[str, bool]:
+    """Snapshot expanded/collapsed state keyed by stable ``condition_group_id``."""
+    remembered: dict[str, bool] = {}
+    for top_idx in range(tree.topLevelItemCount()):
+        top = tree.topLevelItem(top_idx)
+        if top is None:
+            continue
+        meta = top.data(0, Qt.ItemDataRole.UserRole)
+        if not isinstance(meta, dict):
+            continue
+        if meta.get("item_type") != ITEM_TYPE_CONDITION_GROUP:
+            continue
+        gid = str(meta.get("condition_group_id", "")).strip()
+        if gid:
+            remembered[gid] = top.isExpanded()
+    return remembered
+
+
+def default_expanded_state_for_condition_group(
+    group_id: str,
+    *,
+    has_children: bool,
+    remembered: dict[str, bool],
+) -> bool:
+    """Default non-empty groups expanded and empty groups collapsed unless remembered."""
+    if group_id in remembered:
+        return remembered[group_id]
+    return has_children
+
+
+def restore_selected_sample_by_id(
+    tree: QTreeWidget,
+    sample_id: str,
+) -> QTreeWidgetItem | None:
+    """Select a Sample row by stable ``sample_id`` when it still exists."""
+    target = str(sample_id).strip()
+    if not target:
+        return None
+
+    def walk(parent: QTreeWidgetItem) -> QTreeWidgetItem | None:
+        for idx in range(parent.childCount()):
+            child = parent.child(idx)
+            meta = child.data(0, Qt.ItemDataRole.UserRole)
+            if (
+                isinstance(meta, dict)
+                and meta.get("item_type") == ITEM_TYPE_SAMPLE
+                and str(meta.get("sample_id", "")).strip() == target
+            ):
+                return child
+            found = walk(child)
+            if found is not None:
+                return found
+        return None
+
+    for top_idx in range(tree.topLevelItemCount()):
+        top = tree.topLevelItem(top_idx)
+        if top is None:
+            continue
+        meta = top.data(0, Qt.ItemDataRole.UserRole)
+        if (
+            isinstance(meta, dict)
+            and meta.get("item_type") == ITEM_TYPE_SAMPLE
+            and str(meta.get("sample_id", "")).strip() == target
+        ):
+            tree.setCurrentItem(top)
+            return top
+        found = walk(top)
+        if found is not None:
+            tree.setCurrentItem(found)
+            return found
+    return None
+
+
+def tree_index_shows_branch_indicator(tree: QTreeWidget, index) -> bool:
+    """True when a row should paint the custom Explorer branch chevron."""
+    model = tree.model()
+    if model is None or not index.isValid():
+        return False
+    if model.hasChildren(index):
+        return True
+    item = tree.itemFromIndex(index)
+    if item is None:
+        return False
+    return (
+        item.childIndicatorPolicy()
+        == QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+    )
+
+
 def _drag_pixmap_for_label(label: str, font_metrics: QFontMetrics) -> QPixmap:
     text = label.strip() or "Sample"
     padding_x = 12
@@ -255,7 +351,7 @@ class ExplorerTreeWidget(QTreeWidget):
                 model=model,
             )
 
-        if not model.hasChildren(index):
+        if not tree_index_shows_branch_indicator(self, index):
             return
 
         selected = False
