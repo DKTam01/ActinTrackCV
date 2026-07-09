@@ -1148,6 +1148,37 @@ class MainWindow(QMainWindow):
             resume_playback=resume_playback,
         )
 
+    def _display_metric_analysis_view_for_current_sample(
+        self,
+        *,
+        resume_playback: bool = False,
+    ) -> None:
+        """Show Metric Analysis shell and any cached/draft results without recomputing."""
+        self._ensure_metric_view_shell_visible()
+        self.update_tracking_result_panel()
+        self._update_optical_flow_qc_readout()
+        sid = self._current_sample_id
+        if sid is None:
+            self._show_metric_analysis_placeholder("Select a sample first.")
+            return
+        check = self._validate_current_roi()
+        if not check.ok or check.roi_oriented is None:
+            message = check.message or (
+                "Metric Analysis is unavailable because this Sample "
+                "does not have a saved ROI."
+            )
+            self._show_metric_analysis_placeholder(message)
+            return
+        cached = self._tracking_results_by_sample.get(sid)
+        if cached is not None:
+            self._enter_cropped_preview_mode(cached)
+            if resume_playback:
+                self._preview_play()
+            return
+        self._show_metric_analysis_placeholder(
+            "Run Metrics to generate the analysis preview."
+        )
+
     def _set_active_sample(self, sample: Optional[dict[str, Any]]) -> None:
         self._cancel_pending_debounced_tracking()
         prev_sid = self._current_sample_id
@@ -1164,8 +1195,6 @@ class MainWindow(QMainWindow):
             self._tracking_result_stale_by_sample[self._current_sample_id] = True
             self._optical_flow_stale_by_sample[self._current_sample_id] = True
             self.update_tracking_result_panel()
-        if self._preview_mode == "cropped_tracking":
-            self._schedule_metric_settings_refresh()
         self._update_metric_freshness_label()
 
     def _on_optical_flow_setting_changed(self, *_args: object) -> None:
@@ -1174,8 +1203,6 @@ class MainWindow(QMainWindow):
             self._clear_of_flow_cache(self._current_sample_id)
             self._update_optical_flow_qc_readout()
             self.update_tracking_result_panel()
-        if self._preview_mode == "cropped_tracking":
-            self._schedule_metric_settings_refresh()
         self._update_metric_freshness_label()
 
     @staticmethod
@@ -1893,6 +1920,49 @@ class MainWindow(QMainWindow):
         _orientation, roi = self._saved_orientation_roi_for_sample(sample_id)
         return roi is not None
 
+    @staticmethod
+    def _roi_key_from_rect(roi: Optional[RectROI]) -> tuple[int, int, int, int] | None:
+        if roi is None:
+            return None
+        return (int(roi.x), int(roi.y), int(roi.width), int(roi.height))
+
+    def _saved_roi_key_for_sample(
+        self, sample_id: str
+    ) -> tuple[int, int, int, int] | None:
+        if self._project_root is None:
+            return None
+        ann = get_sample_annotation(self._project_root, sample_id)
+        if not ann:
+            return None
+        _orientation, roi = annotation_from_legacy(ann)
+        return self._roi_key_from_rect(roi)
+
+    def _sample_has_measurable_draft_results(self, sample_id: str) -> bool:
+        track = self._read_draft_tracking_payload(sample_id)
+        of_payload = self._read_draft_optical_flow_payload(sample_id)
+        track_ok = bool(
+            track
+            and int(track.get("num_tracks_with_valid_steps", 0) or 0) > 0
+        )
+        of_ok = bool(of_payload and of_payload.get("has_valid_result"))
+        return track_ok or of_ok
+
+    def _mark_metrics_stale_if_saved_roi_changed(
+        self,
+        sample_id: str,
+        *,
+        previous_roi_key: tuple[int, int, int, int] | None,
+        new_roi_key: tuple[int, int, int, int] | None,
+    ) -> None:
+        if previous_roi_key is None or new_roi_key is None:
+            return
+        if previous_roi_key == new_roi_key:
+            return
+        if not self._sample_has_measurable_draft_results(sample_id):
+            return
+        self._tracking_result_stale_by_sample[sample_id] = True
+        self._optical_flow_stale_by_sample[sample_id] = True
+
     def _compute_metrics_for_sample(self, sample_id: str) -> str:
         """Compute Template Tracking + Optical Flow for one Sample from its
         saved orientation/ROI and current metric settings.
@@ -2015,6 +2085,9 @@ class MainWindow(QMainWindow):
             self._update_metric_freshness_label()
             return
         if not self._sample_has_valid_data_and_roi(sid):
+            self._status(
+                "Run Metrics requires a Sample with valid Data and a saved ROI."
+            )
             self._update_metric_freshness_label()
             return
         if sid in self._metric_compute_queue:
@@ -2060,16 +2133,6 @@ class MainWindow(QMainWindow):
             return "running"
         if not self._sample_has_valid_data_and_roi(sid):
             return "unavailable_no_roi"
-        if sid in self._metric_compute_queue:
-            return "scheduled"
-        if sid == self._current_sample_id and (
-            self._metric_debounce_timer.isActive()
-            or self._metric_settings_timer.isActive()
-        ) and (
-            self._pending_tracking_snapshot is not None
-            or self._pending_optical_flow_snapshot is not None
-        ):
-            return "scheduled"
 
         track = self._read_draft_tracking_payload(sid)
         of = self._read_draft_optical_flow_payload(sid)
@@ -2198,6 +2261,7 @@ class MainWindow(QMainWindow):
             return False
 
         sid = ann["sample_id"]
+        previous_roi_key = self._saved_roi_key_for_sample(sid)
         current_status = str(self._current_sample.get("processing_status", ""))
         new_status = self._status_after_roi_autosave(current_status)
         try:
@@ -2230,7 +2294,12 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._metric_error_by_sample.pop(sid, None)
         self._set_roi_save_status("ROI saved", saved=True)
-        self._schedule_debounced_metrics()
+        self._mark_metrics_stale_if_saved_roi_changed(
+            sid,
+            previous_roi_key=previous_roi_key,
+            new_roi_key=self._roi_key_from_rect(self.canvas.rect_roi()),
+        )
+        self._update_metric_freshness_label()
         return True
 
     def _on_apply_custom_angle(self) -> None:
@@ -2259,17 +2328,12 @@ class MainWindow(QMainWindow):
     def on_roi_changed(self, roi: Optional[RectROI]) -> None:
         if roi is None:
             return
-        if self._current_sample_id:
-            self._tracking_result_stale_by_sample[self._current_sample_id] = True
-            self._optical_flow_stale_by_sample[self._current_sample_id] = True
         self._roi_user_adjusted = True
         self._roi_autosave_pending = True
         self._set_roi_save_status("Unsaved changes", saved=False)
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
-        self._schedule_debounced_metrics()
         self._refresh_roi_preview_panel()
-        self._update_metric_freshness_label()
 
     def on_roi_edit_finished(self) -> None:
         self._autosave_roi(quiet=True)
@@ -3486,8 +3550,8 @@ class MainWindow(QMainWindow):
 
         ``_after_import_refresh`` already selected the Sample and ran the
         auto-suggestion onto the canvas (when confidence is high enough). Here
-        we persist that suggestion so the Sample becomes "ROI marked" and gets
-        metrics scheduled. If no ROI was suggested, the Sample stays "Raw".
+        we persist that suggestion so the Sample becomes "ROI marked".
+        If no ROI was suggested, the Sample stays "Raw".
         """
         if self._project_root is None or self._current_sample is None:
             return
@@ -3841,13 +3905,6 @@ class MainWindow(QMainWindow):
         resume_playback = self._preview_playing if was_metric_analysis_view else False
         self._playback_pause()
 
-        prev_sid = self._current_sample_id
-        new_sid = str(data.get("sample_id", "")).strip() or None
-        if prev_sid and prev_sid != new_sid:
-            self.ensure_metrics_scheduled_for_sample_if_needed(
-                prev_sid, reason="switch_away"
-            )
-
         self._set_active_sample(data)
         group = str(data.get("group", ""))
         if (
@@ -3874,10 +3931,9 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     self.update_tracking_result_panel(sid)
-                    if not self._reload_metric_analysis_view_for_current_sample(
+                    self._display_metric_analysis_view_for_current_sample(
                         resume_playback=resume_playback,
-                    ):
-                        self._schedule_debounced_metrics()
+                    )
             else:
                 self.reset_preview_state(clear_image=True)
                 self.update_tracking_result_panel(sid)
@@ -3922,8 +3978,6 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._update_orientation_label()
         self._refresh_roi_save_status_from_context()
-        if self.canvas.rect_roi() is not None and render_canvas:
-            self._schedule_debounced_metrics()
         self._refresh_roi_preview_panel()
         self._update_metric_freshness_label()
 

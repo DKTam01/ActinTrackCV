@@ -30,7 +30,7 @@ class MetricDisplayTests(unittest.TestCase):
     def test_never_analyzed_last_line_is_dash(self) -> None:
         self.assertEqual(render_last_analyzed_text(None), "Last analyzed: —")
         status, last = render_metric_display_lines("not_analyzed", None)
-        self.assertEqual(status, "Metric status: Not analyzed")
+        self.assertEqual(status, "Metric status: No Metrics")
         self.assertEqual(last, "Last analyzed: —")
 
     def test_analyzed_status_and_timestamp_separate(self) -> None:
@@ -39,11 +39,11 @@ class MetricDisplayTests(unittest.TestCase):
         self.assertEqual(status, "Metric status: Analyzed")
         self.assertIn("2026", last)
 
-    def test_stale_needs_analysis_status(self) -> None:
+    def test_stale_status(self) -> None:
         ts = datetime(2026, 1, 2, 12, 0, tzinfo=timezone.utc)
         self.assertEqual(
             render_metric_status_text("stale"),
-            "Metric status: Needs analysis",
+            "Metric status: Stale",
         )
         self.assertIn("2026", render_last_analyzed_text(ts))
 

@@ -22,12 +22,12 @@ def render_metric_status_text(state: MetricState) -> str:
     """Short metric workflow status (never includes a timestamp)."""
     mapping = {
         "unavailable_no_roi": "Not analyzed",
-        "not_analyzed": "Not analyzed",
+        "not_analyzed": "No Metrics",
         "scheduled": "Scheduled",
         "running": "Analyzing",
         "error": "Error",
         "analyzed": "Analyzed",
-        "stale": "Needs analysis",
+        "stale": "Stale",
     }
     label = mapping.get(state, "Not analyzed")
     return f"Metric status: {label}"

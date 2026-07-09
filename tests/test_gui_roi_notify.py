@@ -67,7 +67,7 @@ class ImageCanvasRoiNotifyTests(unittest.TestCase):
 
 
 class OnRoiChangedStaleTests(unittest.TestCase):
-    def test_on_roi_changed_marks_metric_results_stale(self) -> None:
+    def test_on_roi_changed_does_not_mark_metric_results_stale(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._tracking_result_stale_by_sample = {}
@@ -82,9 +82,9 @@ class OnRoiChangedStaleTests(unittest.TestCase):
 
         MainWindow.on_roi_changed(window, RectROI(1, 2, 10, 12))
 
-        self.assertTrue(window._tracking_result_stale_by_sample["S1"])
-        self.assertTrue(window._optical_flow_stale_by_sample["S1"])
-        window._update_metric_freshness_label.assert_called_once()
+        self.assertNotIn("S1", window._tracking_result_stale_by_sample)
+        self.assertNotIn("S1", window._optical_flow_stale_by_sample)
+        window._schedule_debounced_metrics.assert_not_called()
 
     def test_metric_state_shows_stale_after_roi_change(self) -> None:
         window = MainWindow.__new__(MainWindow)

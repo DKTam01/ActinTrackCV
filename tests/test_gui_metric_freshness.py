@@ -35,20 +35,13 @@ class MetricScheduledStateTests(unittest.TestCase):
         return window
 
     def test_pending_snapshots_without_active_timer_not_scheduled(self) -> None:
-        """Stale pending snapshots must not keep status scheduled after debounce."""
+        """Stale pending snapshots must not affect status once debounce is inactive."""
         window = self._stub_window()
         self.assertEqual(window._metric_state_for_sample("S1"), "analyzed")
 
-    def test_active_timer_with_pending_is_scheduled(self) -> None:
+    def test_active_timer_with_pending_does_not_surface_scheduled(self) -> None:
         window = self._stub_window()
         window._metric_debounce_timer = MagicMock(isActive=lambda: True)
-        self.assertEqual(window._metric_state_for_sample("S1"), "scheduled")
-
-    def test_active_timer_without_pending_not_scheduled(self) -> None:
-        window = self._stub_window()
-        window._metric_debounce_timer = MagicMock(isActive=lambda: True)
-        window._pending_tracking_snapshot = None
-        window._pending_optical_flow_snapshot = None
         self.assertEqual(window._metric_state_for_sample("S1"), "analyzed")
 
     def test_on_metric_debounce_fired_clears_pending_and_refreshes(self) -> None:
@@ -132,7 +125,7 @@ class RoiMetricStatusSeparationTests(unittest.TestCase):
 
         window.lbl_roi_save_status.setText.assert_called_once_with("Unsaved changes")
 
-    def test_on_roi_changed_updates_metric_label_not_roi_scheduled_text(self) -> None:
+    def test_on_roi_changed_does_not_schedule_metrics(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._tracking_result_stale_by_sample = {}
@@ -150,10 +143,8 @@ class RoiMetricStatusSeparationTests(unittest.TestCase):
         window._set_roi_save_status.assert_called_once_with(
             "Unsaved changes", saved=False
         )
-        for call in window._set_roi_save_status.call_args_list:
-            self.assertNotIn("Metrics scheduled", str(call))
-        window._schedule_debounced_metrics.assert_called_once_with()
-        window._update_metric_freshness_label.assert_called_once()
+        window._schedule_debounced_metrics.assert_not_called()
+        window._update_metric_freshness_label.assert_not_called()
 
     def test_sample_switch_refreshes_roi_and_metric_labels(self) -> None:
         window = MainWindow.__new__(MainWindow)
