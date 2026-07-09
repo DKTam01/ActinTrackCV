@@ -224,23 +224,28 @@ class RunMetricsButtonTests(unittest.TestCase):
         window._status = MagicMock()
         window._update_metric_freshness_label = MagicMock()
 
-        MainWindow.run_metrics_now_for_current_sample(window)
+        result = MainWindow.run_metrics_for_sample_id(
+            window,
+            "S1",
+            show_dialog_on_block=False,
+        )
 
+        self.assertEqual(result, "unavailable")
         window._compute_metrics_for_sample.assert_not_called()
         window._status.assert_called_once()
+        window._update_metric_freshness_label.assert_called_once()
 
     def test_run_metrics_computes_current_sample_only(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
-        window._metrics_inflight = set()
-        window._metric_compute_queue = []
-        window._sample_has_valid_data_and_roi = MagicMock(return_value=True)
-        window._compute_metrics_for_sample = MagicMock(return_value="analyzed")
-        window._update_metric_freshness_label = MagicMock()
+        window.run_metrics_for_sample_id = MagicMock(return_value="analyzed")
 
         MainWindow.run_metrics_now_for_current_sample(window)
 
-        window._compute_metrics_for_sample.assert_called_once_with("S1")
+        window.run_metrics_for_sample_id.assert_called_once_with(
+            "S1",
+            show_dialog_on_block=False,
+        )
 
 
 if __name__ == "__main__":

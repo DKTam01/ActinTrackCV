@@ -180,6 +180,7 @@ from actintrack_app.explorer_sidebar import (
     condition_group_tree_meta,
     empty_sample_sidebar_label,
     empty_sample_tree_meta,
+    is_draggable_sample_meta,
     sample_sidebar_display_label,
     sample_tree_meta,
     tree_item_condition_group_id,
@@ -2077,22 +2078,39 @@ class MainWindow(QMainWindow):
             if self._metric_compute_queue:
                 self._metric_flush_timer.start()
 
+    def run_metrics_for_sample_id(
+        self,
+        sample_id: str,
+        *,
+        show_dialog_on_block: bool = False,
+    ) -> Optional[str]:
+        """Explicitly compute metrics for one Sample by stable ``sample_id``."""
+        sid = str(sample_id).strip()
+        if not sid:
+            return None
+        if sid in self._metrics_inflight:
+            if sid == self._current_sample_id:
+                self._update_metric_freshness_label()
+            return "running"
+        if not self._sample_has_valid_data_and_roi(sid):
+            message = (
+                "Run Metrics requires a Sample with valid Data and a saved ROI."
+            )
+            self._status(message)
+            if show_dialog_on_block:
+                gui_dialogs.warning(self, "Run Metrics", message)
+            elif sid == self._current_sample_id:
+                self._update_metric_freshness_label()
+            return "unavailable"
+        if sid in self._metric_compute_queue:
+            self._metric_compute_queue.remove(sid)
+        return self._compute_metrics_for_sample(sid)
+
     def run_metrics_now_for_current_sample(self) -> None:
         sid = self._current_sample_id
         if not sid:
             return
-        if sid in self._metrics_inflight:
-            self._update_metric_freshness_label()
-            return
-        if not self._sample_has_valid_data_and_roi(sid):
-            self._status(
-                "Run Metrics requires a Sample with valid Data and a saved ROI."
-            )
-            self._update_metric_freshness_label()
-            return
-        if sid in self._metric_compute_queue:
-            self._metric_compute_queue.remove(sid)
-        self._compute_metrics_for_sample(sid)
+        self.run_metrics_for_sample_id(sid, show_dialog_on_block=False)
 
     # ----- Metric freshness state + rendering ------------------------------
 
@@ -4293,7 +4311,31 @@ class MainWindow(QMainWindow):
                 lambda gid=group_id: self._ctx_delete_condition_group(gid),
             )
             self._add_explorer_refresh_action(menu)
-        elif item_type in (ITEM_TYPE_SAMPLE, ITEM_TYPE_EMPTY_SAMPLE):
+        elif is_draggable_sample_meta(meta):
+            sample_id = str(meta.get("sample_id", "")).strip()
+            group = str(meta.get("group", self._ensure_filter_group_valid()))
+            batch_name = str(meta.get("batch_name", ""))
+            run_action = menu.addAction(
+                "Run Metrics",
+                lambda sid=sample_id: self._ctx_run_metrics_for_sample(sid),
+            )
+            if not self._sample_has_valid_data_and_roi(sample_id):
+                run_action.setEnabled(False)
+            menu.addAction(
+                "Replace Data",
+                lambda g=group, b=batch_name: self._ctx_replace_sample_data(g, b),
+            )
+            menu.addSeparator()
+            menu.addAction(
+                "Rename Sample",
+                lambda g=group, b=batch_name: self._ctx_rename_batch(g, b),
+            )
+            menu.addAction(
+                "Delete Sample",
+                lambda g=group, b=batch_name: self._ctx_delete_batch(g, b),
+            )
+            self._add_explorer_refresh_action(menu)
+        elif item_type == ITEM_TYPE_EMPTY_SAMPLE:
             group = str(meta.get("group", self._ensure_filter_group_valid()))
             batch_name = str(meta.get("batch_name", ""))
             menu.addAction(
@@ -4323,6 +4365,9 @@ class MainWindow(QMainWindow):
     def _ctx_rename_condition_group(self, group_id: str) -> None:
         self._refresh_condition_group_combo(select=group_id)
         self._on_rename_condition_group()
+
+    def _ctx_run_metrics_for_sample(self, sample_id: str) -> None:
+        self.run_metrics_for_sample_id(sample_id, show_dialog_on_block=True)
 
     def _ctx_delete_condition_group(self, group_id: str) -> None:
         self._refresh_condition_group_combo(select=group_id)
