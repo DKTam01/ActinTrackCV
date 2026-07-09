@@ -48,7 +48,6 @@ class RunMetricsForSampleIdTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._metrics_inflight = set()
-        window._metric_compute_queue = []
         window._sample_has_valid_data_and_roi = MagicMock(return_value=True)
         window._compute_metrics_for_sample = MagicMock(return_value="analyzed")
         window._status = MagicMock()

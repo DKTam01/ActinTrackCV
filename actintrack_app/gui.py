@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -244,7 +244,6 @@ from actintrack_app.roi_workflow import (
 from actintrack_app.utils import (
     CROP_METADATA_JSON,
     METADATA_DIR,
-    METRIC_DEBOUNCE_MS,
     RAW_DIR,
     SAMPLES_CSV,
     STATUS_IMPORTED,
@@ -317,26 +316,6 @@ _ROI_STATUS_UPGRADE_FROM = frozenset(
         STATUS_UNANNOTATED,
     }
 )
-
-
-@dataclass(frozen=True)
-class _TrackingRunSnapshot:
-    sample_id: str
-    roi_key: tuple[int, int, int, int]
-    params_key: tuple[tuple[str, Any], ...]
-    orientation_key: tuple[float, bool, bool]
-    video_path: str
-    run_token: int
-
-
-@dataclass(frozen=True)
-class _OpticalFlowRunSnapshot:
-    sample_id: str
-    roi_key: tuple[int, int, int, int]
-    settings_key: tuple[tuple[str, Any], ...]
-    orientation_key: tuple[float, bool, bool]
-    video_path: str
-    run_token: int
 
 
 STATUS_COLORS = {
@@ -462,35 +441,14 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._tracking_results_by_sample: dict[str, CroppedPreviewAnalysis] = {}
         self._tracking_result_stale_by_sample: dict[str, bool] = {}
-        self._pending_tracking_snapshot: Optional[_TrackingRunSnapshot] = None
-        self._tracking_run_token = 0
-        self._tracking_job_running = False
         self._cropped_metric_mode = "template"
         self._metric_analysis_view_active = False
         self._optical_flow_results_by_sample: dict[str, OpticalFlowResult] = {}
         self._optical_flow_stale_by_sample: dict[str, bool] = {}
-        self._optical_flow_run_token = 0
-        self._optical_flow_job_running = False
-        self._pending_optical_flow_snapshot: Optional[_OpticalFlowRunSnapshot] = None
-        self._metric_debounce_timer = QTimer(self)
-        self._metric_debounce_timer.setSingleShot(True)
-        self._metric_debounce_timer.setInterval(METRIC_DEBOUNCE_MS)
-        self._metric_debounce_timer.timeout.connect(self._on_metric_debounce_fired)
-        self._metric_settings_timer = QTimer(self)
-        self._metric_settings_timer.setSingleShot(True)
-        self._metric_settings_timer.setInterval(METRIC_DEBOUNCE_MS)
-        self._metric_settings_timer.timeout.connect(
-            self._on_metric_settings_debounce_fired
-        )
         self._of_flow_caches: dict[str, OpticalFlowFlowCache] = {}
-        # Per-Sample metric scheduling/state (decoupled from the live canvas).
+        # Per-Sample explicit metric compute state (decoupled from the live canvas).
         self._metrics_inflight: set[str] = set()
         self._metric_error_by_sample: dict[str, bool] = {}
-        self._metric_compute_queue: list[str] = []
-        self._metric_flush_timer = QTimer(self)
-        self._metric_flush_timer.setSingleShot(True)
-        self._metric_flush_timer.setInterval(150)
-        self._metric_flush_timer.timeout.connect(self._on_metric_flush_timer)
 
         self._splitter_sizes_before_analysis: list[int] | None = None
         self._explorer_group_expansion_by_id: dict[str, bool] = {}
@@ -648,9 +606,6 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Stop playback and clear cropped/tracking preview when context changes."""
         self._preview_pause()
-        self._metric_debounce_timer.stop()
-        self._metric_settings_timer.stop()
-        self._cancel_pending_debounced_tracking()
         self._set_metric_mode_widgets_visible(False)
         self._clear_of_flow_cache()
         self._preview_frame_index = 0
@@ -1112,9 +1067,6 @@ class MainWindow(QMainWindow):
 
     def _clear_sample_specific_metric_state(self) -> None:
         self._preview_pause()
-        self._metric_debounce_timer.stop()
-        self._metric_settings_timer.stop()
-        self._cancel_pending_debounced_tracking()
         self._cropped_preview = None
         self._preview_frame_index = 0
         self._clear_of_flow_cache()
@@ -1181,7 +1133,6 @@ class MainWindow(QMainWindow):
         )
 
     def _set_active_sample(self, sample: Optional[dict[str, Any]]) -> None:
-        self._cancel_pending_debounced_tracking()
         prev_sid = self._current_sample_id
         self._current_sample = sample
         sid = str(sample.get("sample_id", "")).strip() if sample else ""
@@ -1219,108 +1170,6 @@ class MainWindow(QMainWindow):
             return None
         return STATUS_ROI_MARKED
 
-    def _cancel_pending_debounced_tracking(self) -> None:
-        self._metric_debounce_timer.stop()
-        self._metric_settings_timer.stop()
-        self._tracking_run_token += 1
-        self._optical_flow_run_token += 1
-        self._pending_tracking_snapshot = None
-        self._pending_optical_flow_snapshot = None
-
-    def _capture_tracking_snapshot(self) -> Optional[_TrackingRunSnapshot]:
-        if self._current_sample_id is None or self._current_sample is None:
-            return None
-        roi = self.canvas.rect_roi()
-        if roi is None:
-            return None
-        path = self._sample_file_path()
-        if path is None or not path.exists() or not is_supported_video_path(path):
-            return None
-        check = self._validate_current_roi()
-        if not check.ok or check.roi_oriented is None:
-            return None
-        try:
-            params = self._tracking_params_from_ui()
-        except ValueError:
-            return None
-        return _TrackingRunSnapshot(
-            sample_id=self._current_sample_id,
-            roi_key=(roi.x, roi.y, roi.width, roi.height),
-            params_key=tuple(sorted(asdict(params).items())),
-            orientation_key=(
-                float(self._orientation.rotation_angle_degrees),
-                bool(self._orientation.mirror_y_axis),
-                bool(self._orientation.flipped_180),
-            ),
-            video_path=str(path.resolve()),
-            run_token=self._tracking_run_token,
-        )
-
-    def _snapshot_matches_current(self, snapshot: _TrackingRunSnapshot) -> bool:
-        if snapshot.run_token != self._tracking_run_token:
-            return False
-        current = self._capture_tracking_snapshot()
-        if current is None:
-            return False
-        return (
-            current.sample_id == snapshot.sample_id
-            and current.roi_key == snapshot.roi_key
-            and current.params_key == snapshot.params_key
-            and current.orientation_key == snapshot.orientation_key
-            and current.video_path == snapshot.video_path
-        )
-
-    def _schedule_debounced_metrics(self) -> None:
-        track_snap = self._capture_tracking_snapshot()
-        of_snap = self._capture_optical_flow_snapshot()
-        if track_snap is None and of_snap is None:
-            return
-        if track_snap is not None:
-            self._pending_tracking_snapshot = track_snap
-        if of_snap is not None:
-            if self._current_sample_id:
-                self._clear_of_flow_cache(self._current_sample_id)
-            self._pending_optical_flow_snapshot = of_snap
-        self._metric_debounce_timer.start()
-        self._update_metric_freshness_label()
-
-    def _schedule_metric_settings_refresh(self) -> None:
-        if self._preview_mode != "cropped_tracking":
-            return
-        track_snap = self._capture_tracking_snapshot()
-        of_snap = self._capture_optical_flow_snapshot()
-        if track_snap is None and of_snap is None:
-            return
-        if track_snap is not None:
-            self._pending_tracking_snapshot = track_snap
-        if of_snap is not None:
-            if self._current_sample_id:
-                self._clear_of_flow_cache(self._current_sample_id)
-            self._pending_optical_flow_snapshot = of_snap
-        self._metric_settings_timer.start()
-
-    def _on_metric_debounce_fired(self) -> None:
-        track_snap = self._pending_tracking_snapshot
-        of_snap = self._pending_optical_flow_snapshot
-        self._pending_tracking_snapshot = None
-        self._pending_optical_flow_snapshot = None
-        try:
-            if track_snap is not None:
-                self._run_draft_tracking_for_snapshot(
-                    track_snap,
-                    update_cropped_preview=self._preview_mode == "cropped_tracking",
-                    quiet_skip=True,
-                )
-            if of_snap is not None:
-                self._run_optical_flow_for_snapshot(of_snap, quiet_skip=True)
-        finally:
-            self._update_metric_freshness_label()
-
-    def _on_metric_settings_debounce_fired(self) -> None:
-        if self._preview_mode != "cropped_tracking":
-            return
-        self._on_metric_debounce_fired()
-
     def _optical_flow_settings_from_ui(self) -> OpticalFlowSettings:
         blur = int(self.combo_of_blur.currentData() or 0)
         return OpticalFlowSettings(
@@ -1336,130 +1185,11 @@ class MainWindow(QMainWindow):
             seconds_per_frame=float(self.spin_track_spf.value()),
         )
 
-    def _capture_optical_flow_snapshot(self) -> Optional[_OpticalFlowRunSnapshot]:
-        if self._current_sample_id is None or self._current_sample is None:
-            return None
-        roi = self.canvas.rect_roi()
-        if roi is None:
-            return None
-        path = self._sample_file_path()
-        if path is None or not path.exists() or not is_supported_video_path(path):
-            return None
-        check = self._validate_current_roi()
-        if not check.ok or check.roi_oriented is None:
-            return None
-        try:
-            settings = self._optical_flow_settings_from_ui()
-        except ValueError:
-            return None
-        return _OpticalFlowRunSnapshot(
-            sample_id=self._current_sample_id,
-            roi_key=(roi.x, roi.y, roi.width, roi.height),
-            settings_key=tuple(sorted(asdict(settings).items())),
-            orientation_key=(
-                float(self._orientation.rotation_angle_degrees),
-                bool(self._orientation.mirror_y_axis),
-                bool(self._orientation.flipped_180),
-            ),
-            video_path=str(path.resolve()),
-            run_token=self._optical_flow_run_token,
-        )
-
-    def _optical_flow_snapshot_matches_current(
-        self, snapshot: _OpticalFlowRunSnapshot
-    ) -> bool:
-        if snapshot.run_token != self._optical_flow_run_token:
-            return False
-        current = self._capture_optical_flow_snapshot()
-        if current is None:
-            return False
-        return (
-            current.sample_id == snapshot.sample_id
-            and current.roi_key == snapshot.roi_key
-            and current.settings_key == snapshot.settings_key
-            and current.orientation_key == snapshot.orientation_key
-            and current.video_path == snapshot.video_path
-        )
-
     def _draft_optical_flow_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
         from actintrack_app.schema_compat import draft_optical_flow_path
 
         return draft_optical_flow_path(self._project_root, data_id)
-
-    def _run_optical_flow_for_snapshot(
-            self,
-        snapshot: _OpticalFlowRunSnapshot,
-        *,
-        quiet_skip: bool = True,
-    ) -> bool:
-        if self._optical_flow_job_running:
-            return False
-        if snapshot.sample_id != self._current_sample_id:
-            return False
-        if not self._optical_flow_snapshot_matches_current(snapshot):
-            if not quiet_skip:
-                self._status("Optical flow paused — ROI changed")
-                self._update_metric_freshness_label()
-            return False
-        check = self._validate_current_roi()
-        if not check.ok or check.roi_oriented is None:
-            return False
-        path = Path(snapshot.video_path)
-        if not path.is_file() or not is_supported_video_path(path):
-            return False
-        try:
-            settings = self._optical_flow_settings_from_ui()
-        except ValueError:
-            return False
-
-        roi_bounds = (
-            int(check.roi_oriented.x),
-            int(check.roi_oriented.y),
-            int(check.roi_oriented.width),
-            int(check.roi_oriented.height),
-        )
-        self._optical_flow_job_running = True
-        self._update_optical_flow_qc_readout()
-        QApplication.processEvents()
-        try:
-            frames = load_cropped_frames_from_video(
-                path, self._orientation, check.roi_oriented
-            )
-            fingerprint = build_optical_flow_fingerprint(
-                sample_id=snapshot.sample_id,
-                roi_bounds=roi_bounds,
-                settings=settings,
-                data_identity=str(path.resolve()),
-                frame_count=len(frames),
-            )
-            result = compute_optical_flow_motion_index(
-                frames,
-                settings,
-                sample_id=snapshot.sample_id,
-                data_identity=str(path.resolve()),
-                roi_bounds=roi_bounds,
-                fingerprint=fingerprint,
-            )
-        except Exception:
-            if not quiet_skip:
-                self._status("Optical flow failed")
-                self._update_metric_freshness_label()
-            return False
-        finally:
-            self._optical_flow_job_running = False
-
-        if not self._optical_flow_snapshot_matches_current(snapshot):
-            if not quiet_skip:
-                self._status("Optical flow paused — settings changed")
-                self._update_metric_freshness_label()
-            return False
-
-        self._clear_of_flow_cache(snapshot.sample_id)
-        self._commit_optical_flow_result(snapshot.sample_id, result)
-        if self._preview_mode == "cropped_tracking":
-            self._show_cropped_preview_frame(self._preview_frame_index)
-        return True
 
     def _save_draft_optical_flow_result(
         self, sample_id: str, result: OpticalFlowResult
@@ -1543,7 +1273,7 @@ class MainWindow(QMainWindow):
         fingerprint = self._current_optical_flow_fingerprint() if sample_id == self._current_sample_id else ""
         return resolve_qc_status(
             result=result,
-            is_computing=self._optical_flow_job_running and sample_id == self._current_sample_id,
+            is_computing=sample_id in self._metrics_inflight,
             is_stale_flag=bool(self._optical_flow_stale_by_sample.get(sample_id)),
             current_fingerprint=fingerprint,
         )
@@ -1634,70 +1364,6 @@ class MainWindow(QMainWindow):
             project_root=self._project_root,
             cached_result=self._optical_flow_results_by_sample.get(sample_id),
         )
-
-    def _run_draft_tracking_for_snapshot(
-        self,
-        snapshot: _TrackingRunSnapshot,
-        *,
-        update_cropped_preview: bool,
-        quiet_skip: bool = True,
-    ) -> bool:
-        if self._tracking_job_running:
-            return False
-        if snapshot.sample_id != self._current_sample_id:
-            return False
-        if not self._snapshot_matches_current(snapshot):
-            if not quiet_skip:
-                self._status("Tracking paused — ROI changed")
-                self._update_metric_freshness_label()
-            return False
-        check = self._validate_current_roi()
-        if not check.ok or check.roi_oriented is None:
-            return False
-        path = Path(snapshot.video_path)
-        if not path.is_file() or not is_supported_video_path(path):
-            return False
-        try:
-            params = self._tracking_params_from_ui()
-        except ValueError:
-            return False
-        crop_w = int(check.roi_oriented.width)
-        crop_h = int(check.roi_oriented.height)
-        min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
-        if min(crop_w, crop_h) < min_dim:
-            return False
-
-        self._tracking_job_running = True
-        QApplication.processEvents()
-        try:
-            frames = load_cropped_frames_from_video(
-                path, self._orientation, check.roi_oriented
-            )
-            analysis = analyze_cropped_preview(frames, params=params)
-        except Exception:
-            if not quiet_skip:
-                self._status("Tracking failed")
-                self._update_metric_freshness_label()
-            return False
-        finally:
-            self._tracking_job_running = False
-
-        if not self._snapshot_matches_current(snapshot):
-            if not quiet_skip:
-                self._status("Tracking paused — ROI changed")
-                self._update_metric_freshness_label()
-            return False
-
-        self._commit_tracking_result(snapshot.sample_id, analysis, params)
-        if update_cropped_preview and self._preview_mode == "cropped_tracking":
-            self._cropped_preview = analysis
-            max_index = max(0, len(analysis.frames) - 1)
-            self.slider_frame.setMaximum(max_index)
-            self.spin_frame.setMaximum(max_index)
-            self.slider_sample_frame.setMaximum(max_index)
-            frame_idx = min(self._preview_frame_index, max_index)
-            self._show_cropped_preview_frame(frame_idx)
-        return True
 
     def _update_sample_list_row_for_id(self, sample_id: str) -> None:
         item = self._find_sample_tree_item(sample_id)
@@ -2046,38 +1712,6 @@ class MainWindow(QMainWindow):
             return "error"
         return "analyzed"
 
-    def ensure_metrics_scheduled_for_sample_if_needed(
-        self, sample_id: Optional[str], reason: str = ""
-    ) -> None:
-        """Queue metric calculation for a Sample if it has valid Data + ROI and
-        its metrics are missing/stale and not already queued or running."""
-        if not sample_id or self._project_root is None:
-            return
-        if sample_id in self._metrics_inflight:
-            return
-        if sample_id in self._metric_compute_queue:
-            return
-        if not self._sample_has_valid_data_and_roi(sample_id):
-            return
-        state = self._metric_state_for_sample(sample_id)
-        if state in ("analyzed", "running", "scheduled"):
-            return
-        self._metric_compute_queue.append(sample_id)
-        if not self._metric_flush_timer.isActive():
-            self._metric_flush_timer.start()
-        if sample_id == self._current_sample_id:
-            self._update_metric_freshness_label()
-
-    def _on_metric_flush_timer(self) -> None:
-        if not self._metric_compute_queue:
-            return
-        sample_id = self._metric_compute_queue.pop(0)
-        try:
-            self._compute_metrics_for_sample(sample_id)
-        finally:
-            if self._metric_compute_queue:
-                self._metric_flush_timer.start()
-
     def run_metrics_for_sample_id(
         self,
         sample_id: str,
@@ -2102,8 +1736,6 @@ class MainWindow(QMainWindow):
             elif sid == self._current_sample_id:
                 self._update_metric_freshness_label()
             return "unavailable"
-        if sid in self._metric_compute_queue:
-            self._metric_compute_queue.remove(sid)
         return self._compute_metrics_for_sample(sid)
 
     def run_metrics_now_for_current_sample(self) -> None:
@@ -2144,10 +1776,6 @@ class MainWindow(QMainWindow):
         if not sid:
             return "unavailable_no_roi"
         if sid in self._metrics_inflight:
-            return "running"
-        if sid == self._current_sample_id and (
-            self._tracking_job_running or self._optical_flow_job_running
-        ):
             return "running"
         if not self._sample_has_valid_data_and_roi(sid):
             return "unavailable_no_roi"
@@ -2201,7 +1829,7 @@ class MainWindow(QMainWindow):
     ) -> tuple[str, str]:
         state = self._metric_state_for_sample(sid)
         last_ts = None
-        if sid and state in ("analyzed", "stale", "scheduled", "running", "error"):
+        if sid and state in ("analyzed", "stale", "running", "error"):
             last_ts = self._last_analyzed_at_for_sample(sid)
         return render_metric_display_lines(state, last_ts)
 
@@ -2357,7 +1985,6 @@ class MainWindow(QMainWindow):
         self._autosave_roi(quiet=True)
 
     def _on_clear_roi(self) -> None:
-        self._cancel_pending_debounced_tracking()
         self._exit_cropped_preview_mode()
         self.canvas.set_rect_roi(None)
         self._roi_user_adjusted = True
@@ -2445,7 +2072,6 @@ class MainWindow(QMainWindow):
                 )
             return False
 
-        self._cancel_pending_debounced_tracking()
         self._autosave_roi(quiet=True)
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:

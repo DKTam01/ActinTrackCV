@@ -15,13 +15,6 @@ class ExplicitRunMetricsStateTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._metrics_inflight = set()
-        window._tracking_job_running = False
-        window._optical_flow_job_running = False
-        window._metric_compute_queue = []
-        window._metric_debounce_timer = MagicMock(isActive=lambda: False)
-        window._metric_settings_timer = MagicMock(isActive=lambda: False)
-        window._pending_tracking_snapshot = None
-        window._pending_optical_flow_snapshot = None
         window._tracking_result_stale_by_sample = {}
         window._optical_flow_stale_by_sample = {}
         window._metric_error_by_sample = {}
@@ -34,19 +27,8 @@ class ExplicitRunMetricsStateTests(unittest.TestCase):
         }
         return window
 
-    def test_fresh_metrics_with_inactive_timer_not_scheduled(self) -> None:
+    def test_fresh_metrics_report_analyzed(self) -> None:
         window = self._stub_window()
-        self.assertEqual(window._metric_state_for_sample("S1"), "analyzed")
-
-    def test_debounce_timer_does_not_surface_scheduled_status(self) -> None:
-        window = self._stub_window()
-        window._metric_debounce_timer = MagicMock(isActive=lambda: True)
-        window._pending_tracking_snapshot = object()
-        self.assertEqual(window._metric_state_for_sample("S1"), "analyzed")
-
-    def test_queue_membership_does_not_surface_scheduled_status(self) -> None:
-        window = self._stub_window()
-        window._metric_compute_queue = ["S1"]
         self.assertEqual(window._metric_state_for_sample("S1"), "analyzed")
 
     def test_no_metrics_status_when_roi_exists_without_drafts(self) -> None:
@@ -76,13 +58,11 @@ class RoiEditExplicitRunTests(unittest.TestCase):
         window._roi_autosave_pending = False
         window._loaded_annotation_source = ""
         window._set_roi_save_status = MagicMock()
-        window._schedule_debounced_metrics = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
 
         MainWindow.on_roi_changed(window, RectROI(1, 2, 10, 12))
 
-        window._schedule_debounced_metrics.assert_not_called()
         self.assertNotIn("S1", window._tracking_result_stale_by_sample)
         self.assertNotIn("S1", window._optical_flow_stale_by_sample)
         window._update_metric_freshness_label.assert_not_called()
@@ -109,7 +89,6 @@ class RoiEditExplicitRunTests(unittest.TestCase):
         window._set_roi_save_status = MagicMock()
         window._update_sample_list_row_for_id = MagicMock()
         window._update_metric_freshness_label = MagicMock()
-        window._schedule_debounced_metrics = MagicMock()
         window._metric_error_by_sample = {}
 
         with patch("actintrack_app.gui.save_sample_crop_annotation"), patch(
@@ -117,7 +96,6 @@ class RoiEditExplicitRunTests(unittest.TestCase):
         ):
             MainWindow._autosave_roi(window, quiet=True)
 
-        window._schedule_debounced_metrics.assert_not_called()
         window._mark_metrics_stale_if_saved_roi_changed.assert_called_once()
         window._update_metric_freshness_label.assert_called_once()
 
@@ -141,7 +119,6 @@ class SampleSwitchExplicitRunTests(unittest.TestCase):
         window._metric_analysis_view_active = False
         window._preview_playing = False
         window._playback_pause = MagicMock()
-        window.ensure_metrics_scheduled_for_sample_if_needed = MagicMock()
         window._set_active_sample = MagicMock()
         window._current_condition_group = MagicMock(return_value="cg_a")
         window._refresh_condition_group_combo = MagicMock()
@@ -169,7 +146,7 @@ class SampleSwitchExplicitRunTests(unittest.TestCase):
         ):
             MainWindow._load_sample_from_tree_item(window, item)
 
-        window.ensure_metrics_scheduled_for_sample_if_needed.assert_not_called()
+        self.assertFalse(hasattr(MainWindow, "ensure_metrics_scheduled_for_sample_if_needed"))
 
     def test_metric_analysis_switch_uses_display_only_path(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -187,7 +164,6 @@ class SampleSwitchExplicitRunTests(unittest.TestCase):
         window.update_tracking_result_panel = MagicMock()
         window._reload_metric_analysis_view_for_current_sample = MagicMock()
         window._display_metric_analysis_view_for_current_sample = MagicMock()
-        window._schedule_debounced_metrics = MagicMock()
         window._refresh_roi_save_status_from_context = MagicMock()
         window._update_metric_freshness_label = MagicMock()
 
@@ -210,7 +186,6 @@ class SampleSwitchExplicitRunTests(unittest.TestCase):
 
         window._display_metric_analysis_view_for_current_sample.assert_called_once()
         window._reload_metric_analysis_view_for_current_sample.assert_not_called()
-        window._schedule_debounced_metrics.assert_not_called()
 
 
 class RunMetricsButtonTests(unittest.TestCase):
@@ -218,7 +193,6 @@ class RunMetricsButtonTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._metrics_inflight = set()
-        window._metric_compute_queue = []
         window._sample_has_valid_data_and_roi = MagicMock(return_value=False)
         window._compute_metrics_for_sample = MagicMock()
         window._status = MagicMock()

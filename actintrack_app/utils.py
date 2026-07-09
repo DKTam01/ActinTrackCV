@@ -55,8 +55,6 @@ SUPPORTED_EXTENSIONS = {
 
 VIDEO_EXTENSIONS = {".avi", ".mp4"}
 
-# Metric Analysis View debounce interval (ms).
-METRIC_DEBOUNCE_MS = 2500
 IMAGE_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 RAW_MICROSCOPY_EXTENSIONS = {".oib", ".oif", ".oir"}
 

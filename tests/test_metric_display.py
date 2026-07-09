@@ -16,16 +16,16 @@ from actintrack_app.metric_display import (
 class MetricDisplayTests(unittest.TestCase):
     def test_status_never_includes_timestamp(self) -> None:
         ts = datetime(2026, 3, 1, 15, 30, tzinfo=timezone.utc)
-        status, last = render_metric_display_lines("scheduled", ts)
-        self.assertEqual(status, "Metric status: Scheduled")
+        status, last = render_metric_display_lines("analyzed", ts)
+        self.assertEqual(status, "Metric status: Analyzed")
         self.assertNotIn("Mar", status)
         self.assertTrue(last.startswith("Last analyzed:"))
 
-    def test_scheduled_shows_prior_timestamp(self) -> None:
+    def test_analyzed_shows_timestamp(self) -> None:
         ts = datetime(2026, 3, 1, 15, 30, tzinfo=timezone.utc)
-        _, last = render_metric_display_lines("scheduled", ts)
+        _, last = render_metric_display_lines("analyzed", ts)
         self.assertIn("2026", last)
-        self.assertNotIn("Scheduled", last)
+        self.assertNotIn("Analyzed", last)
 
     def test_never_analyzed_last_line_is_dash(self) -> None:
         self.assertEqual(render_last_analyzed_text(None), "Last analyzed: —")

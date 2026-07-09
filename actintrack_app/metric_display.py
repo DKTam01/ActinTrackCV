@@ -23,7 +23,6 @@ def render_metric_status_text(state: MetricState) -> str:
     mapping = {
         "unavailable_no_roi": "Not analyzed",
         "not_analyzed": "No Metrics",
-        "scheduled": "Scheduled",
         "running": "Analyzing",
         "error": "Error",
         "analyzed": "Analyzed",

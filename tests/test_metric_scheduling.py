@@ -1,4 +1,4 @@
-"""Tests for unified metric scheduling constants and batch ROI export filter."""
+"""Tests for unified metric constants and batch ROI export filter."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from actintrack_app.utils import METRIC_DEBOUNCE_MS
 from actintrack_app.optical_flow_motion_index import OpticalFlowSettings
 from actintrack_app.optical_flow_overlay import OpticalFlowVisualizationSettings
 from actintrack_app.roi_workflow import process_batch_approved_rois
@@ -16,9 +15,6 @@ from actintrack_app.utils import METADATA_DIR, SAMPLES_CSV, STATUS_ROI_MARKED
 
 
 class MetricSchedulingTests(unittest.TestCase):
-    def test_metric_debounce_is_two_point_five_seconds(self) -> None:
-        self.assertEqual(METRIC_DEBOUNCE_MS, 2500)
-
     def test_overlay_defaults(self) -> None:
         defaults = OpticalFlowVisualizationSettings()
         self.assertEqual(defaults.arrow_spacing_px, 8)

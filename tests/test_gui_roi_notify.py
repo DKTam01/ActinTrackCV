@@ -76,7 +76,6 @@ class OnRoiChangedStaleTests(unittest.TestCase):
         window._roi_autosave_pending = False
         window._loaded_annotation_source = ""
         window._set_roi_save_status = MagicMock()
-        window._schedule_debounced_metrics = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
 
@@ -84,19 +83,11 @@ class OnRoiChangedStaleTests(unittest.TestCase):
 
         self.assertNotIn("S1", window._tracking_result_stale_by_sample)
         self.assertNotIn("S1", window._optical_flow_stale_by_sample)
-        window._schedule_debounced_metrics.assert_not_called()
 
     def test_metric_state_shows_stale_after_roi_change(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window._metrics_inflight = set()
-        window._tracking_job_running = False
-        window._optical_flow_job_running = False
-        window._metric_compute_queue = []
-        window._metric_debounce_timer = MagicMock(isActive=lambda: False)
-        window._metric_settings_timer = MagicMock(isActive=lambda: False)
-        window._pending_tracking_snapshot = None
-        window._pending_optical_flow_snapshot = None
         window._tracking_result_stale_by_sample = {"S1": True}
         window._optical_flow_stale_by_sample = {"S1": True}
         window._metric_error_by_sample = {}

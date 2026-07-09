@@ -26,7 +26,6 @@ class NotesCompatibilityTests(unittest.TestCase):
         window._refresh_roi_save_status_from_context = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
-        window._schedule_debounced_metrics = MagicMock()
 
         ann = {
             "sample_id": "S1",
