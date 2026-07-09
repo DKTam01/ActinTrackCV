@@ -140,10 +140,15 @@ The Shiny app discovers source videos, supports interactive ROI selection, runs 
 1. **Open or create a workspace** — **File → New Workspace…** or **File → Open Workspace…**
 2. **Create a Condition Group** — **Workspace → New Condition Group…** (or **New Group** in the left panel) and enter a custom name such as `Control` or `LatB Treatment`
 3. **Add Sample** — **Sample → Add Sample…** (or right-click the sample list) and select one or more AVI/MP4 files. Each file becomes one Sample in the selected Condition Group.
-4. **Select Data** — choose a Sample in the left panel to load its Data
-5. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region. The ROI **autosaves**; there is no Save ROI button and no Approve/Reject ROI workflow.
+4. **Select Data** — choose a Sample in the left panel to load and inspect its Data. Selection and sample switching do **not** schedule or run metrics.
+5. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region. The ROI **autosaves**; there is no Save ROI button and no Approve/Reject ROI workflow. ROI drag and autosave do **not** run metrics. If a Sample already has metric results, changing and saving ROI geometry may mark them **Stale**.
 6. **Metric Analysis View** — open from the preview toolbar to enter cropped ROI playback and metric review. Playback loops continuously; use the frame slider to scrub manually. Playback speeds: **0.25×, 0.5×, 1×, 1.5×, 2×**. You can switch Samples while staying in Metric Analysis View.
-7. **Metrics** — Template Tracking and Optical Flow Motion Index calculations are scheduled automatically after ROI autosave or settings changes (2.5 s debounce). Both run on **cropped ROI frames** using the current orientation and ROI.
+7. **Metrics** — Template Tracking and Optical Flow Motion Index run **only when you ask**:
+   - **Run Metrics** (toolbar) computes the **currently selected** Sample.
+   - Explorer right-click **Run Metrics** on a Sample row computes that Sample by stable `sample_id` without selecting or loading it in the preview.
+   - Both paths use the current **Workbench metric settings** plus the Sample’s saved orientation and ROI on **cropped ROI frames**.
+   - A Sample with a saved ROI but no saved metric results yet shows **No Metrics** until you run metrics.
+   - After a saved ROI geometry change, existing results may show **Stale** until you run metrics again.
 8. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Condition Group and Sample from saved per-Sample results (does not re-run metrics).
 
 ### Metric Analysis View
@@ -154,7 +159,30 @@ Metric Analysis View replaces the older “preview cropped ROI only” workflow.
 - **Template Tracking Motion Index** settings and results
 - **Optical Flow Motion Index** settings, QC readout, and results
 
-Switching Samples while in Metric Analysis View reloads that Sample’s cropped preview and clears stale in-memory metric state for the previous Sample.
+Switching Samples while in Metric Analysis View reloads that Sample’s cropped preview and clears in-memory metric display state for the previous Sample. Opening Metric Analysis View does **not** recompute metrics unless you use **Run Metrics**.
+
+### Running metrics
+
+Metric runs are explicit and researcher-controlled:
+
+| Action | What runs |
+|--------|-----------|
+| **Run Metrics** (toolbar) | Template Tracking + Optical Flow for the **currently selected** Sample |
+| **Run Metrics** (Explorer right-click on a Sample) | Same metrics for the **targeted** Sample without changing preview selection |
+| Sample selection / switching | Inspect and navigate only — no metric compute |
+| ROI drag / autosave | Persists ROI only — no metric compute; may mark existing results **Stale** |
+| Workbench metric settings changes | Updates settings only — no automatic metric compute |
+
+Status labels in the workbench:
+
+| Status | Meaning |
+|--------|---------|
+| **No Metrics** | Saved ROI exists, but no metric results have been generated yet |
+| **Stale** | Saved results exist but ROI geometry or settings changed since the last run |
+| **Analyzing** | A metric run is in progress for that Sample |
+| **Analyzed** | Saved Template Tracking and Optical Flow results are current |
+
+Settings changes alone do not re-run metrics. Run metrics again when you want updated results under the current Workbench settings.
 
 ### Template Tracking Motion Index
 
@@ -208,6 +236,7 @@ Right-click a Sample or Data row in the left panel:
 
 | Action | Effect |
 |--------|--------|
+| **Run Metrics** | Compute Template Tracking and Optical Flow for that Sample (does not change which Sample is selected in the preview) |
 | **Rename Sample…** | Change the Sample display name |
 | **Replace Data…** | Select a new AVI/MP4 file; clears derived ROI, tracking, and analysis state |
 | **Delete Sample…** | Removes project state and derived results from the workspace; does **not** delete the original external Data file unless you opt to remove the project's internal copy |
@@ -242,7 +271,7 @@ Opening an older workspace automatically migrates legacy v1 metadata (`samples.c
 | **Analysis** | View Analysis |
 | **Help** | How to Run App, About |
 
-Context menu (right-click Sample or Data row): Rename Sample, Replace Data, Delete Sample.
+Context menu (right-click Sample or Data row): Run Metrics, Rename Sample, Replace Data, Delete Sample.
 
 ## Tests
 
