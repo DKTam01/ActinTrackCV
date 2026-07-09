@@ -1,12 +1,12 @@
-"""Tests for Explorer context-menu Run Metrics (Phase 5.7C/5.7G)."""
+"""Tests for Explorer context-menu Run Metrics (Phase 5.7C/5.7G/5.7I)."""
 
 from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from PyQt6.QtCore import QPoint
-from PyQt6.QtWidgets import QApplication, QMenu
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import QApplication, QMenu, QTreeWidget, QTreeWidgetItem
 
 from actintrack_app.explorer_sidebar import (
     ITEM_TYPE_CONDITION_GROUP,
@@ -155,10 +155,11 @@ class ExplorerContextMenuRunMetricsTests(unittest.TestCase):
         )
         self.assertTrue(run_action.isEnabled())
 
-    def test_condition_group_context_menu_excludes_run_metrics(self) -> None:
+    def test_empty_condition_group_context_menu_excludes_run_metrics(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._project_root = MagicMock()
         window._require_project_root = MagicMock(return_value=window._project_root)
+        window.sample_ids_for_condition_group = MagicMock(return_value=[])
         window._on_add_sample = MagicMock()
         window._ctx_rename_condition_group = MagicMock()
         window._ctx_delete_condition_group = MagicMock()
@@ -188,7 +189,9 @@ class ExplorerContextMenuRunMetricsTests(unittest.TestCase):
             with patch.object(QMenu, "exec"):
                 window._on_explorer_context_menu(QPoint(0, 0))
 
-        self.assertNotIn("Run Metrics", self._menu_action_labels(captured["menu"]))
+        labels = self._menu_action_labels(captured["menu"])
+        self.assertNotIn("Run Metrics", labels)
+        self.assertNotIn("Run Metrics for Condition Group", labels)
 
     def test_ctx_run_metrics_does_not_load_sample(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -455,6 +458,207 @@ class ExplorerMultiSelectRunMetricsMenuTests(unittest.TestCase):
         self.assertFalse(action.isEnabled())
         self.assertEqual(action.toolTip(), "Sample B is missing an ROI.")
         self.assertFalse(note.isEnabled())
+
+
+class ConditionGroupSampleIdCollectionTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _make_group_with_samples(self) -> tuple[QTreeWidget, QTreeWidgetItem]:
+        tree = QTreeWidget()
+        group = QTreeWidgetItem(["Group A"])
+        group.setData(
+            0,
+            Qt.ItemDataRole.UserRole,
+            {
+                "item_type": ITEM_TYPE_CONDITION_GROUP,
+                "condition_group_id": "cg_a",
+            },
+        )
+        for sid, label in (("S1", "clip1.mp4"), ("S2", "clip2.mp4")):
+            child = QTreeWidgetItem([label])
+            child.setData(
+                0,
+                Qt.ItemDataRole.UserRole,
+                {
+                    "item_type": ITEM_TYPE_SAMPLE,
+                    "sample_id": sid,
+                    "group": "cg_a",
+                    "batch_name": label,
+                },
+            )
+            group.addChild(child)
+        empty = QTreeWidgetItem(["Batch 3"])
+        empty.setData(
+            0,
+            Qt.ItemDataRole.UserRole,
+            {
+                "item_type": ITEM_TYPE_EMPTY_SAMPLE,
+                "group": "cg_a",
+                "batch_name": "Batch 3",
+            },
+        )
+        group.addChild(empty)
+        tree.addTopLevelItem(group)
+        return tree, group
+
+    def test_sample_ids_for_explorer_group_item_skips_placeholders(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._tree_item_meta = MainWindow._tree_item_meta.__get__(
+            window, MainWindow
+        )
+        _, group = self._make_group_with_samples()
+
+        ids = MainWindow._sample_ids_for_explorer_group_item(window, group)
+
+        self.assertEqual(ids, ["S1", "S2"])
+
+    def test_sample_ids_for_condition_group_uses_group_item(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._tree_item_meta = MainWindow._tree_item_meta.__get__(
+            window, MainWindow
+        )
+        _, group = self._make_group_with_samples()
+
+        ids = MainWindow.sample_ids_for_condition_group(
+            window,
+            "cg_a",
+            group_item=group,
+        )
+
+        self.assertEqual(ids, ["S1", "S2"])
+
+
+class ConditionGroupRunMetricsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._app = QApplication.instance() or QApplication([])
+
+    def _menu_action_labels(self, menu: QMenu) -> list[str]:
+        return [action.text() for action in menu.actions() if not action.isSeparator()]
+
+    def _run_context_menu(self, window: MainWindow, item: MagicMock) -> QMenu:
+        window.tree_samples.itemAt.return_value = item
+        captured: dict[str, QMenu] = {}
+
+        def make_menu(*_args, **_kwargs) -> QMenu:
+            menu = QMenu()
+            captured["menu"] = menu
+            return menu
+
+        with patch("actintrack_app.gui.QMenu", side_effect=make_menu):
+            with patch.object(QMenu, "exec"):
+                window._on_explorer_context_menu(QPoint(0, 0))
+        return captured["menu"]
+
+    def test_condition_group_context_menu_includes_run_metrics(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._project_root = MagicMock()
+        window._require_project_root = MagicMock(return_value=window._project_root)
+        window.sample_ids_for_condition_group = MagicMock(
+            return_value=["S1", "S2", "S3"]
+        )
+        window._missing_roi_display_names_for_samples = MagicMock(return_value=[])
+        window._ctx_run_metrics_for_condition_group = MagicMock()
+        window._on_add_sample = MagicMock()
+        window._ctx_rename_condition_group = MagicMock()
+        window._ctx_delete_condition_group = MagicMock()
+        window._add_explorer_refresh_action = MagicMock()
+
+        item = MagicMock()
+        window.tree_samples = MagicMock()
+        window.tree_samples.viewport.return_value.mapToGlobal.return_value = QPoint(
+            0, 0
+        )
+        window._tree_item_meta = MagicMock(
+            return_value={
+                "item_type": ITEM_TYPE_CONDITION_GROUP,
+                "condition_group_id": "cg_a",
+            }
+        )
+
+        menu = self._run_context_menu(window, item)
+        labels = self._menu_action_labels(menu)
+        self.assertIn("Run Metrics for Condition Group", labels)
+        window.sample_ids_for_condition_group.assert_called_once_with(
+            "cg_a",
+            group_item=item,
+        )
+
+    def test_condition_group_action_disabled_with_menu_note_when_roi_missing(
+        self,
+    ) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._project_root = MagicMock()
+        window._require_project_root = MagicMock(return_value=window._project_root)
+        window.sample_ids_for_condition_group = MagicMock(return_value=["S1", "S2"])
+        window._missing_roi_display_names_for_samples = MagicMock(
+            return_value=["Sample B"]
+        )
+        window._on_add_sample = MagicMock()
+        window._ctx_rename_condition_group = MagicMock()
+        window._ctx_delete_condition_group = MagicMock()
+        window._add_explorer_refresh_action = MagicMock()
+
+        item = MagicMock()
+        window.tree_samples = MagicMock()
+        window.tree_samples.viewport.return_value.mapToGlobal.return_value = QPoint(
+            0, 0
+        )
+        window._tree_item_meta = MagicMock(
+            return_value={
+                "item_type": ITEM_TYPE_CONDITION_GROUP,
+                "condition_group_id": "cg_a",
+            }
+        )
+
+        menu = self._run_context_menu(window, item)
+        action = next(
+            a
+            for a in menu.actions()
+            if a.text() == "Run Metrics for Condition Group"
+        )
+        note = next(
+            a
+            for a in menu.actions()
+            if a.text() == "    Missing ROI: Sample B"
+        )
+        self.assertFalse(action.isEnabled())
+        self.assertEqual(action.toolTip(), "Sample B is missing an ROI.")
+        self.assertFalse(note.isEnabled())
+
+    def test_run_metrics_for_condition_group_delegates_to_sample_ids_helper(
+        self,
+    ) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window.run_metrics_for_sample_ids = MagicMock()
+
+        MainWindow._ctx_run_metrics_for_condition_group(window, ["S1", "S2"])
+
+        window.run_metrics_for_sample_ids.assert_called_once_with(
+            ["S1", "S2"],
+            show_dialog_on_block=True,
+        )
+
+    def test_condition_group_run_does_not_change_current_sample(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._current_sample_id = "S0"
+        window._sample_has_valid_data_and_roi = MagicMock(return_value=True)
+        window._sample_display_label_for_id = MagicMock(
+            side_effect=lambda sid: f"Label-{sid}"
+        )
+        window._status = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._refresh_analysis_if_visible = MagicMock()
+        window.run_metrics_for_sample_id = MagicMock(return_value="analyzed")
+        window._load_sample_from_tree_item = MagicMock()
+
+        with patch("actintrack_app.gui.QApplication.processEvents"):
+            MainWindow.run_metrics_for_sample_ids(window, ["S1", "S2"])
+
+        self.assertEqual(window._current_sample_id, "S0")
+        window._load_sample_from_tree_item.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -2937,6 +2937,60 @@ class MainWindow(QMainWindow):
             return []
         return sample_ids
 
+    def _sample_ids_for_explorer_group_item(
+        self, group_item: QTreeWidgetItem
+    ) -> list[str]:
+        """Real child Sample IDs under a Condition Group row, in Explorer order."""
+        ids: list[str] = []
+        seen: set[str] = set()
+        for index in range(group_item.childCount()):
+            child = group_item.child(index)
+            meta = self._tree_item_meta(child)
+            if not meta or meta.get("item_type") != ITEM_TYPE_SAMPLE:
+                continue
+            sid = str(meta.get("sample_id", "")).strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            ids.append(sid)
+        return ids
+
+    def sample_ids_for_condition_group(
+        self,
+        condition_group_id: str,
+        *,
+        group_item: QTreeWidgetItem | None = None,
+    ) -> list[str]:
+        """Return real child Sample IDs for a Condition Group in Explorer order."""
+        if group_item is not None:
+            return self._sample_ids_for_explorer_group_item(group_item)
+        gid = str(condition_group_id).strip()
+        if not gid:
+            return []
+        for index in range(self.tree_samples.topLevelItemCount()):
+            top = self.tree_samples.topLevelItem(index)
+            meta = self._tree_item_meta(top)
+            if (
+                meta
+                and meta.get("item_type") == ITEM_TYPE_CONDITION_GROUP
+                and str(meta.get("condition_group_id", "")).strip() == gid
+            ):
+                return self._sample_ids_for_explorer_group_item(top)
+        return []
+
+    def _add_blocked_run_metrics_menu_note(
+        self,
+        menu: QMenu,
+        run_action,
+        missing_names: list[str],
+    ) -> None:
+        run_action.setEnabled(False)
+        run_action.setToolTip(format_missing_roi_tooltip_for_samples(missing_names))
+        note_action = menu.addAction(
+            format_missing_roi_menu_note_for_samples(missing_names)
+        )
+        note_action.setEnabled(False)
+
     def _normalize_explorer_selection(self) -> None:
         if self._normalizing_explorer_selection:
             return
@@ -4098,6 +4152,26 @@ class MainWindow(QMainWindow):
 
         if item_type == ITEM_TYPE_CONDITION_GROUP:
             group_id = str(meta.get("condition_group_id", ""))
+            group_sample_ids = self.sample_ids_for_condition_group(
+                group_id,
+                group_item=item,
+            )
+            if group_sample_ids:
+                run_action = menu.addAction(
+                    "Run Metrics for Condition Group",
+                    lambda ids=tuple(group_sample_ids): self._ctx_run_metrics_for_condition_group(
+                        list(ids)
+                    ),
+                )
+                missing_names = self._missing_roi_display_names_for_samples(
+                    group_sample_ids
+                )
+                if missing_names:
+                    self._add_blocked_run_metrics_menu_note(
+                        menu,
+                        run_action,
+                        missing_names,
+                    )
             menu.addAction(
                 "Add Sample(s)",
                 lambda gid=group_id: self._on_add_sample(gid),
@@ -4128,14 +4202,11 @@ class MainWindow(QMainWindow):
                     selected_ids
                 )
                 if missing_names:
-                    run_action.setEnabled(False)
-                    run_action.setToolTip(
-                        format_missing_roi_tooltip_for_samples(missing_names)
+                    self._add_blocked_run_metrics_menu_note(
+                        menu,
+                        run_action,
+                        missing_names,
                     )
-                    note_action = menu.addAction(
-                        format_missing_roi_menu_note_for_samples(missing_names)
-                    )
-                    note_action.setEnabled(False)
             else:
                 run_action = menu.addAction(
                     "Run Metrics",
@@ -4192,6 +4263,9 @@ class MainWindow(QMainWindow):
         self.run_metrics_for_sample_id(sample_id, show_dialog_on_block=True)
 
     def _ctx_run_metrics_for_selected_samples(self, sample_ids: list[str]) -> None:
+        self.run_metrics_for_sample_ids(sample_ids, show_dialog_on_block=True)
+
+    def _ctx_run_metrics_for_condition_group(self, sample_ids: list[str]) -> None:
         self.run_metrics_for_sample_ids(sample_ids, show_dialog_on_block=True)
 
     def _ctx_delete_condition_group(self, group_id: str) -> None:
