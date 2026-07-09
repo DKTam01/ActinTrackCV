@@ -7,7 +7,7 @@ import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -333,6 +333,37 @@ STATUS_COLORS = {
     STATUS_MOTION_INDEX_FAILED: QColor("#e07070"),
     "missing_file": QColor("#cc6666"),
 }
+
+
+def format_missing_roi_tooltip_for_samples(display_names: list[str]) -> str:
+    """User-facing tooltip when selected Samples lack saved ROI/Region."""
+    names = [str(name).strip() for name in display_names if str(name).strip()]
+    if not names:
+        return "Selected samples are missing ROIs."
+    if len(names) == 1:
+        return f"{names[0]} is missing an ROI."
+    max_shown = 3
+    if len(names) <= max_shown:
+        return f"{', '.join(names)} are missing ROIs."
+    shown = ", ".join(names[:max_shown])
+    extra = len(names) - max_shown
+    return f"{shown}, and {extra} more samples are missing ROIs."
+
+
+def format_missing_roi_menu_note_for_samples(display_names: list[str]) -> str:
+    """Indented context-menu note when Run Metrics is blocked by missing ROIs."""
+    indent = "    "
+    names = [str(name).strip() for name in display_names if str(name).strip()]
+    if not names:
+        return f"{indent}Missing ROI: selected samples"
+    if len(names) == 1:
+        return f"{indent}Missing ROI: {names[0]}"
+    max_shown = 3
+    if len(names) <= max_shown:
+        return f"{indent}Missing ROIs: {', '.join(names)}"
+    shown = ", ".join(names[:max_shown])
+    extra = len(names) - max_shown
+    return f"{indent}Missing ROIs: {shown}, and {extra} more"
 
 
 class PropagateDialog(QDialog):
@@ -1740,6 +1771,74 @@ class MainWindow(QMainWindow):
                 self._update_metric_freshness_label()
             return "unavailable"
         return self._compute_metrics_for_sample(sid)
+
+    def _sample_display_label_for_id(self, sample_id: str) -> str:
+        row = self._sample_row_for_id(sample_id)
+        if row:
+            return sample_sidebar_display_label(row)
+        item = self._find_sample_tree_item(sample_id)
+        if item is not None:
+            meta = self._tree_item_meta(item)
+            if meta:
+                return sample_sidebar_display_label(meta)
+        sid = str(sample_id).strip()
+        return sid or "Selected sample"
+
+    def _missing_roi_display_names_for_samples(
+        self, sample_ids: Sequence[str]
+    ) -> list[str]:
+        invalid: list[str] = []
+        for sample_id in sample_ids:
+            sid = str(sample_id).strip()
+            if not sid:
+                continue
+            if not self._sample_has_valid_data_and_roi(sid):
+                invalid.append(self._sample_display_label_for_id(sid))
+        return invalid
+
+    def _missing_roi_tooltip_for_samples(self, sample_ids: Sequence[str]) -> str:
+        return format_missing_roi_tooltip_for_samples(
+            self._missing_roi_display_names_for_samples(sample_ids)
+        )
+
+    def run_metrics_for_sample_ids(
+        self,
+        sample_ids: Sequence[str],
+        *,
+        show_dialog_on_block: bool = False,
+    ) -> None:
+        """Explicitly compute metrics for multiple Samples without loading them."""
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for raw_id in sample_ids:
+            sid = str(raw_id).strip()
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            ordered.append(sid)
+        if not ordered:
+            return
+
+        invalid_names = self._missing_roi_display_names_for_samples(ordered)
+        if invalid_names:
+            message = format_missing_roi_tooltip_for_samples(invalid_names)
+            self._status(message)
+            if show_dialog_on_block:
+                gui_dialogs.warning(self, "Run Metrics", message)
+            return
+
+        total = len(ordered)
+        for index, sid in enumerate(ordered, start=1):
+            label = self._sample_display_label_for_id(sid)
+            self._status(f"Running metrics {index} of {total}: {label}")
+            QApplication.processEvents()
+            self.run_metrics_for_sample_id(sid, show_dialog_on_block=False)
+
+        self._status(
+            f"Metrics complete for {total} sample{'s' if total != 1 else ''}."
+        )
+        self._update_metric_freshness_label()
+        self._refresh_analysis_if_visible()
 
     def run_metrics_now_for_current_sample(self) -> None:
         sid = self._current_sample_id
@@ -4016,12 +4115,34 @@ class MainWindow(QMainWindow):
             sample_id = str(meta.get("sample_id", "")).strip()
             group = str(meta.get("group", self._ensure_filter_group_valid()))
             batch_name = str(meta.get("batch_name", ""))
-            run_action = menu.addAction(
-                "Run Metrics",
-                lambda sid=sample_id: self._ctx_run_metrics_for_sample(sid),
-            )
-            if not self._sample_has_valid_data_and_roi(sample_id):
-                run_action.setEnabled(False)
+            selected_ids = self.selected_sample_ids_in_single_condition_group()
+            is_clicked_selected = item in self.tree_samples.selectedItems()
+            if is_clicked_selected and len(selected_ids) > 1:
+                run_action = menu.addAction(
+                    "Run Metrics for Selected Samples",
+                    lambda ids=tuple(selected_ids): self._ctx_run_metrics_for_selected_samples(
+                        list(ids)
+                    ),
+                )
+                missing_names = self._missing_roi_display_names_for_samples(
+                    selected_ids
+                )
+                if missing_names:
+                    run_action.setEnabled(False)
+                    run_action.setToolTip(
+                        format_missing_roi_tooltip_for_samples(missing_names)
+                    )
+                    note_action = menu.addAction(
+                        format_missing_roi_menu_note_for_samples(missing_names)
+                    )
+                    note_action.setEnabled(False)
+            else:
+                run_action = menu.addAction(
+                    "Run Metrics",
+                    lambda sid=sample_id: self._ctx_run_metrics_for_sample(sid),
+                )
+                if not self._sample_has_valid_data_and_roi(sample_id):
+                    run_action.setEnabled(False)
             menu.addAction(
                 "Replace Data",
                 lambda g=group, b=batch_name: self._ctx_replace_sample_data(g, b),
@@ -4069,6 +4190,9 @@ class MainWindow(QMainWindow):
 
     def _ctx_run_metrics_for_sample(self, sample_id: str) -> None:
         self.run_metrics_for_sample_id(sample_id, show_dialog_on_block=True)
+
+    def _ctx_run_metrics_for_selected_samples(self, sample_ids: list[str]) -> None:
+        self.run_metrics_for_sample_ids(sample_ids, show_dialog_on_block=True)
 
     def _ctx_delete_condition_group(self, group_id: str) -> None:
         self._refresh_condition_group_combo(select=group_id)
