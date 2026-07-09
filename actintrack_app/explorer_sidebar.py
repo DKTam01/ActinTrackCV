@@ -105,6 +105,13 @@ def tree_item_condition_group_id(meta: dict[str, Any] | None) -> str | None:
     return None
 
 
+def tree_item_sample_id(meta: dict[str, Any] | None) -> str | None:
+    if not meta or meta.get("item_type") != ITEM_TYPE_SAMPLE:
+        return None
+    sid = str(meta.get("sample_id", "")).strip()
+    return sid or None
+
+
 def is_draggable_sample_meta(meta: dict[str, Any] | None) -> bool:
     """True when explorer metadata represents a Sample row that may be dragged."""
     return bool(meta) and meta.get("item_type") == ITEM_TYPE_SAMPLE and str(

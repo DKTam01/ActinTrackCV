@@ -387,6 +387,10 @@ def build_explorer_tree_host(window: MainWindow) -> QWidget:
         QAbstractItemView.SelectionMode.ExtendedSelection
     )
     window.tree_samples.currentItemChanged.connect(window._on_explorer_selection_changed)
+    window.tree_samples.itemSelectionChanged.connect(
+        window._on_explorer_item_selection_changed,
+        Qt.ConnectionType.QueuedConnection,
+    )
     window.tree_samples.setContextMenuPolicy(
         Qt.ContextMenuPolicy.CustomContextMenu
     )

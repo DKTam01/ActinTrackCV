@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, QModelIndex, QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import QItemSelectionModel, QMimeData, QModelIndex, QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QDrag,
@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
 )
-
 from actintrack_app import gui_styles
 from actintrack_app.explorer_sidebar import (
     EXPLORER_SAMPLE_MIME,
@@ -32,6 +31,7 @@ from actintrack_app.explorer_sidebar import (
     is_valid_sample_drop_target_meta,
     sample_sidebar_display_label,
     tree_item_condition_group_id,
+    tree_item_sample_id,
 )
 
 
@@ -72,6 +72,82 @@ def default_expanded_state_for_condition_group(
     return has_children
 
 
+def _tree_item_meta(item: QTreeWidgetItem | None) -> dict | None:
+    if item is None:
+        return None
+    data = item.data(0, Qt.ItemDataRole.UserRole)
+    return data if isinstance(data, dict) else None
+
+
+def normalize_explorer_tree_selection(
+    selected_items: list[QTreeWidgetItem],
+    *,
+    current_item: QTreeWidgetItem | None,
+) -> tuple[list[QTreeWidgetItem], bool]:
+    """Reduce Explorer multi-select to an allowed combination.
+
+  Allowed:
+  - one Condition Group row
+  - one Sample row
+  - multiple Sample rows from the same Condition Group
+
+  Uses stable ``condition_group_id`` / ``sample_id`` metadata only.
+    """
+    if len(selected_items) <= 1:
+        return selected_items, False
+
+    sample_items: list[QTreeWidgetItem] = []
+    cg_items: list[QTreeWidgetItem] = []
+    other_items: list[QTreeWidgetItem] = []
+
+    for item in selected_items:
+        meta = _tree_item_meta(item)
+        if not meta:
+            other_items.append(item)
+            continue
+        item_type = meta.get("item_type")
+        if item_type == ITEM_TYPE_SAMPLE and is_draggable_sample_meta(meta):
+            sample_items.append(item)
+        elif item_type == ITEM_TYPE_CONDITION_GROUP:
+            cg_items.append(item)
+        else:
+            other_items.append(item)
+
+    def group_id_for(item: QTreeWidgetItem | None) -> str | None:
+        return tree_item_condition_group_id(_tree_item_meta(item))
+
+    keep: list[QTreeWidgetItem] = []
+    normalized = False
+
+    if sample_items:
+        anchor_gid = group_id_for(current_item)
+        if anchor_gid is None or not any(
+            group_id_for(item) == anchor_gid for item in sample_items
+        ):
+            anchor_gid = group_id_for(sample_items[0])
+        valid_samples = [
+            item for item in sample_items if group_id_for(item) == anchor_gid
+        ]
+        keep = valid_samples
+        normalized = (
+            len(keep) != len(selected_items)
+            or len(valid_samples) != len(sample_items)
+            or bool(cg_items)
+            or bool(other_items)
+        )
+    elif cg_items:
+        if current_item in cg_items:
+            keep = [current_item]
+        else:
+            keep = [cg_items[0]]
+        normalized = len(keep) != len(selected_items) or bool(other_items)
+    else:
+        keep = [current_item] if current_item in selected_items else [selected_items[0]]
+        normalized = True
+
+    return keep, normalized
+
+
 def restore_selected_sample_by_id(
     tree: QTreeWidget,
     sample_id: str,
@@ -96,6 +172,7 @@ def restore_selected_sample_by_id(
                 return found
         return None
 
+    found: QTreeWidgetItem | None = None
     for top_idx in range(tree.topLevelItemCount()):
         top = tree.topLevelItem(top_idx)
         if top is None:
@@ -106,13 +183,24 @@ def restore_selected_sample_by_id(
             and meta.get("item_type") == ITEM_TYPE_SAMPLE
             and str(meta.get("sample_id", "")).strip() == target
         ):
-            tree.setCurrentItem(top)
-            return top
+            found = top
+            break
         found = walk(top)
         if found is not None:
-            tree.setCurrentItem(found)
-            return found
-    return None
+            break
+
+    if found is None:
+        return None
+
+    tree.setCurrentItem(found)
+    selection_model = tree.selectionModel()
+    if selection_model is not None:
+        selection_model.clearSelection()
+        selection_model.select(
+            tree.indexFromItem(found),
+            QItemSelectionModel.SelectionFlag.Select,
+        )
+    return found
 
 
 def tree_index_shows_branch_indicator(tree: QTreeWidget, index) -> bool:
@@ -269,6 +357,7 @@ def configure_explorer_tree(tree: QTreeWidget) -> None:
     """Shared Explorer tree presentation defaults."""
     tree.setIndentation(gui_styles.EXPLORER_TREE_INDENTATION)
     tree.setUniformRowHeights(True)
+    tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
 
 class ExplorerTreeItemDelegate(QStyledItemDelegate):
@@ -366,12 +455,22 @@ class ExplorerTreeWidget(QTreeWidget):
             selected=selected,
         )
 
-    @staticmethod
     def _item_meta(item: QTreeWidgetItem | None) -> dict | None:
-        if item is None:
-            return None
-        data = item.data(0, Qt.ItemDataRole.UserRole)
-        return data if isinstance(data, dict) else None
+        return _tree_item_meta(item)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        # Preserve selection when opening the Explorer context menu (Phase 5.7C).
+        if event.button() == Qt.MouseButton.RightButton:
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        if self.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu:
+            self.customContextMenuRequested.emit(event.pos())
+            event.accept()
+            return
+        super().contextMenuEvent(event)
 
     def _drop_target_group_id(self, item: QTreeWidgetItem | None) -> str | None:
         meta = self._item_meta(item)

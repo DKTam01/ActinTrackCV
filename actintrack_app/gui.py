@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QItemSelectionModel, Qt, QTimer
 from PyQt6.QtGui import QBrush, QColor, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -184,11 +184,13 @@ from actintrack_app.explorer_sidebar import (
     sample_sidebar_display_label,
     sample_tree_meta,
     tree_item_condition_group_id,
+    tree_item_sample_id,
 )
 from actintrack_app.explorer_tree import (
     collect_condition_group_expansion_state,
     configure_condition_group_tree_item,
     default_expanded_state_for_condition_group,
+    normalize_explorer_tree_selection,
     restore_selected_sample_by_id,
 )
 from actintrack_app.recent_workspaces import add_recent
@@ -452,6 +454,7 @@ class MainWindow(QMainWindow):
 
         self._splitter_sizes_before_analysis: list[int] | None = None
         self._explorer_group_expansion_by_id: dict[str, bool] = {}
+        self._normalizing_explorer_selection = False
         self._build_ui()
         self._set_tracking_settings_editable(False)
         setup_application_menus(self)
@@ -2573,7 +2576,7 @@ class MainWindow(QMainWindow):
         scope = dlg.scope_key()
         selected = None
         if scope == SCOPE_SELECTED:
-            selected = self._selected_sample_ids()
+            selected = self.selected_sample_ids()
             if not selected:
                 gui_dialogs.warning(self, "Propagate", "Select target samples in the list.")
                 return
@@ -2807,13 +2810,83 @@ class MainWindow(QMainWindow):
             self._refresh_condition_group_combo(select=gid)
             self._set_last_import_breed(gid)
 
-    def _selected_sample_ids(self) -> list[str]:
-        ids = []
+    def _item_condition_group_id(self, item: QTreeWidgetItem | None) -> str | None:
+        return tree_item_condition_group_id(self._tree_item_meta(item))
+
+    def _item_sample_id(self, item: QTreeWidgetItem | None) -> str | None:
+        return tree_item_sample_id(self._tree_item_meta(item))
+
+    def selected_sample_ids(self) -> list[str]:
+        ids: list[str] = []
         for item in self.tree_samples.selectedItems():
-            data = self._tree_item_meta(item)
-            if data and data.get("item_type") == ITEM_TYPE_SAMPLE:
-                ids.append(str(data["sample_id"]))
+            sid = self._item_sample_id(item)
+            if sid:
+                ids.append(sid)
         return ids
+
+    def selected_sample_ids_in_single_condition_group(self) -> list[str]:
+        """Sample IDs when Explorer selection is multi-select within one Condition Group."""
+        sample_ids = self.selected_sample_ids()
+        if not sample_ids:
+            return []
+        group_ids = {
+            gid
+            for item in self.tree_samples.selectedItems()
+            if (gid := self._item_condition_group_id(item))
+        }
+        if len(group_ids) != 1:
+            return []
+        return sample_ids
+
+    def _normalize_explorer_selection(self) -> None:
+        if self._normalizing_explorer_selection:
+            return
+        selected = self.tree_samples.selectedItems()
+        keep, normalized = normalize_explorer_tree_selection(
+            selected,
+            current_item=self.tree_samples.currentItem(),
+        )
+        if not normalized:
+            return
+
+        previous_sample_id = self._current_sample_id
+        self._normalizing_explorer_selection = True
+        load_after: QTreeWidgetItem | None = None
+        try:
+            self.tree_samples.blockSignals(True)
+            selection_model = self.tree_samples.selectionModel()
+            if selection_model is not None:
+                selection_model.clearSelection()
+                for item in keep:
+                    selection_model.select(
+                        self.tree_samples.indexFromItem(item),
+                        QItemSelectionModel.SelectionFlag.Select,
+                    )
+            current = self.tree_samples.currentItem()
+            if current is not None and current not in keep and keep:
+                self.tree_samples.setCurrentItem(keep[0])
+                current = keep[0]
+            elif keep:
+                current = self.tree_samples.currentItem()
+            if (
+                current is not None
+                and self._is_sample_tree_item(current)
+                and self._item_sample_id(current) != previous_sample_id
+            ):
+                load_after = current
+        finally:
+            self.tree_samples.blockSignals(False)
+            self._normalizing_explorer_selection = False
+
+        if load_after is not None:
+            self._load_sample_from_tree_item(load_after)
+
+        self._status(
+            "Multi-select is limited to Samples in one Condition Group."
+        )
+
+    def _on_explorer_item_selection_changed(self) -> None:
+        self._normalize_explorer_selection()
 
     # --- Project / import (unchanged core) ---
 
@@ -3525,6 +3598,8 @@ class MainWindow(QMainWindow):
         current: Optional[QTreeWidgetItem],
         _previous: Optional[QTreeWidgetItem],
     ) -> None:
+        if self._normalizing_explorer_selection:
+            return
         self._sync_combo_from_tree_selection()
         if current is None:
             self._metric_analysis_view_active = False
