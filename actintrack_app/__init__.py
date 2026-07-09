@@ -1,3 +1,5 @@
 """ActinTrackCV — microscopy time-lapse preparation for F-actin analysis."""
 
-__version__ = "0.1.0"
+from actintrack_app.__version__ import __version__
+
+__all__ = ["__version__"]

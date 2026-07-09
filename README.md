@@ -37,7 +37,7 @@ Legacy manifests such as `frames_index.csv` and the `raw_source/` archive use ol
 
 Most users do not need Python or the source code — download the prebuilt app from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
 
-1. Download `ActinTrackCV-0.2.0-macos-arm64.zip` from the [`v0.2.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v0.2.0) (the latest macOS build; Windows is on the newer `v0.2.1` release).
+1. Download `ActinTrackCV-0.2.2-macos-arm64.zip` from the [`v0.2.2` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v0.2.2) (macOS Apple Silicon build only; Windows remains at `v0.2.1`).
 2. Unzip it (double-click in Finder).
 3. Open `ActinTrackCV.app`.
 4. Because this build is **unsigned**, macOS may block the first launch. If so, open
@@ -320,7 +320,7 @@ Output: `dist/ActinTrackCV.app`. It is **unsigned** — Gatekeeper warns on firs
 Package the bundle into a release zip with `ditto` (preferred over plain `zip`, which can corrupt the `.app` bundle's symlinks/metadata):
 
 ```bash
-ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-0.2.0-macos-arm64.zip
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-0.2.2-macos-arm64.zip
 ```
 
 `.dmg`, code signing, and notarization are future work. See [`packaging/macos/README.md`](packaging/macos/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
