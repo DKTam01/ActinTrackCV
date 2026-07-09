@@ -19,20 +19,21 @@ class OrientationWorkbenchUiTests(unittest.TestCase):
             Path(__file__).resolve().parents[1]
             / "actintrack_app/gui_layout_builders.py"
         ).read_text(encoding="utf-8")
-        orient_block = layout_src.split("def build_unified_orient_roi_panel", 1)[1].split(
-            "def create_tracking_setting_widgets", 1
-        )[0]
-        hidden_block = layout_src.split("def build_hidden_orientation_controls", 1)[
+        hidden_orient_block = layout_src.split("def build_hidden_orientation_controls", 1)[
             1
-        ].split("def build_unified_orient_roi_panel", 1)[0]
+        ].split("def build_analysis_page", 1)[0]
+        hidden_host_block = layout_src.split("def build_hidden_orientation_host", 1)[
+            1
+        ].split("def build_export_name_panel", 1)[0]
 
-        self.assertIn("build_hidden_orientation_controls(window, panel)", orient_block)
-        self.assertNotIn("rotation_row", orient_block)
-        self.assertNotIn("orient_actions_row", orient_block)
-        self.assertNotIn('QLabel("Rotation:")', orient_block)
-        self.assertIn("window.spin_custom_angle", hidden_block)
-        self.assertIn("window.chk_mirror_y", hidden_block)
-        self.assertIn(".hide()", hidden_block)
+        self.assertIn("build_hidden_orientation_host(window)", layout_src)
+        self.assertNotIn("rotation_row", hidden_orient_block)
+        self.assertNotIn("orient_actions_row", hidden_orient_block)
+        self.assertNotIn('QLabel("Rotation:")', hidden_orient_block)
+        self.assertIn("window.spin_custom_angle", hidden_orient_block)
+        self.assertIn("window.chk_mirror_y", hidden_orient_block)
+        self.assertIn(".hide()", hidden_orient_block)
+        self.assertIn("build_hidden_orientation_controls(window, host)", hidden_host_block)
 
     def test_orientation_backend_symbols_remain(self) -> None:
         gui_src = (

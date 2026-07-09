@@ -231,6 +231,27 @@ class ImageCanvas(QLabel):
         painter.end()
         self.setPixmap(composite)
 
+    def _context_menu_targets_roi(self, pos) -> bool:
+        """True when the click is inside the ROI or on its outline/handles."""
+        wx, wy = int(pos.x()), int(pos.y())
+        if self._handle_at(wx, wy):
+            return True
+        img_pt = self._widget_to_image(wx, wy)
+        if img_pt is None or self._roi is None:
+            return False
+        ix, iy = img_pt
+        r = self._roi
+        if r.x <= ix < r.x1 and r.y <= iy < r.y1:
+            return True
+        x0, y0 = self._image_to_widget(r.x, r.y)
+        x1, y1 = self._image_to_widget(r.x1, r.y1)
+        margin = self.HANDLE_RADIUS
+        outer = (
+            x0 - margin <= wx <= x1 + margin and y0 - margin <= wy <= y1 + margin
+        )
+        inner = x0 + margin < wx < x1 - margin and y0 + margin < wy < y1 - margin
+        return bool(outer and not inner)
+
     def _on_context_menu(self, pos) -> None:
         mw = self._main_window
         if not self._interactive or self._frame is None:
@@ -240,7 +261,8 @@ class ImageCanvas(QLabel):
         if mw._base_frame is None:
             return
         menu = QMenu(self)
-        self._main_window._populate_roi_actions_menu(menu)
+        inside_roi = self._context_menu_targets_roi(pos)
+        self._main_window._populate_roi_actions_menu(menu, inside_roi=inside_roi)
         action = menu.exec(self.mapToGlobal(pos))
         if action is None:
             return

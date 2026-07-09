@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QMimeData, Qt, pyqtSignal
-from PyQt6.QtGui import QDrag, QColor, QFontMetrics, QPainter, QPixmap
-from PyQt6.QtWidgets import QAbstractItemView, QTreeWidget, QTreeWidgetItem
+from PyQt6.QtCore import QMimeData, QModelIndex, QPointF, Qt, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush,
+    QDrag,
+    QColor,
+    QFontMetrics,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTreeWidget,
+    QTreeWidgetItem,
+)
 
+from actintrack_app import gui_styles
 from actintrack_app.explorer_sidebar import (
     EXPLORER_SAMPLE_MIME,
+    ITEM_TYPE_CONDITION_GROUP,
+    ITEM_TYPE_EMPTY_SAMPLE,
+    ITEM_TYPE_SAMPLE,
     is_draggable_sample_meta,
     is_valid_sample_drop_target_meta,
     sample_sidebar_display_label,
@@ -30,6 +50,179 @@ def _drag_pixmap_for_label(label: str, font_metrics: QFontMetrics) -> QPixmap:
     return pixmap
 
 
+def _item_has_custom_foreground(index) -> bool:
+    brush = index.data(Qt.ItemDataRole.ForegroundRole)
+    return isinstance(brush, QBrush) and brush.style() != Qt.BrushStyle.NoBrush
+
+
+def _index_depth(index) -> int:
+    depth = 0
+    parent = index.parent()
+    while parent.isValid():
+        depth += 1
+        parent = parent.parent()
+    return depth
+
+
+def _has_following_sibling(model, index) -> bool:
+    parent = index.parent()
+    if parent.isValid():
+        return index.row() < model.rowCount(parent) - 1
+    return index.row() < model.rowCount(QModelIndex()) - 1
+
+
+def _ancestor_at_level(index, level: int):
+    ancestor = index
+    for _ in range(_index_depth(index) - level - 1):
+        ancestor = ancestor.parent()
+    return ancestor
+
+
+def _branch_chevron_polygon(*, expanded: bool, center_x: float, center_y: float) -> QPolygonF:
+    half = float(gui_styles.EXPLORER_BRANCH_CHEVRON_SIZE)
+    if expanded:
+        return QPolygonF(
+            [
+                QPointF(center_x - half, center_y - half * 0.35),
+                QPointF(center_x + half, center_y - half * 0.35),
+                QPointF(center_x, center_y + half * 0.75),
+            ]
+        )
+    return QPolygonF(
+        [
+            QPointF(center_x - half * 0.75, center_y - half),
+            QPointF(center_x - half * 0.75, center_y + half),
+            QPointF(center_x + half * 0.75, center_y),
+        ]
+    )
+
+
+def _paint_indent_guides(
+    painter: QPainter,
+    rect,
+    index,
+    *,
+    depth: int,
+    model,
+) -> None:
+    """Cursor/VS Code-style vertical guides for nested Explorer rows."""
+    if depth <= 0:
+        return
+
+    indent = gui_styles.EXPLORER_TREE_INDENTATION
+    guide_pen = QPen(QColor(gui_styles.COLOR_EXPLORER_INDENT_GUIDE))
+    guide_pen.setWidth(gui_styles.EXPLORER_INDENT_GUIDE_WIDTH)
+
+    painter.save()
+    painter.setPen(guide_pen)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+    top = rect.top()
+    bottom = rect.bottom()
+    center_y = rect.center().y()
+
+    for level in range(depth):
+        x = rect.left() + level * indent + indent // 2
+
+        if level == depth - 1:
+            parent = index.parent()
+            if parent.isValid() and index.row() == model.rowCount(parent) - 1:
+                segment_bottom = center_y
+            else:
+                segment_bottom = bottom
+        else:
+            ancestor = _ancestor_at_level(index, level)
+            if not _has_following_sibling(model, ancestor):
+                continue
+            segment_bottom = bottom
+
+        painter.drawLine(x, top, x, segment_bottom)
+
+    painter.restore()
+
+
+def _paint_branch_chevron(
+    painter: QPainter,
+    rect,
+    *,
+    expanded: bool,
+    selected: bool,
+) -> None:
+    color = QColor(
+        gui_styles.COLOR_EXPLORER_BRANCH_SELECTED
+        if selected
+        else gui_styles.COLOR_EXPLORER_BRANCH
+    )
+    center_x = rect.center().x()
+    center_y = rect.center().y()
+    polygon = _branch_chevron_polygon(
+        expanded=expanded,
+        center_x=center_x,
+        center_y=center_y,
+    )
+
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(polygon)
+    painter.restore()
+
+
+def configure_explorer_tree(tree: QTreeWidget) -> None:
+    """Shared Explorer tree presentation defaults."""
+    tree.setIndentation(gui_styles.EXPLORER_TREE_INDENTATION)
+    tree.setUniformRowHeights(True)
+
+
+class ExplorerTreeItemDelegate(QStyledItemDelegate):
+    """Typography-only hierarchy for Condition Group vs Sample rows.
+
+    Status/type badges are intentionally deferred until workflow states stabilize.
+    """
+
+    def initStyleOption(
+        self,
+        option: QStyleOptionViewItem,
+        index,
+    ) -> None:
+        super().initStyleOption(option, index)
+        if not index.isValid():
+            return
+        meta = index.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(meta, dict):
+            return
+
+        item_type = meta.get("item_type")
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+
+        if item_type == ITEM_TYPE_CONDITION_GROUP:
+            option.font = gui_styles.explorer_condition_group_font(option.font)
+            text_color = QColor(
+                gui_styles.COLOR_EXPLORER_SELECTION_TEXT
+                if selected
+                else gui_styles.COLOR_EXPLORER_GROUP_TEXT
+            )
+            option.palette.setColor(option.palette.ColorRole.Text, text_color)
+            option.palette.setColor(option.palette.ColorRole.HighlightedText, text_color)
+            return
+
+        if item_type not in (ITEM_TYPE_SAMPLE, ITEM_TYPE_EMPTY_SAMPLE):
+            return
+
+        option.font = gui_styles.explorer_sample_font(option.font)
+        if selected:
+            text_color = QColor(gui_styles.COLOR_EXPLORER_SELECTION_TEXT)
+            option.palette.setColor(option.palette.ColorRole.Text, text_color)
+            option.palette.setColor(option.palette.ColorRole.HighlightedText, text_color)
+            return
+
+        if not _item_has_custom_foreground(index):
+            text_color = QColor(gui_styles.COLOR_EXPLORER_SAMPLE_TEXT)
+            option.palette.setColor(option.palette.ColorRole.Text, text_color)
+            option.palette.setColor(option.palette.ColorRole.HighlightedText, text_color)
+
+
 class ExplorerTreeWidget(QTreeWidget):
     """QTreeWidget that drags one Sample at a time onto a Condition Group target."""
 
@@ -37,11 +230,45 @@ class ExplorerTreeWidget(QTreeWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setItemDelegate(ExplorerTreeItemDelegate(self))
+        configure_explorer_tree(self)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def drawBranches(self, painter, rect, index) -> None:  # noqa: N802
+        if not index.isValid() or index.column() != 0:
+            return
+        model = self.model()
+        if model is None:
+            return
+
+        depth = _index_depth(index)
+        if depth > 0:
+            _paint_indent_guides(
+                painter,
+                rect,
+                index,
+                depth=depth,
+                model=model,
+            )
+
+        if not model.hasChildren(index):
+            return
+
+        selected = False
+        selection_model = self.selectionModel()
+        if selection_model is not None:
+            selected = selection_model.isSelected(index)
+
+        _paint_branch_chevron(
+            painter,
+            rect,
+            expanded=self.isExpanded(index),
+            selected=selected,
+        )
 
     @staticmethod
     def _item_meta(item: QTreeWidgetItem | None) -> dict | None:

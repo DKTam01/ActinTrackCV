@@ -86,17 +86,14 @@ from actintrack_app.gui_layout_builders import (
     LEFT_PANEL_MIN_WIDTH as _LEFT_PANEL_MIN_WIDTH,
     METRIC_ANALYSIS_VIEW_LABEL as _METRIC_ANALYSIS_VIEW_LABEL,
     PLAYBACK_SPEED_OPTIONS as _PLAYBACK_SPEED_OPTIONS,
-    RIGHT_PANEL_MIN_WIDTH as _RIGHT_PANEL_MIN_WIDTH,
     assemble_playback_controls_layout,
     build_export_name_panel,
     build_hidden_frame_controls,
     build_left_sidebar,
     build_main_workspace,
     build_optical_flow_settings_page,
-    build_right_sidebar,
     build_samples_panel,
     build_tracking_settings_page,
-    build_unified_orient_roi_panel,
     configure_orient_roi_control,
     configure_tracking_field,
     create_playback_frame_label,
@@ -128,6 +125,8 @@ from actintrack_app.gui_styles import (
     apply_small_secondary_style,
     apply_status_style,
     configure_orient_panel_action_button,
+    explorer_workspace_display_name,
+    explorer_workspace_elide_width,
     tracking_result_group_title,
 )
 from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
@@ -498,9 +497,6 @@ class MainWindow(QMainWindow):
     def _build_left_sidebar(self) -> QWidget:
         return build_left_sidebar(self)
 
-    def _build_right_sidebar(self) -> QStackedWidget:
-        return build_right_sidebar(self)
-
     def _build_samples_panel(self) -> QWidget:
         return build_samples_panel(self)
 
@@ -513,9 +509,6 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _configure_orient_roi_control(widget: QWidget) -> None:
         configure_orient_roi_control(widget)
-
-    def _build_unified_orient_roi_panel(self) -> QWidget:
-        return build_unified_orient_roi_panel(self)
 
     @staticmethod
     def _configure_tracking_field(widget: QWidget, *, full_column: bool = False) -> None:
@@ -537,7 +530,7 @@ class MainWindow(QMainWindow):
 
         add_tracking_setting_row(layout, label_text, widget, tooltip)
 
-    def _build_tracking_settings_form(self) -> QGroupBox:
+    def _build_tracking_settings_form(self) -> QWidget:
         from actintrack_app.gui_layout_builders import build_tracking_settings_form
 
         return build_tracking_settings_form(self)
@@ -550,17 +543,12 @@ class MainWindow(QMainWindow):
 
         create_optical_flow_setting_widgets(self)
 
-    def _build_optical_flow_overlay_panel(self) -> QGroupBox:
-        from actintrack_app.gui_layout_builders import build_optical_flow_overlay_panel
+    def _build_optical_flow_overlay_section(self) -> QWidget:
+        from actintrack_app.gui_layout_builders import build_optical_flow_overlay_section
 
-        return build_optical_flow_overlay_panel(self)
+        return build_optical_flow_overlay_section(self)
 
-    def _build_optical_flow_qc_panel(self) -> QGroupBox:
-        from actintrack_app.gui_layout_builders import build_optical_flow_qc_panel
-
-        return build_optical_flow_qc_panel(self)
-
-    def _build_optical_flow_settings_form(self) -> QGroupBox:
+    def _build_optical_flow_settings_form(self) -> QWidget:
         from actintrack_app.gui_layout_builders import build_optical_flow_settings_form
 
         return build_optical_flow_settings_form(self)
@@ -570,9 +558,12 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _tool_button(text: str, tooltip: str, slot) -> QPushButton:
+        from actintrack_app.gui_styles import apply_workbench_action_button
+
         btn = QPushButton(text)
         btn.setToolTip(tooltip)
         btn.clicked.connect(slot)
+        apply_workbench_action_button(btn)
         return btn
 
     @staticmethod
@@ -637,10 +628,8 @@ class MainWindow(QMainWindow):
     def _set_preview_mode_banner(self, text: str | None) -> None:
         if text:
             self.lbl_preview_mode.setText(text)
-            self.lbl_preview_mode.show()
         else:
             self.lbl_preview_mode.clear()
-            self.lbl_preview_mode.hide()
 
     def reset_preview_state(
         self,
@@ -691,6 +680,12 @@ class MainWindow(QMainWindow):
         self._refresh_roi_preview_panel()
 
     def _set_roi_preview_panel_visible(self, visible: bool) -> None:
+        if hasattr(self, "_adjacent_panel_stack"):
+            if visible:
+                self._adjacent_panel_stack.setCurrentIndex(0)
+            elif self._metric_analysis_view_active or self._preview_mode == "cropped_tracking":
+                self._adjacent_panel_stack.setCurrentIndex(1)
+            return
         if hasattr(self, "_roi_preview_host"):
             self._roi_preview_host.setVisible(visible)
 
@@ -734,10 +729,14 @@ class MainWindow(QMainWindow):
         self.roi_preview_canvas.set_preview_frame(cropped)
 
     def _show_tracking_settings_view(self) -> None:
-        self._right_stack.setCurrentIndex(1)
+        self._right_stack.setCurrentIndex(0)
+        if hasattr(self, "_adjacent_panel_stack"):
+            self._adjacent_panel_stack.setCurrentIndex(1)
 
     def _show_optical_flow_settings_view(self) -> None:
-        self._right_stack.setCurrentIndex(2)
+        self._right_stack.setCurrentIndex(1)
+        if hasattr(self, "_adjacent_panel_stack"):
+            self._adjacent_panel_stack.setCurrentIndex(1)
 
     def _show_cropped_metric_settings_view(self) -> None:
         if self._cropped_metric_mode == "optical_flow":
@@ -746,8 +745,28 @@ class MainWindow(QMainWindow):
             self._show_tracking_settings_view()
 
     def _set_metric_mode_widgets_visible(self, visible: bool) -> None:
+        if hasattr(self, "_workbench_action_mode_slot"):
+            from actintrack_app.gui_layout_builders import (
+                WORKBENCH_ACTION_MODE_FULL,
+                WORKBENCH_ACTION_MODE_METRIC,
+            )
+
+            self._workbench_action_mode_slot.setCurrentIndex(
+                WORKBENCH_ACTION_MODE_METRIC if visible else WORKBENCH_ACTION_MODE_FULL
+            )
+            return
         for widget in getattr(self, "_metric_mode_widgets", ()):
             widget.setVisible(visible)
+
+    def _sync_workbench_action_mode_slot(self) -> None:
+        if not hasattr(self, "_workbench_action_mode_slot"):
+            return
+        has_sample = (
+            self._current_sample_id is not None and self._base_frame is not None
+        )
+        if not has_sample:
+            return
+        self._set_metric_mode_widgets_visible(self._metric_analysis_view_active)
 
     def _sync_metric_mode_combo(self) -> None:
         idx = self.combo_metric_mode.findData(self._cropped_metric_mode)
@@ -767,11 +786,8 @@ class MainWindow(QMainWindow):
             self._show_cropped_preview_frame(self._preview_frame_index)
 
     def _show_roi_controls_view(self) -> None:
-        self._right_stack.setCurrentIndex(0)
-        for i in range(self._right_tabs.count()):
-            if self._right_tabs.tabText(i) == "Orient && ROI":
-                self._right_tabs.setCurrentIndex(i)
-                break
+        if hasattr(self, "_adjacent_panel_stack"):
+            self._adjacent_panel_stack.setCurrentIndex(0)
 
     def _set_left_explorer_visible(self, visible: bool) -> None:
         """Show or hide the workspace tree (e.g. while Analysis is active)."""
@@ -862,30 +878,13 @@ class MainWindow(QMainWindow):
         if self._center_stack.currentIndex() == 1:
             self._center_stack.setCurrentIndex(0)
         self._set_left_explorer_visible(True)
-        for i in range(self._right_tabs.count()):
-            if self._right_tabs.tabText(i) == "Orient && ROI":
-                self._right_tabs.setCurrentIndex(i)
-                return
-
-    def _on_right_tab_changed(self, index: int) -> None:
-        if index < 0:
-            return
-        if self._right_tabs.tabText(index) == "Analysis":
-            if self._preview_mode == "cropped_tracking":
-                self._exit_cropped_preview_mode()
-            self._set_left_explorer_visible(False)
-            self._center_stack.setCurrentIndex(1)
-            self.refresh_analysis_view()
-        else:
-            if self._center_stack.currentIndex() == 1:
-                self._center_stack.setCurrentIndex(0)
-            self._set_left_explorer_visible(True)
 
     def show_analysis_view(self) -> None:
-        for i in range(self._right_tabs.count()):
-            if self._right_tabs.tabText(i) == "Analysis":
-                self._right_tabs.setCurrentIndex(i)
-                return
+        if self._preview_mode == "cropped_tracking":
+            self._exit_cropped_preview_mode()
+        self._set_left_explorer_visible(False)
+        self._center_stack.setCurrentIndex(1)
+        self.refresh_analysis_view()
 
     def refresh_analysis_view(self) -> None:
         if self._project_root is None:
@@ -942,11 +941,9 @@ class MainWindow(QMainWindow):
         has_sample = (
             self._current_sample_id is not None and self._base_frame is not None
         )
-        if hasattr(self, "_metric_status_host"):
-            self._metric_status_host.setVisible(has_sample)
-        self.btn_metric_analysis.setVisible(
-            has_sample and not self._metric_analysis_view_active
-        )
+        if hasattr(self, "_sample_playback_host"):
+            self._sample_playback_host.setVisible(has_sample)
+        self._sync_workbench_action_mode_slot()
         if hasattr(self, "btn_run_metrics"):
             self.btn_run_metrics.setVisible(has_sample)
         if hasattr(self, "lbl_metric_status"):
@@ -969,34 +966,39 @@ class MainWindow(QMainWindow):
         label = "Pause" if self._preview_playing else "Play"
         if hasattr(self, "btn_playback_toggle"):
             self.btn_playback_toggle.setText(label)
-        if hasattr(self, "btn_preview_toggle"):
-            self.btn_preview_toggle.setText(label)
 
     def _update_playback_controls_state(self) -> None:
         if not hasattr(self, "btn_playback_toggle"):
             return
-        can_show = (
-            self._current_sample_id is not None
-            and self._base_frame is not None
+        has_sample = (
+            self._current_sample_id is not None and self._base_frame is not None
+        )
+        can_show_full = (
+            has_sample
             and not self._metric_analysis_view_active
             and self._preview_mode == "full"
         )
-        self._set_sample_playback_visible(can_show)
+        can_show_metric = (
+            has_sample
+            and self._metric_analysis_view_active
+            and self._preview_mode == "cropped_tracking"
+        )
+        self._set_sample_playback_visible(can_show_full or can_show_metric)
         total = max(0, int(self._total_frames))
-        can_scrub = can_show and total > 0
-        can_play = can_show and total > 1
+        can_scrub_full = can_show_full and total > 0
+        can_play_full = can_show_full and total > 1
+        cropped_count = (
+            len(self._cropped_preview.frames)
+            if self._cropped_preview is not None
+            else 0
+        )
+        can_scrub_metric = can_show_metric and cropped_count > 0
+        can_play_metric = can_show_metric and cropped_count > 1
+        can_scrub = can_scrub_full or can_scrub_metric
+        can_play = can_play_full or can_play_metric
         self.btn_playback_toggle.setEnabled(can_play or self._preview_playing)
         if hasattr(self, "slider_sample_frame"):
             self.slider_sample_frame.setEnabled(can_scrub)
-        if hasattr(self, "btn_preview_toggle"):
-            preview_can_play = (
-                self._preview_mode == "cropped_tracking"
-                and self._cropped_preview is not None
-                and len(self._cropped_preview.frames) > 1
-            )
-            self.btn_preview_toggle.setEnabled(
-                preview_can_play or self._preview_playing
-            )
         self._sync_playback_toggle_buttons()
 
     @staticmethod
@@ -1040,21 +1042,22 @@ class MainWindow(QMainWindow):
             self.slider_sample_frame.blockSignals(False)
 
     def _on_sample_frame_slider(self, value: int) -> None:
-        if self._preview_mode != "full" or self._base_frame is None:
-            return
         if self._preview_playing:
             self._playback_pause()
+        if self._preview_mode == "cropped_tracking":
+            if self._cropped_preview is None:
+                return
+            self._show_cropped_preview_frame(int(value))
+            return
+        if self._preview_mode != "full" or self._base_frame is None:
+            return
         self._load_frame_index(int(value))
 
     def _on_sample_playback_speed_changed(self, _text: str) -> None:
-        if self._preview_playing and self._preview_mode == "full":
+        if self._preview_playing and self._preview_mode in ("full", "cropped_tracking"):
             self._update_playback_timer_interval()
 
     def _playback_interval_ms(self) -> int:
-        if self._preview_mode == "cropped_tracking":
-            return self._playback_interval_ms_for_speed_text(
-                self.combo_preview_speed.currentText()
-            )
         return self._playback_interval_ms_for_speed_text(
             self.combo_sample_playback_speed.currentText()
         )
@@ -1080,8 +1083,7 @@ class MainWindow(QMainWindow):
             self._preview_timer.start(self._playback_interval_ms())
 
     def _on_preview_speed_changed(self, _text: str) -> None:
-        if self._preview_playing:
-            self._update_playback_timer_interval()
+        self._on_sample_playback_speed_changed(_text)
 
     def _playback_toggle(self) -> None:
         if self._preview_playing:
@@ -1114,7 +1116,8 @@ class MainWindow(QMainWindow):
         self._preview_frame_index = 0
         self._clear_of_flow_cache()
         self.canvas.clear_preview()
-        self.lbl_cropped_frame.setText("—")
+        if hasattr(self, "lbl_sample_frame"):
+            self.lbl_sample_frame.setText("—")
         self.lbl_frame_info.setText("—")
 
     def _ensure_metric_view_shell_visible(self) -> None:
@@ -1122,7 +1125,6 @@ class MainWindow(QMainWindow):
         self._metric_analysis_view_active = True
         self._preview_mode = "cropped_tracking"
         self.canvas.set_interactive(False)
-        self.btn_metric_analysis.hide()
         self._set_preview_controls_visible(True)
         self._set_metric_mode_widgets_visible(True)
         self._sync_metric_mode_combo()
@@ -1662,7 +1664,7 @@ class MainWindow(QMainWindow):
             max_index = max(0, len(analysis.frames) - 1)
             self.slider_frame.setMaximum(max_index)
             self.spin_frame.setMaximum(max_index)
-            self.slider_cropped_frame.setMaximum(max_index)
+            self.slider_sample_frame.setMaximum(max_index)
             frame_idx = min(self._preview_frame_index, max_index)
             self._show_cropped_preview_frame(frame_idx)
         return True
@@ -2461,7 +2463,6 @@ class MainWindow(QMainWindow):
         self._preview_mode = "cropped_tracking"
         self.canvas.set_interactive(False)
         self.canvas.clear_preview()
-        self.btn_metric_analysis.hide()
         self._set_preview_controls_visible(False)
         self._set_metric_mode_widgets_visible(True)
         self._sync_metric_mode_combo()
@@ -2470,12 +2471,13 @@ class MainWindow(QMainWindow):
         self._update_optical_flow_qc_readout()
         self.update_tracking_result_panel()
         self._set_preview_mode_banner(f"{_METRIC_ANALYSIS_VIEW_LABEL} — {message}")
-        self.lbl_cropped_frame.setText("—")
+        if hasattr(self, "lbl_sample_frame"):
+            self.lbl_sample_frame.setText("—")
         self.lbl_frame_info.setText("—")
         self._update_metric_analysis_button_visibility()
 
     def _set_preview_controls_visible(self, visible: bool) -> None:
-        for widget in self._preview_control_widgets:
+        for widget in getattr(self, "_preview_control_widgets", ()):
             widget.setVisible(visible)
 
     def _enter_cropped_preview_mode(
@@ -2491,7 +2493,6 @@ class MainWindow(QMainWindow):
         self._cropped_preview = analysis
         self._preview_frame_index = 0
         self.canvas.set_interactive(False)
-        self.btn_metric_analysis.hide()
         self._set_preview_controls_visible(True)
         self._set_metric_mode_widgets_visible(True)
         self._sync_metric_mode_combo()
@@ -2513,7 +2514,7 @@ class MainWindow(QMainWindow):
         max_index = max(0, count - 1)
         self.slider_frame.setMaximum(max_index)
         self.spin_frame.setMaximum(max_index)
-        self.slider_cropped_frame.setMaximum(max_index)
+        self.slider_sample_frame.setMaximum(max_index)
         self._show_cropped_preview_frame(0)
         if analysis.tracking_warning:
             self._status(
@@ -2570,11 +2571,7 @@ class MainWindow(QMainWindow):
         self._playback_pause()
 
     def _on_cropped_preview_frame_slider(self, value: int) -> None:
-        if self._preview_mode != "cropped_tracking" or self._cropped_preview is None:
-            return
-        if self._preview_playing:
-            self._playback_pause()
-        self._show_cropped_preview_frame(value)
+        self._on_sample_frame_slider(value)
 
     def _show_cropped_preview_frame(self, index: int) -> None:
         if self._cropped_preview is None:
@@ -2596,16 +2593,17 @@ class MainWindow(QMainWindow):
         self.canvas.set_preview_frame(frame)
         self.slider_frame.blockSignals(True)
         self.spin_frame.blockSignals(True)
-        self.slider_cropped_frame.blockSignals(True)
+        self.slider_sample_frame.blockSignals(True)
         self.slider_frame.setValue(index)
         self.spin_frame.setValue(index)
-        self.slider_cropped_frame.setValue(index)
+        self.slider_sample_frame.setValue(index)
         self.slider_frame.blockSignals(False)
         self.spin_frame.blockSignals(False)
-        self.slider_cropped_frame.blockSignals(False)
+        self.slider_sample_frame.blockSignals(False)
         h, w = frame.shape[:2]
         frame_text = f"Frame {index + 1} / {count}"
-        self.lbl_cropped_frame.setText(frame_text)
+        if hasattr(self, "lbl_sample_frame"):
+            self.lbl_sample_frame.setText(frame_text)
         self.lbl_frame_info.setText(
             f"Cropped preview {frame_text} ({w}×{h} px)"
         )
@@ -3551,11 +3549,15 @@ class MainWindow(QMainWindow):
             return
         path = str(self._project_root)
         self.lbl_workspace.setToolTip(path)
-        width = 240
+        folder_name = explorer_workspace_display_name(self._project_root)
+        container_width = 0
         if hasattr(self, "_left_sidebar") and self._left_sidebar.isVisible():
-            width = max(120, self._left_sidebar.width() - 12)
+            container_width = self._left_sidebar.width()
+        elif hasattr(self, "lbl_workspace"):
+            container_width = self.lbl_workspace.width()
+        width = explorer_workspace_elide_width(container_width)
         elided = self.lbl_workspace.fontMetrics().elidedText(
-            path, Qt.TextElideMode.ElideMiddle, width
+            folder_name, Qt.TextElideMode.ElideRight, width
         )
         self.lbl_workspace.setText(elided)
 
@@ -4093,17 +4095,26 @@ class MainWindow(QMainWindow):
         self._refresh_sample_list()
         self.update_tracking_result_panel()
 
-    def _populate_roi_actions_menu(self, menu: QMenu) -> None:
+    def _populate_roi_actions_menu(
+        self, menu: QMenu, *, inside_roi: bool = True
+    ) -> None:
         menu.clear()
         suggest = menu.addAction("Suggest ROI from F-actin Signal")
         suggest.setToolTip(
             "Suggest a rectangular region with strong visible F-actin signal. "
             "Review and adjust before export."
         )
-        clear = menu.addAction("Clear ROI")
-        clear.setToolTip("Remove the current ROI rectangle from the preview.")
         suggest.triggered.connect(self._on_auto_suggest_roi)
-        clear.triggered.connect(self._on_clear_roi)
+        if inside_roi:
+            clear = menu.addAction("Clear ROI")
+            clear.setToolTip("Remove the current ROI rectangle from the preview.")
+            clear.triggered.connect(self._on_clear_roi)
+            export_roi = menu.addAction("Export ROI")
+            export_roi.setToolTip(
+                "Crop and export processed outputs to the processed/ folder "
+                "using the auto-generated export name."
+            )
+            export_roi.triggered.connect(self._on_process_sample)
 
     def _ask_yes_no(
         self,

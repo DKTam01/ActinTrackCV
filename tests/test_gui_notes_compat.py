@@ -52,16 +52,12 @@ class NotesCompatibilityTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._center_stack = MagicMock()
         window._center_stack.currentIndex.return_value = 1
-        window._right_tabs = MagicMock()
-        window._right_tabs.count.return_value = 2
-        window._right_tabs.tabText.side_effect = ["Orient && ROI", "Analysis"]
         window._set_left_explorer_visible = MagicMock()
 
         MainWindow._on_return_to_samples(window)
 
         window._center_stack.setCurrentIndex.assert_called_once_with(0)
         window._set_left_explorer_visible.assert_called_once_with(True)
-        window._right_tabs.setCurrentIndex.assert_called_once_with(0)
 
 
 class LoadedNotesForSaveTests(unittest.TestCase):
