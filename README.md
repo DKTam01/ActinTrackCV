@@ -144,9 +144,10 @@ The Shiny app discovers source videos, supports interactive ROI selection, runs 
 5. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region. The ROI **autosaves**; there is no Save ROI button and no Approve/Reject ROI workflow. ROI drag and autosave do **not** run metrics. If a Sample already has metric results, changing and saving ROI geometry may mark them **Stale**.
 6. **Metric Analysis View** — open from the preview toolbar to enter cropped ROI playback and metric review. Playback loops continuously; use the frame slider to scrub manually. Playback speeds: **0.25×, 0.5×, 1×, 1.5×, 2×**. You can switch Samples while staying in Metric Analysis View.
 7. **Metrics** — Template Tracking and Optical Flow Motion Index run **only when you ask**:
-   - **Run Metrics** (toolbar) computes the **currently selected** Sample.
-   - Explorer right-click **Run Metrics** on a Sample row computes that Sample by stable `sample_id` without selecting or loading it in the preview.
-   - Both paths use the current **Workbench metric settings** plus the Sample’s saved orientation and ROI on **cropped ROI frames**.
+   - **Run Metrics** (toolbar) computes the **currently displayed** Sample.
+   - Explorer right-click **Run Metrics** on a Sample row computes that Sample without selecting or loading it in the preview.
+   - Explorer multi-select: select multiple Samples within the **same Condition Group**, right-click one **selected** Sample, then choose **Run Metrics for Selected Samples**. Metrics run sequentially using current **Workbench metric settings**; progress appears in the bottom status bar. Every selected Sample must already have a saved ROI/Region — if any is missing, the action is disabled and the menu explains which Sample(s) need ROI. The app does not skip invalid Samples or run partial batches.
+   - All Run Metrics paths use the current **Workbench metric settings** plus each Sample’s saved orientation and ROI on **cropped ROI frames**.
    - A Sample with a saved ROI but no saved metric results yet shows **No Metrics** until you run metrics.
    - After a saved ROI geometry change, existing results may show **Stale** until you run metrics again.
 8. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Condition Group and Sample from saved per-Sample results (does not re-run metrics).
@@ -167,11 +168,16 @@ Metric runs are explicit and researcher-controlled:
 
 | Action | What runs |
 |--------|-----------|
-| **Run Metrics** (toolbar) | Template Tracking + Optical Flow for the **currently selected** Sample |
+| **Run Metrics** (toolbar) | Template Tracking + Optical Flow for the **currently displayed** Sample |
 | **Run Metrics** (Explorer right-click on a Sample) | Same metrics for the **targeted** Sample without changing preview selection |
+| **Run Metrics for Selected Samples** (Explorer right-click when multiple same-group Samples are selected) | Same metrics for **all selected Samples** in that Condition Group, one after another; progress in the bottom status bar |
 | Sample selection / switching | Inspect and navigate only — no metric compute |
 | ROI drag / autosave | Persists ROI only — no metric compute; may mark existing results **Stale** |
 | Workbench metric settings changes | Updates settings only — no automatic metric compute |
+
+**ROI requirement for selected-sample runs:** every selected Sample must already have a saved ROI/Region. If any selected Sample is missing ROI, **Run Metrics for Selected Samples** is disabled and the menu lists which Sample(s) need ROI. No partial batches are run.
+
+**Target semantics:** toolbar **Run Metrics** always targets the currently displayed Sample. Right-clicking an **unselected** Sample runs only that Sample. Right-clicking **selected** Samples can run the full same-group selection. Condition Group batch Run Metrics is not available yet.
 
 Status labels in the workbench:
 
@@ -236,7 +242,8 @@ Right-click a Sample or Data row in the left panel:
 
 | Action | Effect |
 |--------|--------|
-| **Run Metrics** | Compute Template Tracking and Optical Flow for that Sample (does not change which Sample is selected in the preview) |
+| **Run Metrics** | Compute Template Tracking and Optical Flow for that Sample (does not change which Sample is displayed in the preview) |
+| **Run Metrics for Selected Samples** | When multiple Samples in the same Condition Group are selected, compute metrics for all selected Samples sequentially (requires saved ROI on every selected Sample) |
 | **Rename Sample…** | Change the Sample display name |
 | **Replace Data…** | Select a new AVI/MP4 file; clears derived ROI, tracking, and analysis state |
 | **Delete Sample…** | Removes project state and derived results from the workspace; does **not** delete the original external Data file unless you opt to remove the project's internal copy |
@@ -271,7 +278,7 @@ Opening an older workspace automatically migrates legacy v1 metadata (`samples.c
 | **Analysis** | View Analysis |
 | **Help** | How to Run App, About |
 
-Context menu (right-click Sample or Data row): Run Metrics, Rename Sample, Replace Data, Delete Sample.
+Context menu (right-click Sample or Data row): Run Metrics, Run Metrics for Selected Samples (when multiple same-group Samples are selected), Rename Sample, Replace Data, Delete Sample.
 
 ## Tests
 
