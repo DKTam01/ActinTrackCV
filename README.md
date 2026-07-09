@@ -147,6 +147,7 @@ The Shiny app discovers source videos, supports interactive ROI selection, runs 
    - **Run Metrics** (toolbar) computes the **currently displayed** Sample.
    - Explorer right-click **Run Metrics** on a Sample row computes that Sample without selecting or loading it in the preview.
    - Explorer multi-select: select multiple Samples within the **same Condition Group**, right-click one **selected** Sample, then choose **Run Metrics for Selected Samples**. Metrics run sequentially using current **Workbench metric settings**; progress appears in the bottom status bar. Every selected Sample must already have a saved ROI/Region — if any is missing, the action is disabled and the menu explains which Sample(s) need ROI. The app does not skip invalid Samples or run partial batches.
+   - Explorer Condition Group: right-click a **Condition Group**, then choose **Run Metrics for Condition Group** to compute metrics for **all child Samples** in that group sequentially. Empty Condition Groups do not offer Run Metrics. Every child Sample must already have a saved ROI/Region — if any is missing, the action is disabled and the menu explains which Sample(s) need ROI. No partial Condition Group batches are run. Progress appears in the bottom status bar.
    - All Run Metrics paths use the current **Workbench metric settings** plus each Sample’s saved orientation and ROI on **cropped ROI frames**.
    - A Sample with a saved ROI but no saved metric results yet shows **No Metrics** until you run metrics.
    - After a saved ROI geometry change, existing results may show **Stale** until you run metrics again.
@@ -171,13 +172,14 @@ Metric runs are explicit and researcher-controlled:
 | **Run Metrics** (toolbar) | Template Tracking + Optical Flow for the **currently displayed** Sample |
 | **Run Metrics** (Explorer right-click on a Sample) | Same metrics for the **targeted** Sample without changing preview selection |
 | **Run Metrics for Selected Samples** (Explorer right-click when multiple same-group Samples are selected) | Same metrics for **all selected Samples** in that Condition Group, one after another; progress in the bottom status bar |
+| **Run Metrics for Condition Group** (Explorer right-click on a Condition Group) | Same metrics for **all child Samples** in that Condition Group, one after another; progress in the bottom status bar. Not offered for empty groups |
 | Sample selection / switching | Inspect and navigate only — no metric compute |
 | ROI drag / autosave | Persists ROI only — no metric compute; may mark existing results **Stale** |
 | Workbench metric settings changes | Updates settings only — no automatic metric compute |
 
-**ROI requirement for selected-sample runs:** every selected Sample must already have a saved ROI/Region. If any selected Sample is missing ROI, **Run Metrics for Selected Samples** is disabled and the menu lists which Sample(s) need ROI. No partial batches are run.
+**ROI requirement for batch runs:** every Sample in the target set must already have a saved ROI/Region. For **Run Metrics for Selected Samples** or **Run Metrics for Condition Group**, if any target Sample is missing ROI, the action is disabled and the menu lists which Sample(s) need ROI. No partial batches are run.
 
-**Target semantics:** toolbar **Run Metrics** always targets the currently displayed Sample. Right-clicking an **unselected** Sample runs only that Sample. Right-clicking **selected** Samples can run the full same-group selection. Condition Group batch Run Metrics is not available yet.
+**Target semantics:** toolbar **Run Metrics** always targets the currently displayed Sample. Right-clicking an **unselected** Sample runs only that Sample. Right-clicking **selected** Samples can run the full same-group selection. Right-clicking a **Condition Group** runs all child Samples in that group (empty groups offer no Run Metrics action).
 
 Status labels in the workbench:
 
@@ -248,6 +250,15 @@ Right-click a Sample or Data row in the left panel:
 | **Replace Data…** | Select a new AVI/MP4 file; clears derived ROI, tracking, and analysis state |
 | **Delete Sample…** | Removes project state and derived results from the workspace; does **not** delete the original external Data file unless you opt to remove the project's internal copy |
 
+Right-click a **Condition Group** in the left panel:
+
+| Action | Effect |
+|--------|--------|
+| **Run Metrics for Condition Group** | Compute metrics for all child Samples in that Condition Group sequentially (requires saved ROI on every child Sample; not offered for empty groups) |
+| **Add Sample(s)…** | Import one or more AVI/MP4 files into the group |
+| **Rename Condition Group…** | Change the Condition Group display name |
+| **Delete Condition Group…** | Remove the group when empty |
+
 ## Project layout
 
 The app creates these folders inside your workspace as you work:
@@ -278,7 +289,7 @@ Opening an older workspace automatically migrates legacy v1 metadata (`samples.c
 | **Analysis** | View Analysis |
 | **Help** | How to Run App, About |
 
-Context menu (right-click Sample or Data row): Run Metrics, Run Metrics for Selected Samples (when multiple same-group Samples are selected), Rename Sample, Replace Data, Delete Sample.
+Context menu (right-click): **Condition Group** — Run Metrics for Condition Group (when the group has child Samples), Add Sample(s), Rename Condition Group, Delete Condition Group. **Sample or Data row** — Run Metrics, Run Metrics for Selected Samples (when multiple same-group Samples are selected), Rename Sample, Replace Data, Delete Sample.
 
 ## Tests
 
