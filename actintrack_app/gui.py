@@ -232,6 +232,8 @@ from actintrack_app.optical_flow_overlay import (
 from actintrack_app.preview_workflow import (
     CroppedPreviewAnalysis,
     analyze_cropped_preview,
+    cropped_preview_analysis_from_draft,
+    cropped_preview_analysis_from_frames,
     is_supported_video_path,
     load_cropped_frames_from_video,
     render_cropped_tracking_frame,
@@ -1136,6 +1138,42 @@ class MainWindow(QMainWindow):
             resume_playback=resume_playback,
         )
 
+    def _sample_has_persisted_metric_drafts(self, sample_id: str) -> bool:
+        return (
+            self._read_draft_tracking_payload(sample_id) is not None
+            or self._read_draft_optical_flow_payload(sample_id) is not None
+        )
+
+    def _resolve_metric_preview_analysis_for_sample(
+        self, sample_id: str
+    ) -> Optional[CroppedPreviewAnalysis]:
+        """Return in-memory or persisted draft preview data without recomputing."""
+        cached = self._tracking_results_by_sample.get(sample_id)
+        if cached is not None:
+            return cached
+        if not self._sample_has_persisted_metric_drafts(sample_id):
+            return None
+
+        check = self._validate_current_roi()
+        if not check.ok or check.roi_oriented is None:
+            return None
+        path = self._sample_file_path()
+        if path is None or not path.exists() or not is_supported_video_path(path):
+            return None
+        try:
+            frames = load_cropped_frames_from_video(
+                path,
+                self._orientation,
+                check.roi_oriented,
+            )
+        except Exception:
+            return None
+
+        draft = self._read_draft_tracking_payload(sample_id)
+        if draft is not None:
+            return cropped_preview_analysis_from_draft(frames, draft)
+        return cropped_preview_analysis_from_frames(frames)
+
     def _display_metric_analysis_view_for_current_sample(
         self,
         *,
@@ -1157,9 +1195,9 @@ class MainWindow(QMainWindow):
             )
             self._show_metric_analysis_placeholder(message)
             return
-        cached = self._tracking_results_by_sample.get(sid)
-        if cached is not None:
-            self._enter_cropped_preview_mode(cached)
+        analysis = self._resolve_metric_preview_analysis_for_sample(sid)
+        if analysis is not None:
+            self._enter_cropped_preview_mode(analysis)
             if resume_playback:
                 self._preview_play()
             return
@@ -1377,20 +1415,6 @@ class MainWindow(QMainWindow):
         if self._preview_mode == "cropped_tracking":
             self._show_cropped_preview_frame(self._preview_frame_index)
 
-    def _commit_optical_flow_result(
-        self, sample_id: str, result: OpticalFlowResult
-    ) -> None:
-        if sample_id != self._current_sample_id:
-            return
-        self._optical_flow_results_by_sample[sample_id] = result
-        self._optical_flow_stale_by_sample.pop(sample_id, None)
-        self._clear_of_flow_cache(sample_id)
-        self._save_draft_optical_flow_result(sample_id, result)
-        self._update_optical_flow_qc_readout()
-        self.update_tracking_result_panel(sample_id)
-        self._update_metric_freshness_label()
-        self._refresh_analysis_if_visible()
-
     def load_latest_optical_flow_result_for_sample(
         self, sample_id: str
     ) -> Optional[OpticalFlowResultView]:
@@ -1564,27 +1588,11 @@ class MainWindow(QMainWindow):
                     pass
         self._invalidate_optical_flow_for_sample(sample_id)
 
-    def _commit_tracking_result(
-        self,
-        sample_id: str,
-        analysis: CroppedPreviewAnalysis,
-        params: MotionIndexParams,
-    ) -> None:
-        if sample_id != self._current_sample_id:
-            return
-        self._tracking_results_by_sample[sample_id] = analysis
-        self._tracking_result_stale_by_sample.pop(sample_id, None)
-        self._save_draft_tracking_result(sample_id, analysis, params)
-        self.update_tracking_result_panel(sample_id)
-        self._update_metric_freshness_label()
-        self._refresh_analysis_if_visible()
-
     # ----- Decoupled per-Sample metric calculation -------------------------
-    # The live-canvas debounce path keeps the Metric Analysis View preview in
-    # sync for the *current* Sample. These helpers compute metrics for any
-    # Sample from its *saved* orientation + ROI so quick Sample switching never
-    # loses analysis. Results commit by sample_id regardless of which Sample is
-    # currently selected.
+    # Explicit Run Metrics computes from each Sample's saved orientation and ROI
+    # without loading it in the preview. These commit helpers persist results by
+    # sample_id regardless of which Sample is currently selected; panel refresh
+    # runs only when the computed Sample is the one on screen.
 
     def _commit_tracking_result_for_sid(
         self,
@@ -2228,68 +2236,43 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Unsupported", message)
             return False
 
-        try:
-            params = self._tracking_params_from_ui()
-        except ValueError as exc:
-            if quiet:
-                self._show_metric_analysis_placeholder(str(exc))
-            else:
-                QMessageBox.warning(self, "Tracking Settings", str(exc))
-            return False
-
-        crop_w = int(check.roi_oriented.width)
-        crop_h = int(check.roi_oriented.height)
-        min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
-        if min(crop_w, crop_h) < min_dim:
-            message = (
-                f"The ROI ({crop_w}×{crop_h} px) is too small for patch size "
-                f"{params.template_patch_size_px} and search radius "
-                f"{params.search_radius_px}."
+        sid = self._current_sample_id
+        has_results = bool(
+            sid
+            and (
+                sid in self._tracking_results_by_sample
+                or self._sample_has_persisted_metric_drafts(sid)
             )
-            self._report_metric_view_blocked(message, quiet=quiet)
-            return False
+        )
+        if not has_results:
+            try:
+                params = self._tracking_params_from_ui()
+            except ValueError as exc:
+                if quiet:
+                    self._show_metric_analysis_placeholder(str(exc))
+                else:
+                    QMessageBox.warning(self, "Tracking Settings", str(exc))
+                return False
+
+            crop_w = int(check.roi_oriented.width)
+            crop_h = int(check.roi_oriented.height)
+            min_dim = (
+                params.template_patch_size_px + (2 * params.search_radius_px) + 2
+            )
+            if min(crop_w, crop_h) < min_dim:
+                message = (
+                    f"The ROI ({crop_w}×{crop_h} px) is too small for patch size "
+                    f"{params.template_patch_size_px} and search radius "
+                    f"{params.search_radius_px}."
+                )
+                self._report_metric_view_blocked(message, quiet=quiet)
+                return False
 
         if not quiet:
-            self._status("Building metric analysis preview…")
-        QApplication.processEvents()
-        try:
-            frames = load_cropped_frames_from_video(
-                path,
-                self._orientation,
-                check.roi_oriented,
-            )
-            analysis = analyze_cropped_preview(frames, params=params)
-        except Exception as exc:
-            self._report_metric_view_blocked(str(exc), quiet=quiet)
-            return False
-
-        self._enter_cropped_preview_mode(analysis, params=params)
-        if self._current_sample_id:
-            of_settings = self._optical_flow_settings_from_ui()
-            roi_bounds = (
-                int(check.roi_oriented.x),
-                int(check.roi_oriented.y),
-                int(check.roi_oriented.width),
-                int(check.roi_oriented.height),
-            )
-            fingerprint = build_optical_flow_fingerprint(
-                sample_id=self._current_sample_id,
-                roi_bounds=roi_bounds,
-                settings=of_settings,
-                data_identity=str(path.resolve()),
-                frame_count=len(frames),
-            )
-            of_result = compute_optical_flow_motion_index(
-                frames,
-                of_settings,
-                sample_id=self._current_sample_id,
-                data_identity=str(path.resolve()),
-                roi_bounds=roi_bounds,
-                fingerprint=fingerprint,
-            )
-            self._commit_optical_flow_result(self._current_sample_id, of_result)
-        if resume_playback:
-            self._preview_play()
+            self._status("Opening metric analysis view…")
+        self._display_metric_analysis_view_for_current_sample(
+            resume_playback=resume_playback,
+        )
         return True
 
     def _show_metric_analysis_placeholder(self, message: str) -> None:
@@ -2319,10 +2302,8 @@ class MainWindow(QMainWindow):
             widget.setVisible(visible)
 
     def _enter_cropped_preview_mode(
-            self,
+        self,
         analysis: CroppedPreviewAnalysis,
-        *,
-        params: Optional[MotionIndexParams] = None,
     ) -> None:
         self._preview_pause()
         self._center_stack.setCurrentIndex(0)
@@ -2337,16 +2318,6 @@ class MainWindow(QMainWindow):
         self._set_tracking_settings_editable(True)
         self._show_cropped_metric_settings_view()
         self._update_optical_flow_qc_readout()
-        if self._current_sample_id:
-            commit_params = params or analysis.params
-            if commit_params is None:
-                try:
-                    commit_params = self._tracking_params_from_ui()
-                except ValueError:
-                    commit_params = MotionIndexParams()
-            self._commit_tracking_result(
-                self._current_sample_id, analysis, commit_params
-            )
         self._set_preview_mode_banner(_METRIC_ANALYSIS_VIEW_LABEL)
         count = max(1, len(analysis.frames))
         max_index = max(0, count - 1)

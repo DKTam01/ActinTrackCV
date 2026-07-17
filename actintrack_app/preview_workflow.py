@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -169,6 +170,68 @@ def analyze_cropped_preview(
         ),
         tracking_warning=warning,
         params=params,
+    )
+
+
+def cropped_preview_analysis_from_draft(
+    frames: list[np.ndarray],
+    draft: dict[str, Any],
+) -> CroppedPreviewAnalysis:
+    """Build a display-only cropped preview from persisted draft metrics."""
+    params_data = draft.get("parameters")
+    params: MotionIndexParams | None = None
+    if isinstance(params_data, dict):
+        try:
+            params = MotionIndexParams(**params_data)
+        except TypeError:
+            params = None
+    general = float(
+        draft.get(
+            "general_movement_index_um_per_s",
+            draft.get("absolute_velocity_index_um_per_s", 0.0),
+        )
+        or 0.0
+    )
+    return CroppedPreviewAnalysis(
+        frames=frames,
+        tracks=[],
+        starting_points=[],
+        downward_velocity_index_um_per_s=float(
+            draft.get("downward_velocity_index_um_per_s", 0.0) or 0.0
+        ),
+        general_movement_index_um_per_s=general,
+        num_tracks_with_valid_steps=int(
+            draft.get("num_tracks_with_valid_steps", 0) or 0
+        ),
+        total_valid_steps=int(draft.get("total_valid_steps", 0) or 0),
+        mean_track_length_frames=0.0,
+        time_weighted_mean_speed_um_per_s=float(
+            draft.get("time_weighted_mean_speed_um_per_s", 0.0) or 0.0
+        ),
+        signed_vertical_velocity_um_per_s=float(
+            draft.get("signed_vertical_velocity_um_per_s", 0.0) or 0.0
+        ),
+        downward_velocity_contribution_um_per_s=float(
+            draft.get("downward_velocity_contribution_um_per_s", 0.0) or 0.0
+        ),
+        tracking_warning=str(draft.get("tracking_warning", "") or ""),
+        params=params,
+    )
+
+
+def cropped_preview_analysis_from_frames(
+    frames: list[np.ndarray],
+) -> CroppedPreviewAnalysis:
+    """Build a frame-only cropped preview when only optical-flow drafts exist."""
+    return CroppedPreviewAnalysis(
+        frames=frames,
+        tracks=[],
+        starting_points=[],
+        downward_velocity_index_um_per_s=0.0,
+        general_movement_index_um_per_s=0.0,
+        num_tracks_with_valid_steps=0,
+        total_valid_steps=0,
+        mean_track_length_frames=0.0,
     )
 
 
