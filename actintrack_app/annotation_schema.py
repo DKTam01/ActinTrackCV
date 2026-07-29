@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from actintrack_app.orientation import OrientationState, RectROI
+from actintrack_app.region import Region
 from actintrack_app.roi_workflow import (
     ORIENTED_ROI_COORDINATE_SPACE,
     original_roi_to_oriented,
@@ -145,3 +146,8 @@ def annotation_from_legacy(ann: dict[str, Any]) -> tuple[OrientationState, RectR
         x1 = int(tracking.get("x1", w))
         return orientation, RectROI(x0, 0, max(1, x1 - x0), max(1, y))
     return orientation, None
+
+
+def region_from_annotation(annotation: dict[str, Any]) -> Region:
+    """Optional adapter: parse Region geometry from annotation fields."""
+    return Region.from_annotation(annotation)
