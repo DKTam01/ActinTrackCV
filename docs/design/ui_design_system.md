@@ -1,132 +1,368 @@
 # ActinTrackCV UI Design Language
 
-Phase 5.5 design reference for the PyQt6 desktop workbench. Use this guide when polishing panels, labels, spacing, and layout hierarchy. It does **not** authorize scientific or workflow changes.
+Design reference for the ActinTrackCV PyQt6 scientific workbench.
+
+This guide supports UI layout, hierarchy, copy, and interaction decisions. It does **not** authorize scientific, schema, or algorithm changes.
 
 ---
 
 ## Product Design Philosophy
 
-ActinTrackCV is a **scientific desktop workbench**, not a consumer app or marketing site. Users spend most of their time judging F-actin fluorescence in microscopy previews. The interface should stay out of the way.
+ActinTrackCV is a **digital scientific instrument** for F-actin fluorescence microscopy analysis.
 
-- **The microscopy preview is the visual hero.** Center-column canvas space, contrast, and calm surrounding chrome take priority over decorative sidebar treatment.
-- **UI should quietly support analysis.** Controls explain what to do next; they should not compete with the image for attention.
-- **Correctness beats polish.** Never sacrifice scientific behavior, data integrity, or backward compatibility for aesthetics.
+It should not feel like a generic desktop form application.
 
-User-facing terminology is fixed: **Condition Group**, **Sample**, **ROI** (not legacy internal names like Breed/Batch in labels).
+Researchers spend most of their attention judging microscopy previews, ROI placement, and analysis readiness. The interface should serve that work quietly.
 
----
+The microscope image is the visual hero.
 
-## Core Principles
+The app should help researchers move samples through:
 
-### Layout and hierarchy
+```text
+Imported → Prepared → Analyzed
+```
 
-1. **Image first** — preserve preview area; shrink or simplify side panels before shrinking the canvas.
-2. **Reduce chrome** — remove redundant frames, titles, and boxes that repeat information already visible elsewhere.
-3. **Prefer whitespace over borders** — use spacing constants (`PANEL_SECTION_SPACING`, `FORM_SECTION_SPACING`) before adding `QGroupBox` or custom framed panels.
-4. **No nested group boxes unless strongly justified** — one level of grouping is usually enough. A tab title plus an inner group box with the same meaning is redundant.
-5. **One concept per section** — orientation controls, ROI actions, export naming, and playback belong in distinct visual sections, not stacked titles for the same idea.
-6. **Align controls to a simple grid** — equal-width action rows, consistent row spacing, and predictable label/control alignment (see Orient/ROI action buttons and playback rows).
+with minimal friction.
 
-### Typography and copy
-
-7. **Three typography levels**
-   - **Primary** — body labels and control text (`STYLE_BODY_LABEL`, default widgets).
-   - **Secondary** — section headers and supporting labels (`apply_small_secondary_style`).
-   - **Muted** — hints, empty states, and low-priority guidance (`apply_hint_style`, `apply_muted_hint_style`).
-8. **Every label must add new information** — do not repeat a tab name, group-box title, and field label for the same concept.
-9. **Preserve scientific terminology** — tracking, optical flow, ROI, motion index, and Condition Group language stay precise.
-10. **Remove implementation/developer wording from user-facing UI** — no internal IDs, schema names, or engineer jargon in labels users see during normal work.
-
-### Implementation posture
-
-11. **Prefer native Qt widgets over heavy custom styling** — reuse `actintrack_app/gui_styles.py` helpers before inventing new QSS.
-12. **Preserve workflows and scientific behavior** — polish is visual hierarchy and copy, not feature redesign.
-
-Shared style tokens live in `actintrack_app/gui_styles.py`. New panels should reuse existing margin, spacing, and label helpers rather than hardcoding values.
+Correctness, data integrity, and backward compatibility always outrank polish.
 
 ---
 
-## Concrete Examples
+## Core Workbench Principles
 
-### Export name (Orient/ROI panel)
+### 1. The image is the hero
 
-| Avoid | Prefer |
-|-------|--------|
-| `QGroupBox("Export Name")` **and** a field label `Export name:` | One section label **Export name** plus the input |
-| Three layers of naming for one field | Tab/section context + single label + placeholder/hint |
+The microscope image should receive the most visual space and attention.
 
-**Why:** The group title and colon label said the same thing. One secondary section label is enough; the placeholder and auto-name hint carry the rest.
+Prefer large central image area, minimal surrounding chrome, calm UI density, subdued panels, and direct image interaction.
 
-### Tab vs inner titles
+Avoid large permanent control panels, redundant labels, decorative borders, and statistics competing with the image during preparation.
 
-| Avoid | Prefer |
-|-------|--------|
-| Tab **Orient && ROI** plus inner `QGroupBox("Orient and ROI")` | Tab provides context; inner sections describe **actions** (rotation, ROI Actions, export name) |
-| Tab **Analysis** plus a group box that only repeats **Analysis** | Tab provides context; inner group describes **Analysis Actions** (Refresh, Return) when multiple controls need grouping |
+---
 
-**Why:** Tabs already establish where the user is. Inner chrome should subdivide tasks, not restate the tab name.
+### 2. The app should feel like a scientific instrument
 
-### Labels and hints
+The interface should feel focused, calm, and purposeful.
 
-| Avoid | Prefer |
-|-------|--------|
-| Status line that repeats the section title | Status that reports **state** (saved, stale, missing ROI) |
-| `"Optical Flow (Draft)"` hidden from users when it is intentional preview copy | Keep preview indicators when they communicate scientific limitation; do not rename without review |
+The researcher should feel like they are working with a microscopy instrument, not navigating a collection of software tabs.
+
+Use UI only where it supports the experiment.
+
+Ask before adding controls:
+
+> Does this help the researcher understand or act on the image right now?
+
+If not, hide it, defer it, or move it to a contextual surface.
+
+---
+
+### 3. Workspace-first, not tab-first
+
+The user should feel like they are inside one workspace.
+
+The selected Condition Group or Sample determines context.
+
+Avoid designing around rigid pages such as Sample tab, Analysis tab, or Metrics tab.
+
+Prefer:
+
+```text
+Explorer selection → workspace updates
+```
+
+The Sample tab is not a long-term destination. Sample-related information should be shown only where it supports the current task.
+
+---
+
+### 4. Explorer is navigation, not the workspace
+
+The Explorer belongs on the left.
+
+It should show Condition Groups and Samples, preserve selection context, support project navigation, and eventually show simple sample state indicators.
+
+It should not become a dense control panel.
+
+Target layout direction:
+
+```text
+Explorer (~20%) | Microscope image + ROI preview + playback
+```
+
+Explorer should span the full height of the workspace and should not be interrupted by playback controls.
+
+---
+
+### 5. No permanent right sidebar
+
+The long-term Workbench direction removes the permanent right-side controls panel.
+
+Controls should move to more appropriate places:
+
+- image actions → canvas or image-adjacent controls
+- ROI actions → ROI/context menu
+- playback → directly beneath the image
+- project navigation → Explorer
+- analysis metrics → deferred review/popup/workbench surface
+
+Do not add a new permanent right inspector unless explicitly requested.
+
+---
+
+### 6. ROI is a first-class canvas object
+
+The ROI should increasingly behave like an object on the microscope image.
+
+Initial direction:
+
+- user interacts with ROI on the canvas
+- ROI preview remains visible near the image
+- ROI context menu exposes focused actions
+
+Initial ROI context menu:
+
+```text
+Clear ROI
+Suggest ROI
+Export ROI
+```
+
+Avoid speculative ROI actions such as duplicate, copy, paste, center, or templates unless explicitly requested.
+
+Future direction:
+
+- rotated ROI on the image
+- downstream analysis still receives upright rectangular crops
+- whole-image rotation becomes deemphasized
+
+---
+
+### 7. Hide whole-image orientation controls from the main UI
+
+The researcher should primarily think:
+
+> I am defining the ROI.
+
+not:
+
+> I am rotating the image.
+
+Whole-image orientation controls should be hidden from the main Prepare workspace for now.
+
+Do not remove backend orientation support until the rotated ROI pipeline fully replaces it and the change is explicitly requested.
+
+---
+
+### 8. ROI preview should be always available but secondary
+
+The cropped ROI preview should be visible near the main image.
+
+It should be smaller than the main image, visually separate from the main image, synchronized with the selected sample/ROI, and distinguishable without being visually loud.
+
+It should not require opening a separate dialog during normal preparation.
+
+---
+
+### 9. Playback belongs to the image
+
+Playback controls should sit directly beneath the microscope image.
+
+They should not extend beneath the Explorer.
+
+They should visually belong to the image/video workspace, not the whole window.
+
+---
+
+### 10. Analysis metrics are deferred
+
+Do not show sample statistics in the main Prepare workspace for now.
+
+Metrics, graphs, tables, and analysis spreadsheets should be designed later as a review/analysis experience.
+
+The current direction allows for Analysis to become a popup or dedicated review surface, but that decision is intentionally deferred.
+
+---
+
+## Layout and Hierarchy Rules
+
+1. Image first — preserve preview area; simplify panels before shrinking the canvas.
+2. Reduce chrome — remove redundant frames, titles, and boxes.
+3. Prefer whitespace over borders — use spacing constants before adding frames.
+4. Avoid nested group boxes unless strongly justified.
+5. One concept per section — avoid stacking multiple labels for the same idea.
+6. Keep controls near the thing they affect:
+   - ROI actions near ROI
+   - playback near image
+   - sample navigation in Explorer
+7. Do not show numbers before the researcher asks for numbers — stats belong in analysis/review, not preparation.
+
+---
+
+## Typography and Copy
+
+Use three typography levels:
+
+1. Primary — body labels and normal controls.
+2. Secondary — section headers and supporting labels.
+3. Muted — hints, empty states, and low-priority guidance.
+
+Every label must add new information.
+
+Avoid repeating tab names, repeating section names, implementation/developer wording, internal IDs, schema names, and legacy Breed/Batch terminology.
+
+Use Condition Group, Sample, Data, and ROI.
+
+Preserve scientific terminology: tracking, optical flow, motion index, ROI, and Condition Group.
+
+---
+
+## Explorer State Indicators
+
+Future Explorer direction should include simple progress/status indicators:
+
+```text
+○ Imported
+◐ Prepared
+✓ Analyzed
+```
+
+Meaning:
+
+- Imported — sample exists but preparation is incomplete.
+- Prepared — sample has enough preparation state to be analyzed.
+- Analyzed — saved analysis outputs exist.
+
+Export is optional and should not be treated as the final required state.
+
+Avoid heavy dashboards, progress bars, or dense metadata in the Explorer.
+
+---
+
+## Context Menu Philosophy
+
+Use context menus for relevant object-specific actions.
+
+Context menus should be small and focused.
+
+ROI context menu direction:
+
+```text
+Clear ROI
+Suggest ROI
+Export ROI
+```
+
+Sample context menu may include actions such as:
+
+```text
+Analyze
+Rename
+Refresh
+```
+
+Do not add actions just because they are easy to implement.
+
+A context menu action should be relevant to the selected object, useful during normal research workflow, and better hidden than permanently visible.
 
 ---
 
 ## Implementation Rules
 
-UI polish passes must obey project constraints:
+UI redesign passes must obey project constraints:
 
-1. **Do not change scientific algorithms** — tracking, optical flow, ROI math, orientation, metric formulas, and analysis aggregation stay untouched.
-2. **Do not change workspace schema** — folder layout, metadata formats, and migrations are out of scope for polish.
-3. **Keep widget object names stable** unless explicitly approved — tests and workflows may depend on attribute names (`edit_export_name`, `btn_roi_actions`, etc.).
-4. **Prefer small, reviewable visual hierarchy changes** — one panel or tab per diff when possible; easy to revert.
-5. **Update regression tests when labels, titles, or layout guards change** — especially `tests/test_terminology.py` and `tests/test_gui_styles.py` for string and token guards.
-6. **Do not rename user workflows** — no new steps, removed buttons, or shortcut additions during polish unless scoped separately.
+1. Do not change scientific algorithms.
+2. Do not change metric formulas.
+3. Do not change workspace schema unless explicitly requested.
+4. Do not remove backend orientation support while hiding orientation UI.
+5. Keep widget object names stable unless explicitly approved.
+6. Prefer small, reviewable layout changes.
+7. Update regression tests when labels, titles, visibility, or layout guards change.
+8. Avoid broad rewrites of `gui.py` unless explicitly scoped.
+9. Reuse `actintrack_app/gui_styles.py` helpers and style tokens.
+10. Prefer native Qt widgets over heavy custom styling.
 
-Before merging polish work, run:
+Before reporting completion, run:
 
 ```bash
-.venv/bin/python -m compileall actintrack_app tests
-.venv/bin/python -m unittest discover -s tests
+python -m compileall actintrack_app tests
+python -m unittest discover -s tests
 ```
+
+---
+
+## Workbench Stage 1 Direction
+
+Workbench Stage 1 focuses on the main window shell, not analysis redesign.
+
+Target layout:
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│ Native menu bar                                              │
+├──────────────┬──────────────────────────────┬────────────────┤
+│              │                              │                │
+│              │                              │ ROI Preview    │
+│              │                              │                │
+│ Explorer     │      Microscope Image        │                │
+│ full height  │                              │                │
+│ ~20% width   │                              │                │
+│              ├──────────────────────────────┤                │
+│              │ Playback controls            │                │
+└──────────────┴──────────────────────────────┴────────────────┘
+```
+
+Stage 1 should remove or hide:
+
+- permanent right sidebar
+- Sample statistics in Prepare workspace
+- whole-image orientation controls
+- excessive control chrome
+
+Stage 1 should preserve:
+
+- Explorer navigation
+- sample selection
+- existing analysis behavior
+- existing ROI persistence
+- existing orientation backend
+- existing tracking/optical-flow behavior
+- existing workspace compatibility
 
 ---
 
 ## Cursor Usage
 
-When using Cursor (or any agent) on UI work:
+When using Cursor on UI work:
 
-1. **Reference this document** in prompts for Phase 5.5 polish tasks.
-2. **Audit the target panel against this guide before editing** — list redundant titles, nested boxes, and duplicate labels first.
-3. **If uncertain, report options instead of guessing** — e.g. flat section vs single group box, with trade-offs; do not silently redesign workflows.
-4. **Scope control** — documentation-only tasks stay in docs; polish tasks touch only the requested panel and its tests.
-5. **Never commit unless explicitly requested** — especially avoid staging `.cursor/`, workspaces, or runtime data.
+1. Reference this document.
+2. Begin with a read-only audit before editing.
+3. List affected widgets/modules.
+4. Identify behavior that must remain unchanged.
+5. Keep each change narrow and reversible.
+6. Do not redesign Analysis metrics unless explicitly requested.
+7. Do not commit unless explicitly approved.
 
 Example prompt fragment:
 
-> Phase 5.5 panel polish — follow `docs/design/ui_design_system.md`. Reduce chrome on [panel]. No algorithm, schema, or workflow changes.
+```text
+Workbench Stage 1 UI task. Follow docs/design/ui_design_system.md.
+Audit first. Do not modify algorithms, schemas, metrics, or backend orientation behavior.
+Keep the change narrowly scoped and update tests.
+```
 
 ---
 
-## Related References
+## Open Questions
 
-- Project rules: `.cursor/rules/actintrack.mdc`
-- Style tokens: `actintrack_app/gui_styles.py`
-- User terminology guards: `tests/test_terminology.py`
-- Completed hierarchy example: Orient/ROI export section (commit `b765bfa` — flat export name section, no nested Export Name group box)
+These are intentionally deferred:
 
----
+1. Exact Analysis metrics UI.
+2. Whether Analysis opens as popup, review surface, or dedicated workbench.
+3. Final rotated ROI implementation.
+4. Whether Sample statistics appear anywhere outside Analysis.
+5. Final ROI preview sizing and placement.
+6. Whether the Sample tab is removed fully or migrated gradually.
+7. Full dark theme/QSS pass.
+8. Table/spreadsheet polish.
+9. Export UX beyond ROI export context action.
 
-## Open Questions / Ambiguities
-
-These are intentionally deferred; resolve with a human before large visual passes:
-
-1. **Bordered panel hosts** — metric status uses a framed host; playback borders are deferred. When is a border justified vs whitespace only?
-2. **Global QSS / dark theme** — canvas target `#1e1e1e` vs native palette; full theme pass not started.
-3. **Preview-scientific labels** — e.g. **Optical Flow (Draft)** signals preview-only behavior; changing copy needs PI/scientific review.
-4. **Analysis table column UX** — table polish is separate from sidebar hierarchy rules above.
-
-When in doubt, propose two layouts and stop.
+When uncertain, propose two layouts and stop.
