@@ -510,6 +510,253 @@ def _bright_region_centroid(
     )
 
 
+# Conservative weak-filament extension: move bright seeds toward the last
+# hysteresis-supported point on an elongated structure, not the faintest pixel.
+_WEAK_FILAMENT_MIN_AXIS_RATIO = 2.2
+_WEAK_FILAMENT_LOW_SUPPORT_RATIO = 0.10
+_WEAK_FILAMENT_LOW_HIGH_FRACTION = 0.16
+_WEAK_FILAMENT_MIN_LOW_ABOVE_FLOOR = 2.5
+_WEAK_FILAMENT_EXTENSION_RADIUS_FACTOR = 3.5
+
+
+def _local_signal_floor(signal: np.ndarray, x: int, y: int, *, radius_px: int) -> float:
+    h, w = signal.shape[:2]
+    radius = max(1, int(radius_px))
+    x0 = max(0, x - radius)
+    y0 = max(0, y - radius)
+    x1 = min(w, x + radius + 1)
+    y1 = min(h, y + radius + 1)
+    region = signal[y0:y1, x0:x1]
+    if region.size == 0:
+        return float(np.percentile(signal, 12))
+    return float(np.percentile(region, 20))
+
+
+def _hysteresis_support_mask(
+    signal: np.ndarray,
+    seed_x: int,
+    seed_y: int,
+    *,
+    high_thresh: float,
+    low_thresh: float,
+) -> np.ndarray:
+    """Return pixels connected to the seed under a two-threshold hysteresis rule."""
+    h, w = signal.shape[:2]
+    support = np.zeros((h, w), dtype=np.uint8)
+    if not (0 <= seed_x < w and 0 <= seed_y < h):
+        return support.astype(bool)
+    if float(signal[seed_y, seed_x]) < low_thresh:
+        return support.astype(bool)
+
+    strong = signal >= high_thresh
+    weak = signal >= low_thresh
+    stack: list[tuple[int, int]] = [(seed_x, seed_y)]
+    support[seed_y, seed_x] = 1
+
+    while stack:
+        x, y = stack.pop()
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx = x + dx
+                ny = y + dy
+                if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                    continue
+                if support[ny, nx]:
+                    continue
+                if strong[ny, nx]:
+                    support[ny, nx] = 1
+                    stack.append((nx, ny))
+                    continue
+                if not weak[ny, nx]:
+                    continue
+                has_strong_neighbor = False
+                for dy2 in (-1, 0, 1):
+                    for dx2 in (-1, 0, 1):
+                        sx = nx + dx2
+                        sy = ny + dy2
+                        if (
+                            0 <= sx < w
+                            and 0 <= sy < h
+                            and support[sy, sx]
+                            and strong[sy, sx]
+                        ):
+                            has_strong_neighbor = True
+                            break
+                    if has_strong_neighbor:
+                        break
+                if has_strong_neighbor:
+                    support[ny, nx] = 1
+                    stack.append((nx, ny))
+    return support.astype(bool)
+
+
+def _refine_starting_point_with_filament_support(
+    signal: np.ndarray,
+    x: float,
+    y: float,
+    *,
+    valid_mask: np.ndarray,
+    border_half: int,
+    search_radius_px: int,
+) -> tuple[float, float]:
+    """
+    Extend a bright seed toward the last hysteresis-supported point on a taper.
+
+    Isolated round bright features are left unchanged. Extension requires an
+    elongated connected-support region that shares image evidence with the seed.
+    """
+    h, w = signal.shape[:2]
+    seed_x = int(round(x))
+    seed_y = int(round(y))
+    if not (0 <= seed_x < w and 0 <= seed_y < h):
+        return x, y
+    if not valid_mask[seed_y, seed_x]:
+        return x, y
+
+    radius = max(8, int(search_radius_px))
+    floor = _local_signal_floor(signal, seed_x, seed_y, radius_px=radius)
+    seed_value = float(signal[seed_y, seed_x])
+    high_thresh = floor + (0.65 * max(0.0, seed_value - floor))
+    low_thresh = max(
+        floor + _WEAK_FILAMENT_MIN_LOW_ABOVE_FLOOR,
+        seed_value * _WEAK_FILAMENT_LOW_SUPPORT_RATIO,
+        high_thresh * _WEAK_FILAMENT_LOW_HIGH_FRACTION,
+    )
+
+    x0 = max(0, seed_x - radius)
+    y0 = max(0, seed_y - radius)
+    x1 = min(w, seed_x + radius + 1)
+    y1 = min(h, seed_y + radius + 1)
+    local_signal = signal[y0:y1, x0:x1]
+    local_support = _hysteresis_support_mask(
+        local_signal,
+        seed_x - x0,
+        seed_y - y0,
+        high_thresh=high_thresh,
+        low_thresh=low_thresh,
+    )
+    if not np.any(local_support):
+        return x, y
+
+    ys_local, xs_local = np.where(local_support)
+    if ys_local.size < 8:
+        return x, y
+
+    xs = xs_local.astype(np.float64) + x0
+    ys = ys_local.astype(np.float64) + y0
+    weights = np.clip(signal[ys_local + y0, xs_local + x0] - floor, 0.0, None)
+    if float(np.sum(weights)) <= 1e-9:
+        return x, y
+
+    mean_x = float(np.average(xs, weights=weights))
+    mean_y = float(np.average(ys, weights=weights))
+    centered = np.column_stack([xs - mean_x, ys - mean_y])
+    cov = np.cov(centered.T, aweights=weights)
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    major = eigvecs[:, int(np.argmax(eigvals))]
+    minor_axis = float(max(eigvals.min(), 1e-6) ** 0.5)
+    major_axis = float(max(eigvals.max(), 1e-6) ** 0.5)
+    if major_axis / minor_axis < _WEAK_FILAMENT_MIN_AXIS_RATIO:
+        return x, y
+
+    probe = 5.0
+    forward = major / max(float(np.linalg.norm(major)), 1e-6)
+    probe = 5.0
+
+    def _supported_probe(dir_sign: float) -> float | None:
+        tx = x + (forward[0] * probe * dir_sign)
+        ty = y + (forward[1] * probe * dir_sign)
+        cx = int(round(tx))
+        cy = int(round(ty))
+        if not (0 <= cx < w and 0 <= cy < h):
+            return None
+        value = float(signal[cy, cx])
+        if value < low_thresh:
+            return None
+        return value
+
+    plus_value = _supported_probe(1.0)
+    minus_value = _supported_probe(-1.0)
+    if plus_value is None and minus_value is None:
+        return x, y
+    if plus_value is None:
+        direction = -forward
+    elif minus_value is None:
+        direction = forward
+    elif plus_value <= minus_value:
+        direction = forward
+    else:
+        direction = -forward
+
+    max_steps = int(max(24, min(h, w) * 0.75))
+    current_x = float(x)
+    current_y = float(y)
+    last_good = (current_x, current_y)
+    perp = np.array([-direction[1], direction[0]], dtype=np.float64)
+
+    for _ in range(max_steps):
+        next_x = current_x + direction[0]
+        next_y = current_y + direction[1]
+        cx = int(round(next_x))
+        cy = int(round(next_y))
+        if not (0 <= cx < w and 0 <= cy < h):
+            break
+        if not valid_mask[cy, cx]:
+            break
+        if (
+            next_x < border_half
+            or next_y < border_half
+            or next_x >= w - border_half
+            or next_y >= h - border_half
+        ):
+            break
+        center_value = float(signal[cy, cx])
+        if center_value < low_thresh:
+            break
+
+        lateral_offsets = (-1.5, 0.0, 1.5)
+        lateral_values = [
+            _bilinear_sample(
+                signal,
+                next_x + (perp[0] * offset),
+                next_y + (perp[1] * offset),
+            )
+            for offset in lateral_offsets
+        ]
+        if center_value + 1.0 < max(lateral_values):
+            break
+
+        last_good = (next_x, next_y)
+        current_x = next_x
+        current_y = next_y
+
+    ext_x, ext_y = last_good
+    if float(np.hypot(ext_x - x, ext_y - y)) < 1.0:
+        return x, y
+    return ext_x, ext_y
+
+
+def _bilinear_sample(signal: np.ndarray, x: float, y: float) -> float:
+    h, w = signal.shape[:2]
+    if x < 0 or y < 0 or x >= w - 1 or y >= h - 1:
+        cx = int(np.clip(round(x), 0, w - 1))
+        cy = int(np.clip(round(y), 0, h - 1))
+        return float(signal[cy, cx])
+    x0 = int(np.floor(x))
+    y0 = int(np.floor(y))
+    dx = x - x0
+    dy = y - y0
+    v00 = float(signal[y0, x0])
+    v10 = float(signal[y0, x0 + 1])
+    v01 = float(signal[y0 + 1, x0])
+    v11 = float(signal[y0 + 1, x0 + 1])
+    top = v00 + (dx * (v10 - v00))
+    bottom = v01 + (dx * (v11 - v01))
+    return top + (dy * (bottom - top))
+
+
 def _too_close_to_blocked(
     x: float,
     y: float,
@@ -609,6 +856,17 @@ def select_starting_points(
             x,
             y,
             radius_px=max(2, half),
+        )
+        x, y = _refine_starting_point_with_filament_support(
+            signal,
+            x,
+            y,
+            valid_mask=valid_mask,
+            border_half=half,
+            search_radius_px=max(
+                half,
+                int(round(half * _WEAK_FILAMENT_EXTENSION_RADIUS_FACTOR)),
+            ),
         )
         cx_i = int(round(x))
         cy_i = int(round(y))

@@ -25,9 +25,11 @@ from actintrack_app.motion_index import (
 
 # Reuse private helpers read-only for candidate ranking diagnostics only.
 from actintrack_app.motion_index import (  # noqa: PLC2701
+    _WEAK_FILAMENT_EXTENSION_RADIUS_FACTOR,
     _bright_region_centroid,
     _local_maxima_mask,
     _odd_size,
+    _refine_starting_point_with_filament_support,
     _starting_point_valid_mask,
 )
 
@@ -352,6 +354,17 @@ def enumerate_starting_point_candidates(
             x,
             y,
             radius_px=max(2, half),
+        )
+        refined_x, refined_y = _refine_starting_point_with_filament_support(
+            signal,
+            refined_x,
+            refined_y,
+            valid_mask=valid_mask,
+            border_half=half,
+            search_radius_px=max(
+                half,
+                int(round(half * _WEAK_FILAMENT_EXTENSION_RADIUS_FACTOR)),
+            ),
         )
         cx_i = int(round(refined_x))
         cy_i = int(round(refined_y))
