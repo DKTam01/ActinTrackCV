@@ -143,6 +143,11 @@ class ImageCanvas(QLabel):
         self._redraw()
 
     def _widget_to_image(self, wx: int, wy: int) -> Optional[tuple[int, int]]:
+        """Map canvas_display widget coords to oriented_frame_pixels.
+
+        Image coords are oriented_frame_pixels of the displayed frame.
+        Widget coords are canvas_display only and are never persisted.
+        """
         if self._frame is None or self._pixmap is None:
             return None
         sx = wx - self._offset_x

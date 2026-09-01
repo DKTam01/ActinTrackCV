@@ -1,4 +1,9 @@
-"""Build and merge Phase 2 sample annotations."""
+"""Build and merge sample annotations.
+
+Additive scientific fields (nucleus_reference, cutoff_boundary) are optional
+and omitted when absent. Workspace schema version is unchanged: this is
+backward-compatible JSON, not a v2→v3 migration.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +18,14 @@ from actintrack_app.roi_workflow import (
     roi_from_original_dict,
     roi_oriented_as_dict,
     roi_original_as_dict,
+)
+from actintrack_app.scientific_annotations import (
+    ANNOTATION_FIELD_CUTOFF_BOUNDARY,
+    ANNOTATION_FIELD_NUCLEUS_REFERENCE,
+    CutoffBoundary,
+    NucleusReference,
+    cutoff_boundary_from_annotation,
+    nucleus_reference_from_annotation,
 )
 
 
@@ -47,8 +60,15 @@ def build_sample_annotation(
     status: str = "roi_marked",
     requires_review: bool = False,
     review_status: str = "approved",
+    nucleus_reference: NucleusReference | None = None,
+    cutoff_boundary: CutoffBoundary | None = None,
 ) -> dict[str, Any]:
-    """Structured annotation for training and export."""
+    """Structured annotation for training and export.
+
+    Optional ``nucleus_reference`` and ``cutoff_boundary`` persist in
+    oriented_frame_pixels. They are omitted when None so old projects stay
+    unchanged. Legacy cutoff_y is not written here and is not promoted on load.
+    """
     ann: dict[str, Any] = {
         "sample_id": str(sample_id),
         "group": str(group),
@@ -90,6 +110,10 @@ def build_sample_annotation(
         ann["processed_output_path"] = processed_output_path
     if cropped_dimensions:
         ann["cropped_dimensions"] = cropped_dimensions
+    if nucleus_reference is not None:
+        ann[ANNOTATION_FIELD_NUCLEUS_REFERENCE] = nucleus_reference.to_dict()
+    if cutoff_boundary is not None:
+        ann[ANNOTATION_FIELD_CUTOFF_BOUNDARY] = cutoff_boundary.to_dict()
     return ann
 
 
@@ -109,7 +133,11 @@ def merge_processed_into_annotation(
 
 
 def annotation_from_legacy(ann: dict[str, Any]) -> tuple[OrientationState, RectROI | None]:
-    """Load orientation and ROI from Phase 1 or Phase 2 metadata."""
+    """Load orientation and ROI from Phase 1 or Phase 2 metadata.
+
+    Legacy cutoff_y / cutoff_y_rotated / analysis_region_coords may reconstruct
+    a RectROI. They are not CutoffBoundary and are not promoted to that type.
+    """
     orientation = OrientationState.from_dict(ann)
     # Prefer oriented-space rectangle_roi when present (matches the on-canvas box at save).
     # Reconstructing from roi_original via corner mapping inflates the box after rotation.
@@ -151,3 +179,13 @@ def annotation_from_legacy(ann: dict[str, Any]) -> tuple[OrientationState, RectR
 def region_from_annotation(annotation: dict[str, Any]) -> Region:
     """Optional adapter: parse Region geometry from annotation fields."""
     return Region.from_annotation(annotation)
+
+
+def scientific_annotations_from_annotation(
+    annotation: dict[str, Any] | None,
+) -> tuple[NucleusReference | None, CutoffBoundary | None]:
+    """Load optional nucleus/cutoff. Missing fields return None, not defaults."""
+    return (
+        nucleus_reference_from_annotation(annotation),
+        cutoff_boundary_from_annotation(annotation),
+    )

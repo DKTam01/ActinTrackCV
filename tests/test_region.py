@@ -402,5 +402,70 @@ class PersistenceTests(unittest.TestCase):
             Region.from_annotation(ann)
 
 
+class CoordinateContractTests(unittest.TestCase):
+    def test_region_defaults_to_oriented_frame_pixels(self) -> None:
+        region = Region.from_rect(RectROI(1, 2, 3, 4))
+        self.assertEqual(region.coordinate_space, "oriented_frame_pixels")
+        poly = Region.from_polygon(((0, 0), (4, 0), (2, 3)))
+        self.assertEqual(poly.coordinate_space, "oriented_frame_pixels")
+
+    def test_reject_non_oriented_coordinate_space(self) -> None:
+        with self.assertRaises(RegionValidationError):
+            Region(
+                geometry_type="rectangle",
+                rectangle=RectROI(0, 0, 4, 4),
+                coordinate_space="raw_frame_pixels",
+            )
+
+    def test_reject_rectangle_roi_in_wrong_space(self) -> None:
+        ann = {
+            "rectangle_roi": {
+                "x": 0,
+                "y": 0,
+                "width": 4,
+                "height": 4,
+                "roi_coordinate_space": "raw_frame_pixels",
+            }
+        }
+        with self.assertRaises(RegionValidationError):
+            Region.from_annotation(ann)
+
+    def test_crop_local_mask_aligns_with_rect_roi_offset(self) -> None:
+        rect = RectROI(6, 4, 5, 3)
+        region = Region.from_rect(rect)
+        crop = RectROI(2, 1, 16, 12)
+        mask = region.rasterize_crop_mask(crop)
+        self.assertEqual(mask.shape, (12, 16))
+        self.assertTrue(np.all(mask[3:6, 4:9]))
+        self.assertFalse(np.any(mask[0:3, :]))
+        self.assertFalse(np.any(mask[:, 0:4]))
+        own = region.rasterize_crop_mask()
+        self.assertTrue(np.array_equal(mask[3:6, 4:9], own))
+
+    def test_polygon_mask_in_explicit_crop_matches_bbox_mask(self) -> None:
+        vertices = ((2, 1), (6, 1), (4, 4))
+        region = Region.from_polygon(vertices)
+        bbox = region.bounding_box()
+        own = region.rasterize_crop_mask()
+        crop = RectROI(0, 0, 10, 8)
+        mask = region.rasterize_crop_mask(crop)
+        self.assertEqual(mask.shape, (8, 10))
+        self.assertTrue(
+            np.array_equal(
+                mask[bbox.y : bbox.y + bbox.height, bbox.x : bbox.x + bbox.width],
+                own,
+            )
+        )
+        outside = mask.copy()
+        outside[bbox.y : bbox.y + bbox.height, bbox.x : bbox.x + bbox.width] = False
+        self.assertFalse(np.any(outside))
+
+    def test_default_rasterization_unchanged_for_rectangle(self) -> None:
+        rect = RectROI(3, 5, 7, 9)
+        mask = Region.from_rect(rect).rasterize_crop_mask()
+        self.assertEqual(mask.shape, (9, 7))
+        self.assertTrue(np.all(mask))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -386,7 +386,11 @@ def build_cutoff_annotation(
     tracking_roi: dict[str, Any] | None = None,
     notes: str = "",
 ) -> dict[str, Any]:
-    """Structured manual cutoff annotation for future training."""
+    """Structured manual cutoff annotation for future training.
+
+    Legacy Phase-1 field. This is not CutoffBoundary and must not be promoted
+    to cutoff_boundary on load; the stored y is not proven equivalent.
+    """
     w, h, y, ref = int(image_width), int(image_height), int(cutoff_y), int(reference_frame_index)
     roi = tracking_roi or {}
     x0 = int(roi.get("x0", 0))

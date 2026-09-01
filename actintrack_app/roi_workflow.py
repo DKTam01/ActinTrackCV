@@ -17,10 +17,18 @@ from actintrack_app.export_naming import (
 )
 from actintrack_app.image_processing import draw_rect_roi_preview
 from actintrack_app.orientation import (
+    COORDINATE_SPACE_ORIGINAL_FRAME_PIXELS,
+    COORDINATE_SPACE_ORIENTED_FRAME_PIXELS,
     OrientationState,
     RectROI,
     apply_orientation,
     crop_rect_roi,
+    oriented_frame_size,
+    oriented_point_to_raw,
+    oriented_roi_to_raw,
+    raw_point_to_oriented,
+    raw_roi_to_oriented,
+    rotation_affine_matrix,
 )
 from actintrack_app.project_manager import get_processed_batch_dir
 from actintrack_app.sample_processor import process_sample_to_disk, write_processed_metadata
@@ -32,8 +40,9 @@ from actintrack_app.utils import (
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
 
-ROI_COORDINATE_SPACE = "original_frame_pixels"
-ORIENTED_ROI_COORDINATE_SPACE = "oriented_frame_pixels"
+# Legacy ROI persistence aliases. Canonical names live in orientation.py.
+ROI_COORDINATE_SPACE = COORDINATE_SPACE_ORIGINAL_FRAME_PIXELS
+ORIENTED_ROI_COORDINATE_SPACE = COORDINATE_SPACE_ORIENTED_FRAME_PIXELS
 MIN_ROI_WIDTH = 8
 MIN_ROI_HEIGHT = 8
 MIN_ROI_AREA_FRACTION = 0.001
@@ -48,15 +57,8 @@ class RoiValidationResult:
 
 
 def _rotation_matrix(orig_w: int, orig_h: int, angle_deg: float) -> tuple[np.ndarray, int, int]:
-    center = (orig_w / 2.0, orig_h / 2.0)
-    matrix = cv2.getRotationMatrix2D(center, float(angle_deg), 1.0)
-    cos = abs(matrix[0, 0])
-    sin = abs(matrix[0, 1])
-    new_w = int(orig_h * sin + orig_w * cos)
-    new_h = int(orig_h * cos + orig_w * sin)
-    matrix[0, 2] += (new_w / 2.0) - center[0]
-    matrix[1, 2] += (new_h / 2.0) - center[1]
-    return matrix, new_w, new_h
+    """Compatibility wrapper around the canonical rotation affine."""
+    return rotation_affine_matrix(orig_w, orig_h, angle_deg)
 
 
 def oriented_point_to_original(
@@ -70,18 +72,13 @@ def oriented_point_to_original(
     state: OrientationState,
 ) -> tuple[int, int]:
     """Map a point from oriented reference pixels to original frame pixels."""
-    angle = float(state.rotation_angle_degrees)
-    matrix, rot_w, rot_h = _rotation_matrix(orig_w, orig_h, angle)
-    xo, yo = float(x), float(y)
-    if state.flipped_180:
-        xo = rot_w - 1 - xo
-        yo = rot_h - 1 - yo
-    inv = cv2.invertAffineTransform(matrix)
-    pts = np.array([[[xo, yo]]], dtype=np.float32)
-    out = cv2.transform(pts, inv)
-    ox = int(round(out[0, 0, 0]))
-    oy = int(round(out[0, 0, 1]))
-    return max(0, min(ox, orig_w - 1)), max(0, min(oy, orig_h - 1))
+    del oriented_w, oriented_h
+    ox, oy = oriented_point_to_raw(
+        x, y, raw_width=orig_w, raw_height=orig_h, state=state
+    )
+    rx = int(round(ox))
+    ry = int(round(oy))
+    return max(0, min(rx, orig_w - 1)), max(0, min(ry, orig_h - 1))
 
 
 def original_point_to_oriented(
@@ -93,16 +90,10 @@ def original_point_to_oriented(
     state: OrientationState,
 ) -> tuple[int, int]:
     """Map a point from original frame pixels to oriented reference pixels."""
-    angle = float(state.rotation_angle_degrees)
-    matrix, rot_w, rot_h = _rotation_matrix(orig_w, orig_h, angle)
-    pts = np.array([[[float(x), float(y)]]], dtype=np.float32)
-    out = cv2.transform(pts, matrix)
-    xo = int(round(out[0, 0, 0]))
-    yo = int(round(out[0, 0, 1]))
-    if state.flipped_180:
-        xo = rot_w - 1 - xo
-        yo = rot_h - 1 - yo
-    return xo, yo
+    xo, yo = raw_point_to_oriented(
+        x, y, raw_width=orig_w, raw_height=orig_h, state=state
+    )
+    return int(round(xo)), int(round(yo))
 
 
 def oriented_roi_to_original(
@@ -114,27 +105,10 @@ def oriented_roi_to_original(
     oriented_h: int,
     state: OrientationState,
 ) -> RectROI:
-    corners = [
-        (roi.x, roi.y),
-        (roi.x1, roi.y),
-        (roi.x1, roi.y1),
-        (roi.x, roi.y1),
-    ]
-    mapped = [
-        oriented_point_to_original(
-            cx,
-            cy,
-            orig_w=orig_w,
-            orig_h=orig_h,
-            oriented_w=oriented_w,
-            oriented_h=oriented_h,
-            state=state,
-        )
-        for cx, cy in corners
-    ]
-    xs = [p[0] for p in mapped]
-    ys = [p[1] for p in mapped]
-    return RectROI.from_xyxy(min(xs), min(ys), max(xs), max(ys)).clamp(orig_w, orig_h)
+    del oriented_w, oriented_h
+    return oriented_roi_to_raw(
+        roi, raw_width=orig_w, raw_height=orig_h, state=state
+    )
 
 
 def original_roi_to_oriented(
@@ -144,23 +118,10 @@ def original_roi_to_oriented(
     orig_h: int,
     state: OrientationState,
 ) -> RectROI:
-    oriented = apply_orientation(
-        np.zeros((orig_h, orig_w, 3), dtype=np.uint8), state
-    )
-    oh, ow = oriented.shape[:2]
-    corners = [
-        (roi.x, roi.y),
-        (roi.x1, roi.y),
-        (roi.x1, roi.y1),
-        (roi.x, roi.y1),
-    ]
-    mapped = [
-        original_point_to_oriented(cx, cy, orig_w=orig_w, orig_h=orig_h, state=state)
-        for cx, cy in corners
-    ]
-    xs = [p[0] for p in mapped]
-    ys = [p[1] for p in mapped]
-    return RectROI.from_xyxy(min(xs), min(ys), max(xs), max(ys)).clamp(ow, oh)
+    ow, oh = oriented_frame_size(orig_w, orig_h, state)
+    return raw_roi_to_oriented(
+        roi, raw_width=orig_w, raw_height=orig_h, state=state
+    ).clamp(ow, oh)
 
 
 def roi_original_as_dict(roi: RectROI) -> dict[str, Any]:

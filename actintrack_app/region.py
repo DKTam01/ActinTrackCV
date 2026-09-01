@@ -1,4 +1,9 @@
-"""Region geometry domain model (rectangle and polygon) in oriented-frame pixels."""
+"""Region geometry domain model (rectangle and polygon).
+
+Region is a reusable geometry/mask primitive in oriented_frame_pixels.
+It is not the product-facing computational crop; RectROI remains the crop.
+Future CellRegion can wrap Region without replacing this type.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +13,15 @@ from typing import Any, Literal, Sequence
 import cv2
 import numpy as np
 
-from actintrack_app.orientation import RectROI
-from actintrack_app.roi_workflow import ORIENTED_ROI_COORDINATE_SPACE, roi_oriented_as_dict
+from actintrack_app.orientation import (
+    COORDINATE_SPACE_ORIENTED_FRAME_PIXELS,
+    RectROI,
+    crop_local_xy_to_oriented,
+    oriented_xy_to_crop_local,
+)
+from actintrack_app.roi_workflow import roi_oriented_as_dict
+
+ORIENTED_ROI_COORDINATE_SPACE = COORDINATE_SPACE_ORIENTED_FRAME_PIXELS
 
 RegionGeometryType = Literal["rectangle", "polygon"]
 
@@ -31,8 +43,15 @@ class Region:
     geometry_type: RegionGeometryType
     rectangle: RectROI | None = None
     vertices: tuple[tuple[int, int], ...] | None = None
+    coordinate_space: str = COORDINATE_SPACE_ORIENTED_FRAME_PIXELS
 
     def __post_init__(self) -> None:
+        if self.coordinate_space != COORDINATE_SPACE_ORIENTED_FRAME_PIXELS:
+            raise RegionValidationError(
+                "Region coordinate_space must be "
+                f"{COORDINATE_SPACE_ORIENTED_FRAME_PIXELS!r}, "
+                f"got {self.coordinate_space!r}."
+            )
         if self.geometry_type == GEOMETRY_TYPE_RECTANGLE:
             if self.rectangle is None:
                 raise RegionValidationError("Rectangle Region requires a RectROI.")
@@ -75,8 +94,7 @@ class Region:
                     "legacy annotations require rectangle_roi."
                 )
             if has_rectangle:
-                rect = RectROI.from_dict(annotation["rectangle_roi"])
-                return cls.from_rect(rect)
+                return cls.from_rect(_rect_from_annotation(annotation))
             raise RegionValidationError(
                 "Annotation has no rectangle_roi and no recognized Region geometry."
             )
@@ -90,7 +108,7 @@ class Region:
                 raise RegionValidationError(
                     "Conflicting rectangle_roi and polygon_roi payloads."
                 )
-            return cls.from_rect(RectROI.from_dict(annotation["rectangle_roi"]))
+            return cls.from_rect(_rect_from_annotation(annotation))
 
         if geom_type == GEOMETRY_TYPE_POLYGON:
             if not has_polygon_field:
@@ -104,9 +122,9 @@ class Region:
             if raw_vertices is None:
                 raise RegionValidationError("polygon_roi.vertices is required.")
             space = polygon_data.get(
-                "roi_coordinate_space", ORIENTED_ROI_COORDINATE_SPACE
+                "roi_coordinate_space", COORDINATE_SPACE_ORIENTED_FRAME_PIXELS
             )
-            if space != ORIENTED_ROI_COORDINATE_SPACE:
+            if space != COORDINATE_SPACE_ORIENTED_FRAME_PIXELS:
                 raise RegionValidationError(
                     f"Unsupported polygon roi_coordinate_space: {space!r}."
                 )
@@ -121,12 +139,20 @@ class Region:
             return self.rectangle  # type: ignore[return-value]
         return _polygon_bounding_box(self.vertices)  # type: ignore[arg-type]
 
-    def rasterize_crop_mask(self) -> np.ndarray:
+    def rasterize_crop_mask(self, crop: RectROI | None = None) -> np.ndarray:
+        """Boolean inclusion mask in crop-local pixels.
+
+        Default ``crop`` is this Region's bounding box (unchanged behavior).
+        Passing a RectROI rasterizes into that computational crop using the
+        shared oriented↔crop-local conversion.
+        """
+        target = crop if crop is not None else self.bounding_box()
         if self.geometry_type == GEOMETRY_TYPE_RECTANGLE:
-            rect = self.rectangle
-            return np.ones((rect.height, rect.width), dtype=np.bool_)
-        bbox = self.bounding_box()
-        return _rasterize_polygon_mask(self.vertices, bbox)  # type: ignore[arg-type]
+            if crop is None:
+                rect = self.rectangle
+                return np.ones((rect.height, rect.width), dtype=np.bool_)
+            return _rasterize_rectangle_mask(self.rectangle, target)
+        return _rasterize_polygon_mask(self.vertices, target)  # type: ignore[arg-type]
 
     def geometry_key(self) -> tuple[Any, ...]:
         if self.geometry_type == GEOMETRY_TYPE_RECTANGLE:
@@ -147,6 +173,18 @@ class Region:
             ANNOTATION_FIELD_GEOMETRY_TYPE: GEOMETRY_TYPE_POLYGON,
             ANNOTATION_FIELD_POLYGON_ROI: _polygon_to_dict(self.vertices),
         }
+
+
+def _rect_from_annotation(annotation: dict[str, Any]) -> RectROI:
+    rect_data = annotation["rectangle_roi"]
+    if not isinstance(rect_data, dict):
+        raise RegionValidationError("rectangle_roi must be a mapping.")
+    space = rect_data.get("roi_coordinate_space")
+    if space is not None and space != COORDINATE_SPACE_ORIENTED_FRAME_PIXELS:
+        raise RegionValidationError(
+            f"Unsupported rectangle roi_coordinate_space: {space!r}."
+        )
+    return RectROI.from_dict(rect_data)
 
 
 def validate_region(
@@ -299,8 +337,23 @@ def _polygon_to_dict(
         raise RegionValidationError("Polygon vertices are missing.")
     return {
         "vertices": [[x, y] for x, y in vertices],
-        "roi_coordinate_space": ORIENTED_ROI_COORDINATE_SPACE,
+        "roi_coordinate_space": COORDINATE_SPACE_ORIENTED_FRAME_PIXELS,
     }
+
+
+def _rasterize_rectangle_mask(rect: RectROI, crop: RectROI) -> np.ndarray:
+    """Crop-local inclusion of an oriented-frame rectangle inside ``crop``."""
+    mask = np.zeros((crop.height, crop.width), dtype=np.bool_)
+    x0 = max(rect.x, crop.x)
+    y0 = max(rect.y, crop.y)
+    x1 = min(rect.x1, crop.x1)
+    y1 = min(rect.y1, crop.y1)
+    if x1 <= x0 or y1 <= y0:
+        return mask
+    lx0, ly0 = oriented_xy_to_crop_local(x0, y0, crop)
+    lx1, ly1 = oriented_xy_to_crop_local(x1, y1, crop)
+    mask[int(ly0) : int(ly1), int(lx0) : int(lx1)] = True
+    return mask
 
 
 def _rasterize_polygon_mask(
@@ -315,14 +368,13 @@ def _rasterize_polygon_mask(
     - Inclusion is evaluated at pixel centers (col + 0.5, row + 0.5).
     - Polygon boundaries are inclusive (on-edge centers are inside).
     - Mask shape is (bbox.height, bbox.width), dtype numpy.bool_.
-  """
+    """
     h, w = bbox.height, bbox.width
     mask = np.zeros((h, w), dtype=np.bool_)
     contour = np.array(vertices, dtype=np.float32)
     for row in range(h):
-        cy = bbox.y + row + 0.5
         for col in range(w):
-            cx = bbox.x + col + 0.5
+            cx, cy = crop_local_xy_to_oriented(col + 0.5, row + 0.5, bbox)
             if cv2.pointPolygonTest(contour, (cx, cy), False) >= 0.0:
                 mask[row, col] = True
     return mask

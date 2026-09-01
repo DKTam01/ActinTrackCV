@@ -54,6 +54,7 @@ from actintrack_app.annotation_schema import (
     annotation_from_legacy,
     build_sample_annotation,
     merge_processed_into_annotation,
+    scientific_annotations_from_annotation,
 )
 from actintrack_app.batch_annotation import (
     annotation_is_protected,
@@ -459,6 +460,8 @@ class MainWindow(QMainWindow):
         self._total_frames = 1
         self._reference_frame_index = 0
         self._orientation = OrientationState()
+        self._nucleus_reference = None
+        self._cutoff_boundary = None
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -2515,6 +2518,8 @@ class MainWindow(QMainWindow):
             status=status,
             requires_review=requires_review,
             review_status=review if requires_review else "approved",
+            nucleus_reference=self._nucleus_reference,
+            cutoff_boundary=self._cutoff_boundary,
         )
 
     def _on_save_annotation(self) -> None:
@@ -3903,6 +3908,9 @@ class MainWindow(QMainWindow):
         self, ann: dict[str, Any], *, render_canvas: bool = True
     ) -> None:
         self._orientation, roi = annotation_from_legacy(ann)
+        self._nucleus_reference, self._cutoff_boundary = (
+            scientific_annotations_from_annotation(ann)
+        )
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
@@ -3986,6 +3994,8 @@ class MainWindow(QMainWindow):
         self._reference_frame_index = idx
         self._total_frames = total
         self._orientation = OrientationState()
+        self._nucleus_reference = None
+        self._cutoff_boundary = None
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
         if ann:

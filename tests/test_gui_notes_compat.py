@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 from actintrack_app.gui import MainWindow
 from actintrack_app.orientation import OrientationState, RectROI
+from actintrack_app.scientific_annotations import CutoffBoundary, NucleusReference
 
 
 class NotesCompatibilityTests(unittest.TestCase):
@@ -18,6 +19,8 @@ class NotesCompatibilityTests(unittest.TestCase):
         window._loaded_annotation_source = ""
         window._roi_user_adjusted = False
         window._roi_autosave_pending = False
+        window._nucleus_reference = None
+        window._cutoff_boundary = None
         window._refresh_display = MagicMock()
         window.canvas = MagicMock()
         window.canvas.rect_roi.return_value = None
@@ -40,6 +43,52 @@ class NotesCompatibilityTests(unittest.TestCase):
         MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
 
         self.assertEqual(window._loaded_sample_notes, "legacy lab note")
+        self.assertIsNone(window._nucleus_reference)
+        self.assertIsNone(window._cutoff_boundary)
+
+    def test_apply_annotation_loads_nucleus_and_cutoff(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._loaded_sample_notes = ""
+        window._orientation = OrientationState()
+        window._reference_frame_index = 0
+        window._loaded_annotation_source = ""
+        window._roi_user_adjusted = False
+        window._roi_autosave_pending = False
+        window._nucleus_reference = None
+        window._cutoff_boundary = None
+        window._refresh_display = MagicMock()
+        window.canvas = MagicMock()
+        window.canvas.rect_roi.return_value = None
+        window._oriented_frame = MagicMock(return_value=None)
+        window._update_orientation_label = MagicMock()
+        window._refresh_roi_save_status_from_context = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+
+        ann = {
+            "sample_id": "S1",
+            "reference_frame_index": 0,
+            "notes": "",
+            "annotation_source": "manual",
+            "rotation_angle_degrees": 0.0,
+            "flipped_180": False,
+            "mirror_y_axis": False,
+            "rectangle_roi": {"x": 1, "y": 2, "width": 10, "height": 12},
+            "nucleus_reference": {
+                "x": 8.25,
+                "y": 14.5,
+                "coordinate_space": "oriented_frame_pixels",
+            },
+            "cutoff_boundary": {
+                "y": 22.0,
+                "coordinate_space": "oriented_frame_pixels",
+            },
+        }
+        MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+
+        self.assertEqual(window._nucleus_reference.x, 8.25)
+        self.assertEqual(window._nucleus_reference.y, 14.5)
+        self.assertEqual(window._cutoff_boundary.y, 22.0)
 
     def test_update_tracking_result_panel_without_sidebar_widget(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -75,6 +124,8 @@ class LoadedNotesForSaveTests(unittest.TestCase):
         window._reference_frame_index = 0
         window._orientation = OrientationState()
         window._loaded_annotation_source = "manual"
+        window._nucleus_reference = None
+        window._cutoff_boundary = None
         window._base_frame = MagicMock()
         window._base_frame.shape = (100, 200, 3)
         window.canvas = MagicMock()
@@ -90,6 +141,43 @@ class LoadedNotesForSaveTests(unittest.TestCase):
         ann = MainWindow._current_annotation_dict(window, status="roi_marked")
 
         self.assertEqual(ann["notes"], "preserved")
+        self.assertNotIn("nucleus_reference", ann)
+        self.assertNotIn("cutoff_boundary", ann)
+
+    def test_save_preserves_nucleus_and_cutoff_state(self) -> None:
+        window = MainWindow.__new__(MainWindow)
+        window._loaded_sample_notes = ""
+        window._roi_user_adjusted = False
+        window._current_sample = {
+            "sample_id": "S1",
+            "group": "Col-0",
+            "batch_name": "batch1",
+            "batch_id": "b1",
+            "original_filename": "clip.mp4",
+            "stored_path": "raw/S1.avi",
+        }
+        window._reference_frame_index = 0
+        window._orientation = OrientationState()
+        window._loaded_annotation_source = "manual"
+        window._nucleus_reference = NucleusReference(8.25, 14.5)
+        window._cutoff_boundary = CutoffBoundary(22.0)
+        window._base_frame = MagicMock()
+        window._base_frame.shape = (100, 200, 3)
+        window.canvas = MagicMock()
+        window.canvas.rect_roi.return_value = RectROI(1, 2, 10, 12)
+
+        check = MagicMock()
+        check.ok = True
+        check.roi_oriented = RectROI(1, 2, 10, 12)
+        check.roi_original = RectROI(1, 2, 10, 12)
+        window._validate_current_roi = MagicMock(return_value=check)
+        window._suggestion_method_for_save = MagicMock(return_value="manual")
+
+        ann = MainWindow._current_annotation_dict(window, status="roi_marked")
+
+        self.assertEqual(ann["nucleus_reference"]["x"], 8.25)
+        self.assertEqual(ann["nucleus_reference"]["y"], 14.5)
+        self.assertEqual(ann["cutoff_boundary"]["y"], 22.0)
 
 
 if __name__ == "__main__":

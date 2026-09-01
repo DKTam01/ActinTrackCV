@@ -14,6 +14,7 @@ from actintrack_app.orientation import (
     OrientationState,
     RectROI,
     apply_orientation,
+    oriented_frame_size,
     scale_roi_to_frame,
 )
 from actintrack_app.utils import (
@@ -87,7 +88,12 @@ def propagate_annotation(
     target_sample: dict[str, Any],
     scaling_method: str = "proportional_scaled",
 ) -> dict[str, Any]:
-    """Build propagated annotation for one target sample."""
+    """Build propagated annotation for one target sample.
+
+    Only orientation and the computational RectROI are propagated. NucleusReference
+    and CutoffBoundary are scientific references for a specific video and are
+    never copied. Region polygon geometry is likewise not propagated.
+    """
     root = Path(root).resolve()
     source_id = str(source_annotation["sample_id"])
     target_id = str(target_sample["sample_id"])
@@ -165,20 +171,7 @@ def propagate_annotation(
 
 def apply_orientation_dims(width: int, height: int, orientation: OrientationState) -> dict[str, int]:
     """Compute oriented frame size without loading full image."""
-    import numpy as np
-
-    from actintrack_app.image_processing import rotate_image_and_mask
-
-    dummy = np.zeros((height, width, 3), dtype=np.uint8)
-    oriented = dummy
-    angle = float(orientation.rotation_angle_degrees)
-    if abs(angle) > 1e-6:
-        oriented, _ = rotate_image_and_mask(oriented, None, angle)
-    if orientation.flipped_180:
-        import cv2
-
-        oriented = cv2.rotate(oriented, cv2.ROTATE_180)
-    h, w = oriented.shape[:2]
+    w, h = oriented_frame_size(width, height, orientation)
     return {"width": int(w), "height": int(h)}
 
 
