@@ -90,9 +90,9 @@ def propagate_annotation(
 ) -> dict[str, Any]:
     """Build propagated annotation for one target sample.
 
-    Only orientation and the computational RectROI are propagated. NucleusReference
-    and CutoffBoundary are scientific references for a specific video and are
-    never copied. Region polygon geometry is likewise not propagated.
+    Only orientation and the computational RectROI are propagated. NucleusReference,
+    CutoffBoundary, and CellRegion are scientific references for a specific video
+    and are never copied. Region polygon geometry is likewise not propagated.
     """
     root = Path(root).resolve()
     source_id = str(source_annotation["sample_id"])

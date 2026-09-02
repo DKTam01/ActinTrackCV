@@ -204,6 +204,8 @@ class RoiContextMenuTests(unittest.TestCase):
             labels,
             [
                 "Suggest ROI from F-actin Signal",
+                "Set Nucleus",
+                "Set Cutoff",
                 "Clear ROI",
                 "Export ROI",
             ],
@@ -211,7 +213,14 @@ class RoiContextMenuTests(unittest.TestCase):
 
     def test_outside_roi_menu_offers_suggest_only(self) -> None:
         labels = self._menu_labels(inside_roi=False)
-        self.assertEqual(labels, ["Suggest ROI from F-actin Signal"])
+        self.assertEqual(
+            labels,
+            [
+                "Suggest ROI from F-actin Signal",
+                "Set Nucleus",
+                "Set Cutoff",
+            ],
+        )
 
     def test_export_roi_menu_triggers_existing_process_handler(self) -> None:
         window = MainWindow.__new__(MainWindow)

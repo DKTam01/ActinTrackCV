@@ -83,9 +83,9 @@ class RoiEditExplicitRunTests(unittest.TestCase):
                 "review_status": "approved",
             }
         )
-        window._saved_roi_key_for_sample = MagicMock(return_value=(1, 2, 10, 12))
-        window._sample_has_measurable_draft_results = MagicMock(return_value=True)
-        window._mark_metrics_stale_if_saved_roi_changed = MagicMock()
+        window._scientific_state_key_for_sample = MagicMock(return_value=("old",))
+        window._scientific_state_key_from_annotation = MagicMock(return_value=("new",))
+        window._mark_draft_metrics_stale = MagicMock()
         window._set_roi_save_status = MagicMock()
         window._update_sample_list_row_for_id = MagicMock()
         window._update_metric_freshness_label = MagicMock()
@@ -96,7 +96,7 @@ class RoiEditExplicitRunTests(unittest.TestCase):
         ):
             MainWindow._autosave_roi(window, quiet=True)
 
-        window._mark_metrics_stale_if_saved_roi_changed.assert_called_once()
+        window._mark_draft_metrics_stale.assert_called_once_with("S1")
         window._update_metric_freshness_label.assert_called_once()
 
     def test_autosave_without_existing_metrics_does_not_mark_stale(self) -> None:

@@ -424,3 +424,77 @@ def oriented_y_to_crop_local(y: float, crop: RectROI) -> float:
 def crop_local_y_to_oriented(y: float, crop: RectROI) -> float:
     """Convert a crop-local horizontal boundary y to oriented-frame y."""
     return float(y) + float(crop.y)
+
+
+def reorient_point(
+    x: float,
+    y: float,
+    *,
+    raw_width: int,
+    raw_height: int,
+    old_state: OrientationState,
+    new_state: OrientationState,
+) -> tuple[float, float]:
+    """Map a point from one oriented-frame state to another via raw pixels."""
+    rx, ry = oriented_point_to_raw(
+        x, y, raw_width=raw_width, raw_height=raw_height, state=old_state
+    )
+    return raw_point_to_oriented(
+        rx, ry, raw_width=raw_width, raw_height=raw_height, state=new_state
+    )
+
+
+def reorient_roi(
+    roi: RectROI,
+    *,
+    raw_width: int,
+    raw_height: int,
+    old_state: OrientationState,
+    new_state: OrientationState,
+) -> RectROI:
+    """Map a RectROI from one oriented-frame state to another via raw pixels."""
+    raw_roi = oriented_roi_to_raw(
+        roi, raw_width=raw_width, raw_height=raw_height, state=old_state
+    )
+    return raw_roi_to_oriented(
+        raw_roi, raw_width=raw_width, raw_height=raw_height, state=new_state
+    )
+
+
+def reorient_horizontal_y(
+    y: float,
+    *,
+    old_oriented_width: int,
+    raw_width: int,
+    raw_height: int,
+    old_state: OrientationState,
+    new_state: OrientationState,
+    horizontal_tolerance_px: float = 1.5,
+) -> float | None:
+    """Reorient a horizontal line's y, or None if it is no longer horizontal.
+
+    CutoffBoundary is defined as horizontal in oriented-frame pixels. Rotations
+    that turn a horizontal line vertical (90°/270°) cannot be represented and
+    return None so callers can clear the cutoff rather than store a wrong y.
+    """
+    left_x, left_y = reorient_point(
+        0.0,
+        float(y),
+        raw_width=raw_width,
+        raw_height=raw_height,
+        old_state=old_state,
+        new_state=new_state,
+    )
+    right_x, right_y = reorient_point(
+        float(old_oriented_width) - 1.0,
+        float(y),
+        raw_width=raw_width,
+        raw_height=raw_height,
+        old_state=old_state,
+        new_state=new_state,
+    )
+    del left_x, right_x
+    if abs(left_y - right_y) > float(horizontal_tolerance_px):
+        return None
+    return (left_y + right_y) / 2.0
+

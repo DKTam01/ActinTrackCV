@@ -1,8 +1,8 @@
 """Build and merge sample annotations.
 
-Additive scientific fields (nucleus_reference, cutoff_boundary) are optional
-and omitted when absent. Workspace schema version is unchanged: this is
-backward-compatible JSON, not a v2→v3 migration.
+Additive scientific fields (nucleus_reference, cutoff_boundary, cell_region)
+are optional and omitted when absent. Workspace schema version is unchanged:
+this is backward-compatible JSON, not a v2→v3 migration.
 """
 
 from __future__ import annotations
@@ -20,10 +20,13 @@ from actintrack_app.roi_workflow import (
     roi_original_as_dict,
 )
 from actintrack_app.scientific_annotations import (
+    ANNOTATION_FIELD_CELL_REGION,
     ANNOTATION_FIELD_CUTOFF_BOUNDARY,
     ANNOTATION_FIELD_NUCLEUS_REFERENCE,
+    CellRegion,
     CutoffBoundary,
     NucleusReference,
+    cell_region_from_annotation,
     cutoff_boundary_from_annotation,
     nucleus_reference_from_annotation,
 )
@@ -62,12 +65,14 @@ def build_sample_annotation(
     review_status: str = "approved",
     nucleus_reference: NucleusReference | None = None,
     cutoff_boundary: CutoffBoundary | None = None,
+    cell_region: CellRegion | None = None,
 ) -> dict[str, Any]:
     """Structured annotation for training and export.
 
-    Optional ``nucleus_reference`` and ``cutoff_boundary`` persist in
-    oriented_frame_pixels. They are omitted when None so old projects stay
-    unchanged. Legacy cutoff_y is not written here and is not promoted on load.
+    Optional ``nucleus_reference``, ``cutoff_boundary``, and ``cell_region``
+    persist in oriented_frame_pixels. They are omitted when None so old
+    projects stay unchanged. Legacy cutoff_y is not written here and is not
+    promoted on load.
     """
     ann: dict[str, Any] = {
         "sample_id": str(sample_id),
@@ -114,6 +119,8 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_NUCLEUS_REFERENCE] = nucleus_reference.to_dict()
     if cutoff_boundary is not None:
         ann[ANNOTATION_FIELD_CUTOFF_BOUNDARY] = cutoff_boundary.to_dict()
+    if cell_region is not None:
+        ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
     return ann
 
 
@@ -189,3 +196,10 @@ def scientific_annotations_from_annotation(
         nucleus_reference_from_annotation(annotation),
         cutoff_boundary_from_annotation(annotation),
     )
+
+
+def cell_region_from_sample_annotation(
+    annotation: dict[str, Any] | None,
+) -> CellRegion | None:
+    """Load optional CellRegion. Missing fields return None, not defaults."""
+    return cell_region_from_annotation(annotation)

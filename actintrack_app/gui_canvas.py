@@ -36,6 +36,7 @@ class DragMode(Enum):
     DRAW = auto()
     MOVE = auto()
     RESIZE = auto()
+    CUTOFF = auto()
 
 
 def _roi_geometry_equal(
@@ -73,6 +74,9 @@ class ImageCanvas(QLabel):
         self._drag_start_img: Optional[tuple[int, int]] = None
         self._roi_at_drag_start: Optional[RectROI] = None
         self._cell_mask_overlay: Optional[np.ndarray] = None
+        self._validity_mask: Optional[np.ndarray] = None
+        self._cutoff_y: Optional[float] = None
+        self._nucleus_xy: Optional[tuple[float, float]] = None
         self._interactive = True
         self._draw_roi = True
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -83,6 +87,9 @@ class ImageCanvas(QLabel):
         self._pixmap = None
         self._roi = None
         self._cell_mask_overlay = None
+        self._validity_mask = None
+        self._cutoff_y = None
+        self._nucleus_xy = None
         self.clear()
 
     def set_interactive(self, enabled: bool) -> None:
@@ -102,6 +109,20 @@ class ImageCanvas(QLabel):
         elif self._roi is not None:
             self._roi = self._roi.clamp(frame.shape[1], frame.shape[0])
         self._update_pixmap()
+
+    def set_scientific_overlay(
+        self,
+        *,
+        validity_mask: Optional[np.ndarray] = None,
+        cutoff_y: Optional[float] = None,
+        nucleus_xy: Optional[tuple[float, float]] = None,
+    ) -> None:
+        """Update scientific visualization. Mask is oriented-frame bool, or None."""
+        self._validity_mask = validity_mask
+        self._cutoff_y = None if cutoff_y is None else float(cutoff_y)
+        self._nucleus_xy = None if nucleus_xy is None else (float(nucleus_xy[0]), float(nucleus_xy[1]))
+        if self._pixmap is not None or self._frame is not None:
+            self._update_pixmap()
 
     def set_cell_mask_overlay(self, mask: Optional[np.ndarray]) -> None:
         self._cell_mask_overlay = mask
@@ -131,7 +152,25 @@ class ImageCanvas(QLabel):
             self.clear()
             return
         display = self._frame.copy()
-        if self._cell_mask_overlay is not None:
+        if (
+            self._draw_roi
+            and self._validity_mask is not None
+            and self._validity_mask.shape[:2] == display.shape[:2]
+        ):
+            invalid = ~self._validity_mask.astype(bool)
+            if np.any(invalid):
+                darkened = (display[invalid].astype(np.float32) * 0.48).astype(
+                    display.dtype
+                )
+                display[invalid] = darkened
+            contours, _ = cv2.findContours(
+                self._validity_mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE,
+            )
+            if contours:
+                cv2.drawContours(display, contours, -1, (180, 160, 70), 1)
+        elif self._cell_mask_overlay is not None:
             contours, _ = cv2.findContours(
                 (self._cell_mask_overlay > 0).astype(np.uint8),
                 cv2.RETR_EXTERNAL,
@@ -166,11 +205,17 @@ class ImageCanvas(QLabel):
             max(0, min(iy, img_h - 1)),
         )
 
-    def _image_to_widget(self, ix: int, iy: int) -> tuple[int, int]:
+    def _image_to_widget(self, ix: float, iy: float) -> tuple[int, int]:
         return (
             self._offset_x + int(ix * self._scale),
             self._offset_y + int(iy * self._scale),
         )
+
+    def _cutoff_hit(self, ix: int, iy: int) -> bool:
+        if self._cutoff_y is None or self._frame is None:
+            return False
+        tol = max(1.0, 6.0 / max(self._scale, 1e-6))
+        return abs(float(iy) - float(self._cutoff_y)) <= tol
 
     def _handle_at(self, wx: int, wy: int) -> Optional[str]:
         if self._roi is None or self._frame is None:
@@ -233,6 +278,28 @@ class ImageCanvas(QLabel):
                     sx - 4, sy - 4, 8, 8
                 )
 
+        if self._draw_roi and self._frame is not None:
+            if self._cutoff_y is not None:
+                y = float(self._cutoff_y)
+                x0, y0 = self._image_to_widget(0, y)
+                x1, y1 = self._image_to_widget(self._frame.shape[1], y)
+                cutoff_pen = QPen(QColor(230, 150, 70), 2)
+                cutoff_pen.setStyle(Qt.PenStyle.DashLine)
+                painter.setPen(cutoff_pen)
+                painter.drawLine(x0, y0, x1, y1)
+                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                painter.setPen(QColor(230, 160, 80))
+                painter.drawText(x0 + 6, max(12, y0 - 6), "Cutoff")
+
+            if self._nucleus_xy is not None:
+                nx, ny = self._nucleus_xy
+                sx, sy = self._image_to_widget(nx, ny)
+                painter.setPen(QPen(QColor(255, 90, 160), 2))
+                painter.setBrush(QBrush(QColor(255, 90, 160)))
+                painter.drawEllipse(sx - 5, sy - 5, 10, 10)
+                painter.drawLine(sx - 9, sy, sx + 9, sy)
+                painter.drawLine(sx, sy - 9, sx, sy + 9)
+
         painter.end()
         self.setPixmap(composite)
 
@@ -286,6 +353,18 @@ class ImageCanvas(QLabel):
         if img_pt is None:
             return
         ix, iy = img_pt
+        placement = getattr(self._main_window, "_scientific_placement_mode", None)
+        if placement == "nucleus":
+            self._main_window.on_nucleus_placed(float(ix), float(iy))
+            return
+        if placement == "cutoff":
+            self._main_window.on_cutoff_placed(float(iy))
+            return
+
+        if self._cutoff_hit(ix, iy):
+            self._drag_mode = DragMode.CUTOFF
+            self._drag_start_img = (ix, iy)
+            return
 
         handle = self._handle_at(wx, wy)
         if handle and self._roi is not None:
@@ -321,6 +400,13 @@ class ImageCanvas(QLabel):
             return
         ix, iy = img_pt
         w_img, h_img = self._frame.shape[1], self._frame.shape[0]
+
+        if self._drag_mode == DragMode.CUTOFF:
+            y = max(0, min(int(iy), h_img - 1))
+            self._cutoff_y = float(y)
+            self._redraw()
+            self._main_window.on_cutoff_dragged(float(y))
+            return
 
         if self._drag_mode == DragMode.DRAW and self._drag_start_img is not None:
             x0, y0 = self._drag_start_img
@@ -365,10 +451,14 @@ class ImageCanvas(QLabel):
 
     def mouseReleaseEvent(self, event):
         had_drag = self._drag_mode != DragMode.NONE
+        cutoff_drag = self._drag_mode == DragMode.CUTOFF
         self._drag_mode = DragMode.NONE
         self._resize_handle = None
         if self._roi is not None and self._roi.width < 4 and self._roi.height < 4:
             self._roi = None
             self._redraw()
+        if cutoff_drag:
+            self._main_window.on_cutoff_edit_finished()
+            return
         if had_drag:
             self._main_window.on_roi_edit_finished()

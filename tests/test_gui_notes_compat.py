@@ -21,6 +21,7 @@ class NotesCompatibilityTests(unittest.TestCase):
         window._roi_autosave_pending = False
         window._nucleus_reference = None
         window._cutoff_boundary = None
+        window._cell_region = None
         window._refresh_display = MagicMock()
         window.canvas = MagicMock()
         window.canvas.rect_roi.return_value = None
@@ -45,6 +46,7 @@ class NotesCompatibilityTests(unittest.TestCase):
         self.assertEqual(window._loaded_sample_notes, "legacy lab note")
         self.assertIsNone(window._nucleus_reference)
         self.assertIsNone(window._cutoff_boundary)
+        self.assertIsNone(window._cell_region)
 
     def test_apply_annotation_loads_nucleus_and_cutoff(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -56,6 +58,7 @@ class NotesCompatibilityTests(unittest.TestCase):
         window._roi_autosave_pending = False
         window._nucleus_reference = None
         window._cutoff_boundary = None
+        window._cell_region = None
         window._refresh_display = MagicMock()
         window.canvas = MagicMock()
         window.canvas.rect_roi.return_value = None
@@ -83,12 +86,20 @@ class NotesCompatibilityTests(unittest.TestCase):
                 "y": 22.0,
                 "coordinate_space": "oriented_frame_pixels",
             },
+            "cell_region": {
+                "coordinate_space": "oriented_frame_pixels",
+                "geometry_type": "rectangle",
+                "rectangle": {"x": 2, "y": 3, "width": 8, "height": 9},
+                "source": "auto_suggested",
+            },
         }
         MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
 
         self.assertEqual(window._nucleus_reference.x, 8.25)
         self.assertEqual(window._nucleus_reference.y, 14.5)
         self.assertEqual(window._cutoff_boundary.y, 22.0)
+        self.assertEqual(window._cell_region.bounding_box().width, 8)
+        self.assertEqual(window._cell_region.source, "auto_suggested")
 
     def test_update_tracking_result_panel_without_sidebar_widget(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -126,6 +137,7 @@ class LoadedNotesForSaveTests(unittest.TestCase):
         window._loaded_annotation_source = "manual"
         window._nucleus_reference = None
         window._cutoff_boundary = None
+        window._cell_region = None
         window._base_frame = MagicMock()
         window._base_frame.shape = (100, 200, 3)
         window.canvas = MagicMock()
@@ -143,6 +155,7 @@ class LoadedNotesForSaveTests(unittest.TestCase):
         self.assertEqual(ann["notes"], "preserved")
         self.assertNotIn("nucleus_reference", ann)
         self.assertNotIn("cutoff_boundary", ann)
+        self.assertNotIn("cell_region", ann)
 
     def test_save_preserves_nucleus_and_cutoff_state(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -161,6 +174,7 @@ class LoadedNotesForSaveTests(unittest.TestCase):
         window._loaded_annotation_source = "manual"
         window._nucleus_reference = NucleusReference(8.25, 14.5)
         window._cutoff_boundary = CutoffBoundary(22.0)
+        window._cell_region = None
         window._base_frame = MagicMock()
         window._base_frame.shape = (100, 200, 3)
         window.canvas = MagicMock()

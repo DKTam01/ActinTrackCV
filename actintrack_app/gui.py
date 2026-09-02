@@ -53,6 +53,7 @@ from actintrack_app.analysis_service import AnalysisReport, build_analysis_repor
 from actintrack_app.annotation_schema import (
     annotation_from_legacy,
     build_sample_annotation,
+    cell_region_from_sample_annotation,
     merge_processed_into_annotation,
     scientific_annotations_from_annotation,
 )
@@ -76,7 +77,7 @@ from actintrack_app.batch_manager import (
     sanitize_batch_name,
     sync_registry_from_samples,
 )
-from actintrack_app.file_importer import set_custom_export_name
+from actintrack_app.cell_detection import suggest_conservative_cell_region
 from actintrack_app.gui_menus import (
     PurgeFilteredDialog,
     refresh_recent_workspaces_menu,
@@ -202,7 +203,16 @@ from actintrack_app.orientation import (
     RectROI,
     apply_orientation,
     crop_rect_roi,
+    oriented_frame_size,
     tracking_crop_to_rect,
+)
+from actintrack_app.scientific_annotations import (
+    CutoffBoundary,
+    NucleusReference,
+    reorient_cell_region,
+    reorient_cutoff_boundary,
+    reorient_nucleus_reference,
+    valid_mask_crop_local,
 )
 from actintrack_app.project_manager import (
     create_project_structure,
@@ -298,6 +308,19 @@ def _app_qicon() -> Optional[QIcon]:
         return QIcon(str(path))
     return None
 AUTO_APPLY_ROI_CONFIDENCE = 0.15
+
+
+def _py_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Read a Python instance attribute without requiring QObject.__init__.
+
+    ``MainWindow.__new__`` unit tests never call Qt construction. ``getattr``
+    on those objects can raise RuntimeError; ``object.__getattribute__`` does
+    not.
+    """
+    try:
+        return object.__getattribute__(obj, name)
+    except AttributeError:
+        return default
 DRAFT_TRACKING_DIR = "draft_tracking"
 _PLAYBACK_SPEED_MULTIPLIERS = {
     "0.25×": 0.25,
@@ -462,6 +485,8 @@ class MainWindow(QMainWindow):
         self._orientation = OrientationState()
         self._nucleus_reference = None
         self._cutoff_boundary = None
+        self._cell_region = None
+        self._scientific_placement_mode: Optional[str] = None
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -1667,6 +1692,31 @@ class MainWindow(QMainWindow):
         _orientation, roi = annotation_from_legacy(ann)
         return self._roi_key_from_rect(roi)
 
+    @staticmethod
+    def _scientific_state_key_from_annotation(ann: dict[str, Any] | None) -> tuple[Any, ...]:
+        if not ann:
+            return ()
+        _orientation, roi = annotation_from_legacy(ann)
+        nucleus, cutoff = scientific_annotations_from_annotation(ann)
+        cell = cell_region_from_sample_annotation(ann)
+        return (
+            None if roi is None else (int(roi.x), int(roi.y), int(roi.width), int(roi.height)),
+            None if nucleus is None else (float(nucleus.x), float(nucleus.y)),
+            None if cutoff is None else float(cutoff.y),
+            None if cell is None else cell.region.geometry_key(),
+            float(ann.get("rotation_angle_degrees", 0.0) or 0.0),
+            bool(ann.get("mirror_y_axis")),
+            bool(ann.get("flipped_180")),
+        )
+
+    def _scientific_state_key_for_sample(self, sample_id: str) -> tuple[Any, ...] | None:
+        if self._project_root is None:
+            return None
+        ann = get_sample_annotation(self._project_root, sample_id)
+        if not ann:
+            return None
+        return self._scientific_state_key_from_annotation(ann)
+
     def _sample_has_measurable_draft_results(self, sample_id: str) -> bool:
         track = self._read_draft_tracking_payload(sample_id)
         of_payload = self._read_draft_optical_flow_payload(sample_id)
@@ -1687,6 +1737,15 @@ class MainWindow(QMainWindow):
         if previous_roi_key is None or new_roi_key is None:
             return
         if previous_roi_key == new_roi_key:
+            return
+        if not self._sample_has_measurable_draft_results(sample_id):
+            return
+        self._tracking_result_stale_by_sample[sample_id] = True
+        self._optical_flow_stale_by_sample[sample_id] = True
+
+    def _mark_draft_metrics_stale(self, sample_id: str) -> None:
+        """Mark existing draft metrics stale without deleting or recomputing."""
+        if not sample_id:
             return
         if not self._sample_has_measurable_draft_results(sample_id):
             return
@@ -2010,6 +2069,7 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         if keep_roi and roi is not None:
             self._autosave_roi(quiet=True)
+        self._sync_scientific_overlay()
         self._refresh_roi_preview_panel()
 
     def _set_roi_save_status(self, text: str, *, saved: bool = True) -> None:
@@ -2046,7 +2106,7 @@ class MainWindow(QMainWindow):
             return False
 
         sid = ann["sample_id"]
-        previous_roi_key = self._saved_roi_key_for_sample(sid)
+        previous_key = self._scientific_state_key_for_sample(sid)
         current_status = str(self._current_sample.get("processing_status", ""))
         new_status = self._status_after_roi_autosave(current_status)
         try:
@@ -2079,36 +2139,225 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._metric_error_by_sample.pop(sid, None)
         self._set_roi_save_status("ROI saved", saved=True)
-        self._mark_metrics_stale_if_saved_roi_changed(
-            sid,
-            previous_roi_key=previous_roi_key,
-            new_roi_key=self._roi_key_from_rect(self.canvas.rect_roi()),
-        )
+        new_key = self._scientific_state_key_from_annotation(ann)
+        if previous_key is not None and new_key != previous_key:
+            self._mark_draft_metrics_stale(sid)
         self._update_metric_freshness_label()
         return True
 
     def _on_apply_custom_angle(self) -> None:
         self._exit_cropped_preview_mode()
-        self._orientation.rotation_angle_degrees = float(self.spin_custom_angle.value())
-        self._orientation.manual_rotation_steps = []
-        self._refresh_display()
+        new_state = OrientationState(
+            rotation_angle_degrees=float(self.spin_custom_angle.value()),
+            flipped_180=self._orientation.flipped_180,
+            mirror_y_axis=self._orientation.mirror_y_axis,
+            manual_rotation_steps=[],
+        )
+        self._commit_orientation_change(new_state)
 
     def _on_mirror_y_axis(self, checked: bool) -> None:
         self._exit_cropped_preview_mode()
-        self._orientation.mirror_y_axis = bool(checked)
-        self._orientation.manual_rotation_steps = []
-        self._refresh_display()
+        new_state = OrientationState(
+            rotation_angle_degrees=self._orientation.rotation_angle_degrees,
+            flipped_180=self._orientation.flipped_180,
+            mirror_y_axis=bool(checked),
+            manual_rotation_steps=[],
+        )
+        self._commit_orientation_change(new_state)
 
     def _on_flip_180(self) -> None:
         self._exit_cropped_preview_mode()
-        self._orientation.flipped_180 = not self._orientation.flipped_180
-        self._orientation.manual_rotation_steps = []
-        self._refresh_display()
+        new_state = OrientationState(
+            rotation_angle_degrees=self._orientation.rotation_angle_degrees,
+            flipped_180=not self._orientation.flipped_180,
+            mirror_y_axis=self._orientation.mirror_y_axis,
+            manual_rotation_steps=[],
+        )
+        self._commit_orientation_change(new_state)
 
     def _on_reset_orientation(self) -> None:
         self._exit_cropped_preview_mode()
-        self._orientation = OrientationState()
-        self._refresh_display(keep_roi=True)
+        self._commit_orientation_change(OrientationState())
+
+    def _commit_orientation_change(self, new_state: OrientationState) -> None:
+        old_state = self._orientation
+        same = (
+            old_state.rotation_angle_degrees == new_state.rotation_angle_degrees
+            and old_state.mirror_y_axis == new_state.mirror_y_axis
+            and old_state.flipped_180 == new_state.flipped_180
+        )
+        new_roi = None
+        if not same and self._base_frame is not None:
+            new_roi = self._reorient_open_annotations(old_state, new_state)
+        self._orientation = new_state
+        self._refresh_display(keep_roi=False if new_roi is not None else True)
+        if new_roi is not None:
+            oriented = self._oriented_frame()
+            if oriented is not None:
+                new_roi = new_roi.clamp(oriented.shape[1], oriented.shape[0])
+            self.canvas.set_rect_roi(new_roi)
+        self._sync_scientific_overlay()
+        if not same:
+            sid = str(self._current_sample_id or "")
+            if sid:
+                self._mark_draft_metrics_stale(sid)
+            self._autosave_roi(quiet=True)
+
+    def _reorient_open_annotations(
+        self, old_state: OrientationState, new_state: OrientationState
+    ) -> RectROI | None:
+        if self._base_frame is None:
+            return None
+        bh, bw = int(self._base_frame.shape[0]), int(self._base_frame.shape[1])
+        old_w, _old_h = oriented_frame_size(bw, bh, old_state)
+        new_w, new_h = oriented_frame_size(bw, bh, new_state)
+        roi = self.canvas.rect_roi()
+        new_roi = None
+        if roi is not None:
+            from actintrack_app.orientation import reorient_roi
+
+            new_roi = reorient_roi(
+                roi,
+                raw_width=bw,
+                raw_height=bh,
+                old_state=old_state,
+                new_state=new_state,
+            ).clamp(new_w, new_h)
+        self._nucleus_reference = reorient_nucleus_reference(
+            self._nucleus_reference,
+            raw_width=bw,
+            raw_height=bh,
+            old_state=old_state,
+            new_state=new_state,
+        )
+        self._cutoff_boundary = reorient_cutoff_boundary(
+            self._cutoff_boundary,
+            old_oriented_width=old_w,
+            raw_width=bw,
+            raw_height=bh,
+            old_state=old_state,
+            new_state=new_state,
+        )
+        self._cell_region = reorient_cell_region(
+            self._cell_region,
+            raw_width=bw,
+            raw_height=bh,
+            old_state=old_state,
+            new_state=new_state,
+            new_frame_width=new_w,
+            new_frame_height=new_h,
+        )
+        return new_roi
+
+    def _sync_scientific_overlay(self) -> None:
+        canvas = _py_attr(self, "canvas", None)
+        if canvas is None:
+            return
+        preview_mode = _py_attr(self, "_preview_mode", "full")
+        oriented_fn = _py_attr(self, "_oriented_frame", None)
+        oriented = oriented_fn() if callable(oriented_fn) else None
+        if oriented is None or preview_mode != "full":
+            setter = getattr(canvas, "set_scientific_overlay", None)
+            if callable(setter):
+                setter(validity_mask=None, cutoff_y=None, nucleus_xy=None)
+            return
+        if not isinstance(oriented, np.ndarray):
+            return
+        oh, ow = oriented.shape[:2]
+        mask = None
+        cell = _py_attr(self, "_cell_region", None)
+        cutoff = _py_attr(self, "_cutoff_boundary", None)
+        nucleus = _py_attr(self, "_nucleus_reference", None)
+        if cell is not None or cutoff is not None:
+            mask = valid_mask_crop_local(
+                RectROI(0, 0, ow, oh),
+                cell_region=cell,
+                cutoff=cutoff,
+            )
+        nucleus_xy = None
+        if nucleus is not None:
+            nucleus_xy = (nucleus.x, nucleus.y)
+        cutoff_y = None if cutoff is None else cutoff.y
+        setter = getattr(canvas, "set_scientific_overlay", None)
+        if callable(setter):
+            setter(
+                validity_mask=mask,
+                cutoff_y=cutoff_y,
+                nucleus_xy=nucleus_xy,
+            )
+
+    def _set_scientific_placement_mode(self, mode: str | None) -> None:
+        self._scientific_placement_mode = mode
+        if mode == "nucleus":
+            self._status("Click the nucleus center.")
+        elif mode == "cutoff":
+            self._status("Click to place the horizontal cutoff.")
+        else:
+            self._status("")
+
+    def on_nucleus_placed(self, x: float, y: float) -> None:
+        self._nucleus_reference = NucleusReference(x=x, y=y, source="manual")
+        self._scientific_placement_mode = None
+        self._sync_scientific_overlay()
+        self._autosave_roi(quiet=True)
+        sid = str(self._current_sample_id or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._update_metric_freshness_label()
+        self._status("Nucleus center set.")
+
+    def on_cutoff_placed(self, y: float) -> None:
+        self._cutoff_boundary = CutoffBoundary(y=y)
+        self._scientific_placement_mode = None
+        self._sync_scientific_overlay()
+        self._autosave_roi(quiet=True)
+        sid = str(self._current_sample_id or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._update_metric_freshness_label()
+        self._status("Cutoff set.")
+
+    def on_cutoff_dragged(self, y: float) -> None:
+        self._cutoff_boundary = CutoffBoundary(y=y)
+        self._sync_scientific_overlay()
+
+    def on_cutoff_edit_finished(self) -> None:
+        self._sync_scientific_overlay()
+        self._autosave_roi(quiet=True)
+        sid = str(self._current_sample_id or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._update_metric_freshness_label()
+
+    def _on_set_nucleus_mode(self) -> None:
+        self._exit_cropped_preview_mode()
+        self._set_scientific_placement_mode("nucleus")
+
+    def _on_set_cutoff_mode(self) -> None:
+        self._exit_cropped_preview_mode()
+        self._set_scientific_placement_mode("cutoff")
+
+    def _on_clear_nucleus(self) -> None:
+        self._nucleus_reference = None
+        self._scientific_placement_mode = None
+        self._sync_scientific_overlay()
+        self._autosave_roi(quiet=True)
+        sid = str(self._current_sample_id or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._update_metric_freshness_label()
+        self._status("Nucleus cleared.")
+
+    def _on_clear_cutoff(self) -> None:
+        self._cutoff_boundary = None
+        self._scientific_placement_mode = None
+        self._sync_scientific_overlay()
+        self._autosave_roi(quiet=True)
+        sid = str(self._current_sample_id or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._update_metric_freshness_label()
+        self._status("Cutoff cleared.")
 
     def on_roi_changed(self, roi: Optional[RectROI]) -> None:
         if roi is None:
@@ -2426,11 +2675,24 @@ class MainWindow(QMainWindow):
             return
         try:
             crop = detect_tracking_crop(oriented)
-            self.canvas.set_rect_roi(tracking_crop_to_rect(crop))
+            suggested_roi = tracking_crop_to_rect(crop)
+            self.canvas.set_rect_roi(suggested_roi)
             self._loaded_annotation_source = "auto_suggested"
             self._roi_user_adjusted = False
+            if self._cutoff_boundary is None:
+                self._cutoff_boundary = CutoffBoundary(y=float(crop.cutoff_y))
+            if self._cell_region is None:
+                self._cell_region = suggest_conservative_cell_region(
+                    oriented, fallback_rect=suggested_roi
+                )
+            self._sync_scientific_overlay()
             self._autosave_roi(quiet=True)
         except ValueError as e:
+            if self._cell_region is None:
+                self._cell_region = suggest_conservative_cell_region(
+                    oriented, fallback_rect=self.canvas.rect_roi()
+                )
+                self._sync_scientific_overlay()
             QMessageBox.warning(self, "ROI Suggestion", str(e))
 
     def _validate_current_roi(self) -> RoiValidationResult:
@@ -2520,6 +2782,7 @@ class MainWindow(QMainWindow):
             review_status=review if requires_review else "approved",
             nucleus_reference=self._nucleus_reference,
             cutoff_boundary=self._cutoff_boundary,
+            cell_region=self._cell_region,
         )
 
     def _on_save_annotation(self) -> None:
@@ -3911,6 +4174,7 @@ class MainWindow(QMainWindow):
         self._nucleus_reference, self._cutoff_boundary = (
             scientific_annotations_from_annotation(ann)
         )
+        self._cell_region = cell_region_from_sample_annotation(ann)
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
@@ -3937,20 +4201,35 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         self._refresh_roi_save_status_from_context()
         self._refresh_roi_preview_panel()
+        self._sync_scientific_overlay()
         self._update_metric_freshness_label()
 
     def _apply_auto_suggested_roi(self, *, render_canvas: bool) -> None:
         oriented = self._oriented_frame()
         if oriented is None:
             return
+        crop = None
         try:
             crop = detect_tracking_crop(oriented)
-            if crop.confidence >= AUTO_APPLY_ROI_CONFIDENCE:
-                self.canvas.set_rect_roi(tracking_crop_to_rect(crop))
-                self._loaded_annotation_source = "auto_suggested"
-                self._roi_user_adjusted = False
         except ValueError:
-            pass
+            crop = None
+        suggested_roi = None
+        if crop is not None and crop.confidence >= AUTO_APPLY_ROI_CONFIDENCE:
+            suggested_roi = tracking_crop_to_rect(crop)
+            self.canvas.set_rect_roi(suggested_roi)
+            self._loaded_annotation_source = "auto_suggested"
+            self._roi_user_adjusted = False
+        if self._cutoff_boundary is None and crop is not None:
+            self._cutoff_boundary = CutoffBoundary(y=float(crop.cutoff_y))
+        if self._cell_region is None:
+            self._cell_region = suggest_conservative_cell_region(
+                oriented, fallback_rect=suggested_roi
+            )
+        self._sync_scientific_overlay()
+        # Persist the first-load suggestion so a later reopen does not silently
+        # regenerate CellRegion/cutoff if detection code changes.
+        if self.canvas.rect_roi() is not None:
+            self._autosave_roi(quiet=True)
 
     def _update_current_sample_panel_fields(
         self, sid: str, frame: np.ndarray, idx: int, total: int
@@ -3996,6 +4275,8 @@ class MainWindow(QMainWindow):
         self._orientation = OrientationState()
         self._nucleus_reference = None
         self._cutoff_boundary = None
+        self._cell_region = None
+        self._scientific_placement_mode = None
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
         if ann:
@@ -4137,6 +4418,12 @@ class MainWindow(QMainWindow):
             "Review and adjust before export."
         )
         suggest.triggered.connect(self._on_auto_suggest_roi)
+        set_nucleus = menu.addAction("Set Nucleus")
+        set_nucleus.setToolTip("Click the nucleus center on the preview.")
+        set_nucleus.triggered.connect(self._on_set_nucleus_mode)
+        set_cutoff = menu.addAction("Set Cutoff")
+        set_cutoff.setToolTip("Click to place a horizontal biological cutoff.")
+        set_cutoff.triggered.connect(self._on_set_cutoff_mode)
         if inside_roi:
             clear = menu.addAction("Clear ROI")
             clear.setToolTip("Remove the current ROI rectangle from the preview.")
@@ -4147,6 +4434,12 @@ class MainWindow(QMainWindow):
                 "using the auto-generated export name."
             )
             export_roi.triggered.connect(self._on_process_sample)
+        if _py_attr(self, "_nucleus_reference", None) is not None:
+            clear_n = menu.addAction("Clear Nucleus")
+            clear_n.triggered.connect(self._on_clear_nucleus)
+        if _py_attr(self, "_cutoff_boundary", None) is not None:
+            clear_c = menu.addAction("Clear Cutoff")
+            clear_c.triggered.connect(self._on_clear_cutoff)
 
     def _ask_yes_no(
         self,
