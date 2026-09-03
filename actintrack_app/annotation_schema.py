@@ -1,8 +1,11 @@
 """Build and merge sample annotations.
 
 Additive scientific fields (nucleus_reference, cutoff_boundary, cell_region)
-are optional and omitted when absent. Workspace schema version is unchanged:
-this is backward-compatible JSON, not a v2→v3 migration.
+are optional and omitted when absent. RectROI is also optional: an annotation
+document may persist scientific state with no computational crop.
+
+Workspace schema version is unchanged: this is backward-compatible JSON,
+not a v2→v3 migration.
 """
 
 from __future__ import annotations
@@ -46,7 +49,7 @@ def build_sample_annotation(
     stored_raw_path: str,
     reference_frame_index: int,
     orientation: OrientationState,
-    roi: RectROI,
+    roi: RectROI | None = None,
     roi_original: RectROI | None = None,
     original_dimensions: dict[str, int],
     oriented_dimensions: dict[str, int],
@@ -69,10 +72,10 @@ def build_sample_annotation(
 ) -> dict[str, Any]:
     """Structured annotation for training and export.
 
-    Optional ``nucleus_reference``, ``cutoff_boundary``, and ``cell_region``
-    persist in oriented_frame_pixels. They are omitted when None so old
-    projects stay unchanged. Legacy cutoff_y is not written here and is not
-    promoted on load.
+    Optional ``nucleus_reference``, ``cutoff_boundary``, ``cell_region``, and
+    ``roi`` persist in oriented_frame_pixels. They are omitted when None so
+    old projects stay unchanged and a missing crop does not erase scientific
+    state. Legacy cutoff_y is not written here and is not promoted on load.
     """
     ann: dict[str, Any] = {
         "sample_id": str(sample_id),
@@ -86,15 +89,7 @@ def build_sample_annotation(
         "flipped_180": bool(orientation.flipped_180),
         "mirror_y_axis": bool(orientation.mirror_y_axis),
         "manual_rotation_steps": list(orientation.manual_rotation_steps),
-        "rectangle_roi": roi_oriented_as_dict(roi),
-        "roi_method": roi_method,
-        **(
-            roi_original_as_dict(roi_original)
-            if roi_original is not None
-            else {}
-        ),
         "annotation_source": annotation_source,
-        "roi_coordinate_space": ORIENTED_ROI_COORDINATE_SPACE,
         "original_dimensions": original_dimensions,
         "oriented_dimensions": oriented_dimensions,
         "segmentation_method": segmentation_method or "not_applied",
@@ -105,6 +100,12 @@ def build_sample_annotation(
         "review_status": review_status,
         "notes": notes,
     }
+    if roi is not None:
+        ann["rectangle_roi"] = roi_oriented_as_dict(roi)
+        ann["roi_method"] = roi_method
+        ann["roi_coordinate_space"] = ORIENTED_ROI_COORDINATE_SPACE
+        if roi_original is not None:
+            ann.update(roi_original_as_dict(roi_original))
     if suggestion_method:
         ann["suggestion_method"] = suggestion_method
     if cell_mask_path:
@@ -122,6 +123,28 @@ def build_sample_annotation(
     if cell_region is not None:
         ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
     return ann
+
+
+_RECT_ROI_DOCUMENT_KEYS = (
+    "rectangle_roi",
+    "roi_x",
+    "roi_y",
+    "roi_width",
+    "roi_height",
+    "roi_method",
+    "roi_coordinate_space",
+)
+
+
+def annotation_without_rect_roi(annotation: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with computational RectROI fields removed.
+
+    Scientific fields, orientation, and processed-output metadata are kept.
+    """
+    out = dict(annotation)
+    for key in _RECT_ROI_DOCUMENT_KEYS:
+        out.pop(key, None)
+    return out
 
 
 def merge_processed_into_annotation(

@@ -11,6 +11,7 @@ import numpy as np
 
 from actintrack_app.annotation_schema import (
     annotation_from_legacy,
+    annotation_without_rect_roi,
     build_sample_annotation,
     scientific_annotations_from_annotation,
 )
@@ -174,6 +175,38 @@ class AnnotationPersistenceTests(unittest.TestCase):
         self.assertEqual(orientation.rotation_angle_degrees, 0.0)
         self.assertEqual(roi, RectROI(3, 4, 10, 12))
         self.assertIsNone(nucleus_reference_from_annotation(ann))
+
+    def test_annotation_can_persist_without_rect_roi(self) -> None:
+        kwargs = dict(_base_annotation_kwargs())
+        kwargs.pop("roi")
+        ann = build_sample_annotation(
+            **kwargs,
+            nucleus_reference=NucleusReference(9.5, 10.25),
+            cutoff_boundary=CutoffBoundary(18.0),
+        )
+        self.assertNotIn("rectangle_roi", ann)
+        self.assertNotIn("roi_method", ann)
+        self.assertIn(ANNOTATION_FIELD_NUCLEUS_REFERENCE, ann)
+        self.assertIn(ANNOTATION_FIELD_CUTOFF_BOUNDARY, ann)
+        orientation, roi = annotation_from_legacy(ann)
+        self.assertIsNone(roi)
+        self.assertEqual(orientation.rotation_angle_degrees, 0.0)
+        nucleus, cutoff = scientific_annotations_from_annotation(ann)
+        self.assertEqual(nucleus.x, 9.5)
+        self.assertEqual(cutoff.y, 18.0)
+
+    def test_strip_rect_roi_keeps_scientific_fields(self) -> None:
+        ann = build_sample_annotation(
+            **_base_annotation_kwargs(),
+            nucleus_reference=NucleusReference(1.5, 2.5),
+            cutoff_boundary=CutoffBoundary(8.0),
+        )
+        stripped = annotation_without_rect_roi(ann)
+        self.assertNotIn("rectangle_roi", stripped)
+        self.assertNotIn("roi_x", stripped)
+        self.assertIn(ANNOTATION_FIELD_NUCLEUS_REFERENCE, stripped)
+        self.assertIn(ANNOTATION_FIELD_CUTOFF_BOUNDARY, stripped)
+        self.assertEqual(stripped["rotation_angle_degrees"], 0.0)
 
 
 class PropagationSafetyTests(unittest.TestCase):

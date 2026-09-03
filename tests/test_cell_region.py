@@ -525,5 +525,236 @@ class PropagationCellRegionTests(unittest.TestCase):
         self.assertNotIn("cutoff_boundary", result)
 
 
+def _annotation_window(
+    *,
+    roi: RectROI | None,
+    nucleus: NucleusReference | None = None,
+    cutoff: CutoffBoundary | None = None,
+    cell: CellRegion | None = None,
+) -> MainWindow:
+    window = MainWindow.__new__(MainWindow)
+    window._loaded_sample_notes = ""
+    window._roi_user_adjusted = False
+    window._current_sample = {
+        "sample_id": "S1",
+        "group": "Col-0",
+        "batch_name": "batch1",
+        "batch_id": "b1",
+        "original_filename": "clip.mp4",
+        "stored_path": "raw/S1.avi",
+        "processing_status": "roi_marked",
+    }
+    window._current_sample_id = "S1"
+    window._reference_frame_index = 0
+    window._orientation = OrientationState()
+    window._loaded_annotation_source = "manual"
+    window._nucleus_reference = nucleus
+    window._cutoff_boundary = cutoff
+    window._cell_region = cell
+    window._base_frame = np.zeros((30, 40, 3), dtype=np.uint8)
+    window.canvas = MagicMock()
+    window.canvas.rect_roi.return_value = roi
+    window._oriented_frame = MagicMock(return_value=np.zeros((30, 40, 3), dtype=np.uint8))
+    if roi is not None:
+        check = MagicMock()
+        check.ok = True
+        check.roi_oriented = roi
+        check.roi_original = roi
+        window._validate_current_roi = MagicMock(return_value=check)
+    window._suggestion_method_for_save = MagicMock(return_value=None)
+    return window
+
+
+class AnnotationDecoupledFromRoiTests(unittest.TestCase):
+    def test_document_persists_scientific_fields_without_rect_roi(self) -> None:
+        cell = CellRegion.from_rect(RectROI(2, 3, 8, 9))
+        window = _annotation_window(
+            roi=None,
+            nucleus=NucleusReference(8.25, 14.5, source="manual"),
+            cutoff=CutoffBoundary(22.0),
+            cell=cell,
+        )
+        ann = MainWindow._current_annotation_dict(
+            window, status="unannotated", require_roi=False
+        )
+        self.assertNotIn("rectangle_roi", ann)
+        self.assertEqual(ann["nucleus_reference"]["x"], 8.25)
+        self.assertEqual(ann["cutoff_boundary"]["y"], 22.0)
+        self.assertEqual(ann["cell_region"]["rectangle"]["width"], 8)
+
+    def test_set_nucleus_without_roi_persists(self) -> None:
+        window = _annotation_window(roi=None)
+        window._scientific_placement_mode = "nucleus"
+        window._sync_scientific_overlay = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._mark_draft_metrics_stale = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._status = MagicMock()
+        MainWindow.on_nucleus_placed(window, 5.5, 6.25)
+        self.assertEqual(window._nucleus_reference.x, 5.5)
+        window._autosave_roi.assert_called()
+
+    def test_set_cutoff_without_roi_persists(self) -> None:
+        window = _annotation_window(roi=None)
+        window._scientific_placement_mode = "cutoff"
+        window._sync_scientific_overlay = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._mark_draft_metrics_stale = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._status = MagicMock()
+        MainWindow.on_cutoff_placed(window, 17.0)
+        self.assertEqual(window._cutoff_boundary.y, 17.0)
+        window._autosave_roi.assert_called()
+
+    def test_clear_roi_keeps_scientific_state_and_does_not_delete_pack(self) -> None:
+        from unittest.mock import patch
+
+        cell = CellRegion.from_rect(RectROI(1, 2, 12, 10), source=CELL_REGION_SOURCE_AUTO)
+        window = _annotation_window(
+            roi=None,
+            nucleus=NucleusReference(9.0, 8.0, source="manual"),
+            cutoff=CutoffBoundary(16.0),
+            cell=cell,
+        )
+        window._project_root = MagicMock()
+        window._exit_cropped_preview_mode = MagicMock()
+        window._set_roi_save_status = MagicMock()
+        window._sync_scientific_overlay = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        window._mark_draft_metrics_stale = MagicMock()
+        window._refresh_analysis_if_visible = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._compute_metrics_for_sample = MagicMock()
+        window.run_metrics_for_sample_id = MagicMock()
+        window._invalidate_tracking_result_for_sample = MagicMock()
+
+        import inspect
+
+        persist_src = inspect.getsource(MainWindow._persist_roi_cleared_for_current_sample)
+        self.assertNotIn("remove_sample_crop_annotation", persist_src)
+        MainWindow._on_clear_roi(window)
+
+        self.assertEqual(window._nucleus_reference.x, 9.0)
+        self.assertEqual(window._cutoff_boundary.y, 16.0)
+        self.assertEqual(window._cell_region.bounding_box(), RectROI(1, 2, 12, 10))
+        window._autosave_roi.assert_called()
+        window._mark_draft_metrics_stale.assert_called_with("S1")
+        window._invalidate_tracking_result_for_sample.assert_not_called()
+        window._compute_metrics_for_sample.assert_not_called()
+        window.run_metrics_for_sample_id.assert_not_called()
+
+    def test_reload_after_roi_clear_restores_scientific_fields(self) -> None:
+        cell = CellRegion.from_rect(RectROI(2, 3, 8, 9), source=CELL_REGION_SOURCE_AUTO)
+        window = _annotation_window(roi=None)
+        window._refresh_display = MagicMock()
+        window._update_orientation_label = MagicMock()
+        window._refresh_roi_save_status_from_context = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._roi_autosave_pending = False
+        ann = {
+            "sample_id": "S1",
+            "reference_frame_index": 0,
+            "notes": "",
+            "annotation_source": "manual",
+            "rotation_angle_degrees": 0.0,
+            "flipped_180": False,
+            "mirror_y_axis": False,
+            "nucleus_reference": {
+                "x": 8.25,
+                "y": 14.5,
+                "coordinate_space": COORDINATE_SPACE_ORIENTED_FRAME_PIXELS,
+            },
+            "cutoff_boundary": {
+                "y": 22.0,
+                "coordinate_space": COORDINATE_SPACE_ORIENTED_FRAME_PIXELS,
+            },
+            "cell_region": cell.to_dict(),
+        }
+        MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+        self.assertIsNone(window.canvas.set_rect_roi.call_args[0][0])
+        self.assertEqual(window._nucleus_reference.x, 8.25)
+        self.assertEqual(window._cutoff_boundary.y, 22.0)
+        self.assertEqual(window._cell_region.bounding_box(), RectROI(2, 3, 8, 9))
+
+    def test_recreating_roi_does_not_overwrite_scientific_annotations(self) -> None:
+        cell = CellRegion.from_rect(RectROI(1, 1, 8, 8), source="manual")
+        window = _annotation_window(
+            roi=None,
+            nucleus=NucleusReference(2.0, 3.0, source="manual"),
+            cutoff=CutoffBoundary(9.0),
+            cell=cell,
+        )
+        window._set_roi_save_status = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        MainWindow.on_roi_changed(window, RectROI(4, 5, 10, 12))
+        self.assertIs(window._cell_region, cell)
+        self.assertEqual(window._nucleus_reference.x, 2.0)
+        self.assertEqual(window._cutoff_boundary.y, 9.0)
+
+    def test_clear_nucleus_does_not_clear_cutoff_or_cell(self) -> None:
+        cell = CellRegion.from_rect(RectROI(1, 2, 6, 7))
+        window = _annotation_window(
+            roi=RectROI(0, 0, 20, 20),
+            nucleus=NucleusReference(3.0, 4.0, source="manual"),
+            cutoff=CutoffBoundary(12.0),
+            cell=cell,
+        )
+        window._scientific_placement_mode = None
+        window._sync_scientific_overlay = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._mark_draft_metrics_stale = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._status = MagicMock()
+        MainWindow._on_clear_nucleus(window)
+        self.assertIsNone(window._nucleus_reference)
+        self.assertEqual(window._cutoff_boundary.y, 12.0)
+        self.assertIs(window._cell_region, cell)
+
+    def test_clear_cutoff_does_not_clear_nucleus_or_cell(self) -> None:
+        cell = CellRegion.from_rect(RectROI(1, 2, 6, 7))
+        window = _annotation_window(
+            roi=RectROI(0, 0, 20, 20),
+            nucleus=NucleusReference(3.0, 4.0, source="manual"),
+            cutoff=CutoffBoundary(12.0),
+            cell=cell,
+        )
+        window._scientific_placement_mode = None
+        window._sync_scientific_overlay = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._mark_draft_metrics_stale = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._status = MagicMock()
+        MainWindow._on_clear_cutoff(window)
+        self.assertIsNone(window._cutoff_boundary)
+        self.assertEqual(window._nucleus_reference.x, 3.0)
+        self.assertIs(window._cell_region, cell)
+
+    def test_legacy_rectangle_only_annotation_still_loads(self) -> None:
+        window = _annotation_window(roi=None)
+        window._refresh_display = MagicMock()
+        window._update_orientation_label = MagicMock()
+        window._refresh_roi_save_status_from_context = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._roi_autosave_pending = False
+        ann = {
+            "sample_id": "S1",
+            "reference_frame_index": 0,
+            "notes": "",
+            "annotation_source": "manual",
+            "rotation_angle_degrees": 0.0,
+            "flipped_180": False,
+            "mirror_y_axis": False,
+            "rectangle_roi": {"x": 1, "y": 2, "width": 10, "height": 12},
+        }
+        MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+        window.canvas.set_rect_roi.assert_called()
+        self.assertIsNone(window._nucleus_reference)
+        self.assertIsNone(window._cutoff_boundary)
+        self.assertIsNone(window._cell_region)
+
+
 if __name__ == "__main__":
     unittest.main()

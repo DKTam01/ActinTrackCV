@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
 from actintrack_app.analysis_service import AnalysisReport, build_analysis_report
 from actintrack_app.annotation_schema import (
     annotation_from_legacy,
+    annotation_without_rect_roi,
     build_sample_annotation,
     cell_region_from_sample_annotation,
     merge_processed_into_annotation,
@@ -138,7 +139,6 @@ from actintrack_app.metadata import (
     get_sample_annotation,
     load_crop_metadata,
     migrate_workspace_schema,
-    remove_sample_crop_annotation,
     remove_samples_from_metadata,
     save_sample_crop_annotation,
     sync_samples_with_disk,
@@ -1271,6 +1271,20 @@ class MainWindow(QMainWindow):
             return None
         return STATUS_ROI_MARKED
 
+    @staticmethod
+    def _status_after_roi_cleared(current_status: str) -> Optional[str]:
+        """CSV status after the computational crop is removed.
+
+        Advanced/exported samples keep their status. ROI-marked samples return
+        to Raw so Explorer does not claim a crop still exists.
+        """
+        current = str(current_status).strip()
+        if current in _ADVANCED_SAMPLE_STATUSES:
+            return None
+        if current in (STATUS_ROI_MARKED, STATUS_ROI_PROPAGATED, STATUS_ROI_APPROVED):
+            return STATUS_RAW_IMPORTED
+        return None
+
     def _optical_flow_settings_from_ui(self) -> OpticalFlowSettings:
         blur = int(self.combo_of_blur.currentData() or 0)
         return OpticalFlowSettings(
@@ -2092,13 +2106,13 @@ class MainWindow(QMainWindow):
         self._set_roi_save_status("ROI saved", saved=True)
 
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
+        """Persist the current annotation document, with or without RectROI."""
         if self._project_root is None or self._current_sample is None:
             return False
-        if self.canvas.rect_roi() is None:
-            self._set_roi_save_status("No ROI to save", saved=False)
-            return False
+        has_roi = self.canvas.rect_roi() is not None
+        status = STATUS_ROI_MARKED if has_roi else STATUS_UNANNOTATED
         try:
-            ann = self._current_annotation_dict(status=STATUS_ROI_MARKED)
+            ann = self._current_annotation_dict(status=status, require_roi=False)
         except ValueError as exc:
             self._set_roi_save_status("Unsaved changes", saved=False)
             if not quiet:
@@ -2108,7 +2122,10 @@ class MainWindow(QMainWindow):
         sid = ann["sample_id"]
         previous_key = self._scientific_state_key_for_sample(sid)
         current_status = str(self._current_sample.get("processing_status", ""))
-        new_status = self._status_after_roi_autosave(current_status)
+        if has_roi:
+            new_status = self._status_after_roi_autosave(current_status)
+        else:
+            new_status = self._status_after_roi_cleared(current_status)
         try:
             crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
             save_sample_crop_annotation(crop_path, sid, ann)
@@ -2138,7 +2155,10 @@ class MainWindow(QMainWindow):
         self._roi_user_adjusted = False
         self._roi_autosave_pending = False
         self._metric_error_by_sample.pop(sid, None)
-        self._set_roi_save_status("ROI saved", saved=True)
+        if has_roi:
+            self._set_roi_save_status("ROI saved", saved=True)
+        else:
+            self._set_roi_save_status("Annotations saved", saved=True)
         new_key = self._scientific_state_key_from_annotation(ann)
         if previous_key is not None and new_key != previous_key:
             self._mark_draft_metrics_stale(sid)
@@ -2379,33 +2399,34 @@ class MainWindow(QMainWindow):
         self._roi_autosave_pending = False
         self._set_roi_save_status("ROI cleared", saved=False)
         self._persist_roi_cleared_for_current_sample()
+        self._sync_scientific_overlay()
         self._update_metric_freshness_label()
         self._refresh_roi_preview_panel()
 
     def _persist_roi_cleared_for_current_sample(self) -> None:
-        """Clearing the ROI returns the Sample to Raw and drops stale metrics."""
+        """Remove only the computational RectROI from the annotation document.
+
+        CellRegion, NucleusReference, CutoffBoundary, and orientation remain.
+        """
         if self._project_root is None or self._current_sample is None:
             return
         sid = str(self._current_sample.get("sample_id", "")).strip()
         if not sid:
             return
         current_status = str(self._current_sample.get("processing_status", ""))
-        if current_status in _ADVANCED_SAMPLE_STATUSES:
-            # Exported/processed Samples keep their advanced status.
-            return
         try:
-            crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
-            remove_sample_crop_annotation(crop_path, sid)
-            update_samples_csv(
-                self._project_root / METADATA_DIR / SAMPLES_CSV,
-                {"sample_id": sid, "processing_status": STATUS_RAW_IMPORTED},
-            )
+            if current_status in _ADVANCED_SAMPLE_STATUSES:
+                existing = get_sample_annotation(self._project_root, sid)
+                if existing:
+                    crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
+                    save_sample_crop_annotation(
+                        crop_path, sid, annotation_without_rect_roi(existing)
+                    )
+            else:
+                self._autosave_roi(quiet=True)
         except OSError:
             return
-        self._current_sample["processing_status"] = STATUS_RAW_IMPORTED
-        self._loaded_annotation_source = "manual"
-        self._invalidate_tracking_result_for_sample(sid)
-        self._update_sample_list_row_for_id(sid)
+        self._mark_draft_metrics_stale(sid)
         self._refresh_analysis_if_visible()
 
     def _tracking_params_from_ui(self) -> MotionIndexParams:
@@ -2734,16 +2755,30 @@ class MainWindow(QMainWindow):
             return "f_actin_signal"
         return None
 
-    def _current_annotation_dict(self, *, status: str) -> dict[str, Any]:
+    def _current_annotation_dict(
+        self, *, status: str, require_roi: bool = True
+    ) -> dict[str, Any]:
         assert self._current_sample is not None and self._base_frame is not None
-        check = self._validate_current_roi()
-        if not check.ok:
-            raise ValueError(check.message)
-        assert check.roi_oriented is not None and check.roi_original is not None
         oriented = self._oriented_frame()
         assert oriented is not None
         oh, ow = oriented.shape[:2]
         bh, bw = self._base_frame.shape[:2]
+        roi_oriented = None
+        roi_original = None
+        if require_roi or self.canvas.rect_roi() is not None:
+            check = self._validate_current_roi()
+            if not check.ok:
+                if require_roi:
+                    raise ValueError(check.message)
+            else:
+                assert check.roi_oriented is not None and check.roi_original is not None
+                roi_oriented = check.roi_oriented.clamp(ow, oh)
+                roi_original = check.roi_original.clamp(bw, bh)
+        if require_roi and roi_oriented is None:
+            raise ValueError(
+                "Please draw or load a rectangular ROI before previewing "
+                "the cropped region."
+            )
         ann_src = self._annotation_source_for_save()
         review = str(self._current_sample.get("review_status", "approved"))
         requires_review = status == STATUS_ROI_PROPAGATED
@@ -2767,8 +2802,8 @@ class MainWindow(QMainWindow):
             stored_raw_path=str(self._current_sample["stored_path"]),
             reference_frame_index=self._reference_frame_index,
             orientation=self._orientation,
-            roi=check.roi_oriented.clamp(ow, oh),
-            roi_original=check.roi_original.clamp(bw, bh),
+            roi=roi_oriented,
+            roi_original=roi_original,
             original_dimensions={"width": bw, "height": bh},
             oriented_dimensions={"width": ow, "height": oh},
             notes=self._loaded_sample_notes.strip(),
