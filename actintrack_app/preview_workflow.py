@@ -15,6 +15,7 @@ from actintrack_app.motion_index import (
     compute_motion_indices,
     compute_track_statistics,
     compute_velocity_summary,
+    point_tracks_from_video_result,
     render_track_preview_frame,
     select_starting_points,
     track_points,
@@ -202,8 +203,14 @@ def cropped_preview_analysis_from_draft(
     if isinstance(params_data, dict):
         try:
             params = MotionIndexParams(**params_data)
-        except TypeError:
+        except (TypeError, ValueError):
             params = None
+    tracks = point_tracks_from_video_result(draft)
+    starting_points = [
+        (float(track.points[0].x), float(track.points[0].y))
+        for track in tracks
+        if track.points
+    ]
     general = float(
         draft.get(
             "general_movement_index_um_per_s",
@@ -213,8 +220,8 @@ def cropped_preview_analysis_from_draft(
     )
     return CroppedPreviewAnalysis(
         frames=frames,
-        tracks=[],
-        starting_points=[],
+        tracks=tracks,
+        starting_points=starting_points,
         downward_velocity_index_um_per_s=float(
             draft.get("downward_velocity_index_um_per_s", 0.0) or 0.0
         ),
@@ -223,7 +230,11 @@ def cropped_preview_analysis_from_draft(
             draft.get("num_tracks_with_valid_steps", 0) or 0
         ),
         total_valid_steps=int(draft.get("total_valid_steps", 0) or 0),
-        mean_track_length_frames=0.0,
+        mean_track_length_frames=(
+            float(np.mean([len(track.points) for track in tracks]))
+            if tracks
+            else 0.0
+        ),
         time_weighted_mean_speed_um_per_s=float(
             draft.get("time_weighted_mean_speed_um_per_s", 0.0) or 0.0
         ),

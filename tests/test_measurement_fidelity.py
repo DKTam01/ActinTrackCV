@@ -182,6 +182,8 @@ class StepMetricsCentralizationTests(unittest.TestCase):
                 MOVEMENT_OUTPUT_SCHEMA_VERSION,
             )
             self.assertIn("movement_definition", payload)
+            self.assertEqual(payload["tracking_result"]["schema_version"], 1)
+            self.assertEqual(len(payload["tracking_result"]["tracks"]), 1)
             outputs = payload.get("outputs") or {}
             self.assertTrue(str(outputs.get("trajectory_csv", "")).endswith(".csv"))
             self.assertTrue(str(outputs.get("summary_json", "")).endswith(".json"))

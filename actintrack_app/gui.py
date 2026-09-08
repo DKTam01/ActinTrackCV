@@ -223,6 +223,7 @@ from actintrack_app.motion_index import (
     MotionIndexParams,
     TRACKING_METHOD_BRIGHTEST_LOCAL,
     TRACKING_METHOD_TEMPLATE,
+    serialize_video_tracking_result,
 )
 from actintrack_app.optical_flow_motion_index import (
     OpticalFlowResult,
@@ -1616,6 +1617,10 @@ class MainWindow(QMainWindow):
             "tracking_warning": analysis.tracking_warning,
             "analysis_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "parameters": asdict(params),
+            "tracking_result": serialize_video_tracking_result(
+                analysis.tracks,
+                params,
+            ),
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 

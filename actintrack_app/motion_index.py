@@ -68,6 +68,7 @@ TRACKING_METHODS = {TRACKING_METHOD_BRIGHTEST_LOCAL, TRACKING_METHOD_TEMPLATE}
 # Does not change accepted mathematics; documents units and aggregation.
 METRIC_DEFINITION_VERSION = 1
 MOVEMENT_OUTPUT_SCHEMA_VERSION = 1
+TRACKING_RESULT_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -294,6 +295,10 @@ class MotionIndexResult:
                 if t.points and t.points[-1].frame_index == self.frame_count - 1
             ),
             "track_summaries": self.track_summaries,
+            "tracking_result": serialize_video_tracking_result(
+                self.tracks,
+                self.params,
+            ),
             "track_preview_error": self.track_preview_error,
             "outputs": {
                 "trajectory_csv": self.trajectory_csv,
@@ -1563,6 +1568,200 @@ def compute_track_statistics(tracks: Sequence[PointTrack]) -> tuple[int, int, fl
             total_steps += n - 1
     mean_len = float(np.mean(valid_lengths)) if valid_lengths else 0.0
     return len(valid_lengths), total_steps, mean_len
+
+
+def serialize_point_track_result(
+    track: PointTrack,
+    params: MotionIndexParams,
+) -> dict[str, Any]:
+    """Return the canonical persisted scientific result for one point track."""
+    steps = iter_track_step_metrics(track, params)
+    point_rows = [
+        {
+            "track_id": int(point.track_id),
+            "frame_index": int(point.frame_index),
+            "x_px": float(point.x),
+            "y_px": float(point.y),
+            "confidence": float(point.confidence),
+            "recovered_with_lookahead": bool(point.recovered_with_lookahead),
+        }
+        for point in track.points
+    ]
+    step_rows: list[dict[str, Any]] = []
+    recovered_gaps: list[dict[str, int]] = []
+    for point, step in zip(track.points[1:], steps):
+        row = asdict(step)
+        row["recovered_with_lookahead"] = bool(point.recovered_with_lookahead)
+        step_rows.append(row)
+        if point.recovered_with_lookahead:
+            recovered_gaps.append(
+                {
+                    "from_frame_index": int(step.prev_frame_index),
+                    "to_frame_index": int(step.frame_index),
+                    "frame_gap": int(step.frame_gap),
+                    "missing_frame_count": max(0, int(step.frame_gap) - 1),
+                }
+            )
+
+    total_path_px = float(sum(step.displacement_px for step in steps))
+    total_path_um = float(sum(step.displacement_um for step in steps))
+    total_time_s = float(sum(step.dt_s for step in steps))
+    total_frame_intervals = int(sum(step.frame_gap for step in steps))
+    step_speeds = [step.absolute_velocity_um_per_s for step in steps]
+    return {
+        "track_id": int(track.track_id),
+        "points": point_rows,
+        "valid_steps": step_rows,
+        "recovered_gaps": recovered_gaps,
+        "termination": {
+            "active_to_end": track.end_reason == "reached_last_frame",
+            "end_reason": str(track.end_reason),
+            "last_frame_index": (
+                int(track.points[-1].frame_index) if track.points else None
+            ),
+        },
+        "absolute_movement_summary": {
+            "num_points": len(track.points),
+            "valid_step_count": len(steps),
+            "recovered_point_count": sum(
+                1 for point in track.points if point.recovered_with_lookahead
+            ),
+            "total_path_length_px": total_path_px,
+            "total_path_length_um": total_path_um,
+            "total_frame_intervals": total_frame_intervals,
+            "tracked_time_s": total_time_s,
+            "mean_step_speed_um_per_s": (
+                float(np.mean(step_speeds)) if step_speeds else 0.0
+            ),
+            "time_weighted_mean_speed_um_per_s": (
+                total_path_um / total_time_s if total_time_s > 0 else 0.0
+            ),
+            "mean_displacement_px_per_frame": (
+                total_path_px / total_frame_intervals
+                if total_frame_intervals > 0
+                else 0.0
+            ),
+        },
+        "measurement_provenance": {
+            "metric_definition_version": METRIC_DEFINITION_VERSION,
+            "coordinate_space": "crop_local_pixels",
+            "tracking_method": params.tracking_method,
+            "microns_per_pixel": float(params.microns_per_pixel),
+            "seconds_per_frame": float(params.seconds_per_frame),
+            "frame_gap_handling": "actual_frame_index_delta",
+        },
+    }
+
+
+def serialize_video_tracking_result(
+    tracks: Sequence[PointTrack],
+    params: MotionIndexParams,
+) -> dict[str, Any]:
+    """Return one versioned video result containing all measured point tracks."""
+    serialized_tracks = [
+        serialize_point_track_result(track, params) for track in tracks
+    ]
+    valid_tracks, total_steps, mean_length = compute_track_statistics(tracks)
+    all_steps = [
+        step for track in tracks for step in iter_track_step_metrics(track, params)
+    ]
+    total_path_px = float(sum(step.displacement_px for step in all_steps))
+    total_intervals = int(sum(step.frame_gap for step in all_steps))
+    return {
+        "schema_version": TRACKING_RESULT_SCHEMA_VERSION,
+        "summary": {
+            "num_tracks_started": len(tracks),
+            "num_tracks_with_valid_steps": valid_tracks,
+            "total_valid_steps": total_steps,
+            "mean_track_length_frames": mean_length,
+            "median_track_length_frames": (
+                float(np.median([len(track.points) for track in tracks]))
+                if tracks
+                else 0.0
+            ),
+            "tracks_recovered_with_lookahead": sum(
+                any(point.recovered_with_lookahead for point in track.points)
+                for track in tracks
+            ),
+            "recovered_point_count": sum(
+                point.recovered_with_lookahead
+                for track in tracks
+                for point in track.points
+            ),
+            "total_path_length_px": total_path_px,
+            "total_frame_intervals": total_intervals,
+            "mean_displacement_px_per_frame": (
+                total_path_px / total_intervals if total_intervals > 0 else 0.0
+            ),
+        },
+        "parameters": asdict(params),
+        "provenance": {
+            "metric_definition_version": METRIC_DEFINITION_VERSION,
+            "movement_output_schema_version": MOVEMENT_OUTPUT_SCHEMA_VERSION,
+            "coordinate_space": "crop_local_pixels",
+            "units": {
+                "position": "px",
+                "displacement": "px and um",
+                "time": "s",
+                "velocity": "um/s",
+            },
+        },
+        "tracks": serialized_tracks,
+    }
+
+
+def point_tracks_from_video_result(payload: dict[str, Any]) -> list[PointTrack]:
+    """Reconstruct runtime tracks from an additive serialized tracking result."""
+    result = payload.get("tracking_result")
+    if not isinstance(result, dict):
+        result = payload
+    track_rows = result.get("tracks")
+    if not isinstance(track_rows, list):
+        return []
+
+    tracks: list[PointTrack] = []
+    for track_row in track_rows:
+        if not isinstance(track_row, dict):
+            continue
+        point_rows = track_row.get("points")
+        if not isinstance(point_rows, list):
+            continue
+        track_id = int(track_row.get("track_id", len(tracks)))
+        points: list[TrackPoint] = []
+        for point_row in point_rows:
+            if not isinstance(point_row, dict):
+                continue
+            points.append(
+                TrackPoint(
+                    track_id=int(point_row.get("track_id", track_id)),
+                    frame_index=int(point_row["frame_index"]),
+                    x=float(point_row["x_px"]),
+                    y=float(point_row["y_px"]),
+                    confidence=float(point_row.get("confidence", 0.0)),
+                    recovered_with_lookahead=bool(
+                        point_row.get("recovered_with_lookahead", False)
+                    ),
+                )
+            )
+        if not points:
+            continue
+        termination = track_row.get("termination")
+        end_reason = (
+            str(termination.get("end_reason", ""))
+            if isinstance(termination, dict)
+            else ""
+        )
+        tracks.append(
+            PointTrack(
+                track_id=track_id,
+                start_x=float(points[0].x),
+                start_y=float(points[0].y),
+                points=points,
+                active=False,
+                end_reason=end_reason,
+            )
+        )
+    return tracks
 
 
 def _default_output_dir(source: Path, final_export_name: str | None = None) -> Path:
