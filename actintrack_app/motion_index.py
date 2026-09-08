@@ -1218,8 +1218,9 @@ def track_points(
     """Track starting bright points across frames using the configured local matcher.
 
     ``valid_mask`` is an optional static crop-local scientific domain. Accepted
-    positions must remain inside it. Missing/invalid next-frame matches terminate
-    the track (R3 has no gap recovery).
+    positions must remain inside it. When configured, a failed immediate match
+    may reconnect to a measured point in a later frame. No intermediate points
+    are synthesized.
     """
     if len(frames) < 2:
         raise ValueError("At least two frames are required for tracking.")
@@ -1260,46 +1261,6 @@ def track_points(
             if prev_point.frame_index >= next_frame:
                 continue
 
-            if prev_point.frame_index < next_frame - 1:
-                frame_gap = next_frame - prev_point.frame_index
-                if params.lookahead_frames > 0 and frame_gap <= params.lookahead_frames + 1:
-                    match_x, match_y, confidence = _try_match_step(
-                        signals,
-                        prev_point,
-                        next_frame,
-                        params,
-                        search_radius_px=params.search_radius_px * frame_gap,
-                        blocked_points=frame_claims,
-                        blocked_radius_px=blocked_radius,
-                        valid_mask=scientific_mask,
-                    )
-                    if (
-                        confidence >= params.min_template_confidence
-                        and _xy_in_mask(match_x, match_y, scientific_mask)
-                    ):
-                        track.points.append(
-                            TrackPoint(
-                                track_id=track.track_id,
-                                frame_index=next_frame,
-                                x=match_x,
-                                y=match_y,
-                                confidence=confidence,
-                                recovered_with_lookahead=True,
-                            )
-                        )
-                        frame_claims.append((match_x, match_y))
-                        continue
-                    if (
-                        confidence >= params.min_template_confidence
-                        and not _xy_in_mask(match_x, match_y, scientific_mask)
-                    ):
-                        track.active = False
-                        track.end_reason = f"invalid_region_at_frame_{next_frame}"
-                        continue
-                track.active = False
-                track.end_reason = f"lost_before_frame_{next_frame}"
-                continue
-
             match_x, match_y, confidence = _try_match_step(
                 signals,
                 prev_point,
@@ -1328,8 +1289,51 @@ def track_points(
                 frame_claims.append((match_x, match_y))
                 continue
 
+            recovered = False
+            last_lookahead_frame = min(
+                len(frames) - 1,
+                next_frame + int(params.lookahead_frames),
+            )
+            for future_frame in range(next_frame + 1, last_lookahead_frame + 1):
+                frame_gap = future_frame - prev_point.frame_index
+                future_claims = claims_by_frame.setdefault(future_frame, [])
+                match_x, match_y, confidence = _try_match_step(
+                    signals,
+                    prev_point,
+                    future_frame,
+                    params,
+                    search_radius_px=params.search_radius_px * frame_gap,
+                    blocked_points=future_claims,
+                    blocked_radius_px=blocked_radius,
+                    valid_mask=scientific_mask,
+                )
+                if confidence < params.min_template_confidence:
+                    continue
+                if not _xy_in_mask(match_x, match_y, scientific_mask):
+                    continue
+                track.points.append(
+                    TrackPoint(
+                        track_id=track.track_id,
+                        frame_index=future_frame,
+                        x=match_x,
+                        y=match_y,
+                        confidence=confidence,
+                        recovered_with_lookahead=True,
+                    )
+                )
+                future_claims.append((match_x, match_y))
+                recovered = True
+                break
+            if recovered:
+                continue
+
             track.active = False
-            track.end_reason = f"lost_at_frame_{next_frame}"
+            if last_lookahead_frame > next_frame:
+                track.end_reason = (
+                    f"lost_after_lookahead_from_frame_{prev_point.frame_index}"
+                )
+            else:
+                track.end_reason = f"lost_at_frame_{next_frame}"
 
     for track in tracks:
         if track.active:
