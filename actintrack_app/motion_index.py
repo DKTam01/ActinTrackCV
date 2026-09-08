@@ -778,7 +778,6 @@ def _refine_starting_point_with_filament_support(
 
     probe = 5.0
     forward = major / max(float(np.linalg.norm(major)), 1e-6)
-    probe = 5.0
 
     def _supported_probe(dir_sign: float) -> float | None:
         tx = x + (forward[0] * probe * dir_sign)

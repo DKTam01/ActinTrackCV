@@ -73,3 +73,6 @@ models/
 outputs/
 local_context/
 /actintrackcv_macos_exports/
+
+# Local editor and development-assistant configuration
+.cursor/
