@@ -12,6 +12,7 @@ import numpy as np
 from actintrack_app.export_naming import motion_index_summary_json_path
 from actintrack_app.gui_result_loaders import (
     load_latest_optical_flow_result_view,
+    load_latest_structural_orientation_result_view,
     load_latest_tracking_result_view,
     motion_index_summary_path_for_sample,
 )
@@ -19,7 +20,11 @@ from actintrack_app.motion_index import MotionIndexParams, PointTrack
 from actintrack_app.optical_flow_motion_index import OpticalFlowResult
 from actintrack_app.preview_workflow import CroppedPreviewAnalysis
 from actintrack_app.project_manager import get_processed_batch_dir
-from actintrack_app.schema_compat import draft_optical_flow_path, draft_tracking_path
+from actintrack_app.schema_compat import (
+    draft_optical_flow_path,
+    draft_structural_orientation_path,
+    draft_tracking_path,
+)
 from actintrack_app.utils import STATUS_MOTION_INDEX_FAILED
 
 
@@ -287,6 +292,54 @@ class OpticalFlowLoaderPriorityTests(unittest.TestCase):
             cached_result=_optical_flow_result(general_movement=2.0),
         )
         self.assertEqual(view.general_movement, 2.0)
+
+
+class StructuralOrientationLoaderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.sample_id = "sample_1"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_draft_loads_canonical_fields(self) -> None:
+        path = draft_structural_orientation_path(self.root, self.sample_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "has_valid_result": True,
+                    "median_angle_relative_nucleus_deg": 55.5,
+                    "mean_angle_relative_nucleus_deg": 50.0,
+                    "measurement_count": 11,
+                    "mean_coherence": 0.66,
+                }
+            ),
+            encoding="utf-8",
+        )
+        view = load_latest_structural_orientation_result_view(
+            self.sample_id,
+            project_root=self.root,
+        )
+        assert view is not None
+        self.assertEqual(view.status, "success")
+        self.assertEqual(view.median_angle_deg, 55.5)
+        self.assertEqual(view.measurement_count, 11)
+
+    def test_missing_draft_returns_none(self) -> None:
+        view = load_latest_structural_orientation_result_view(
+            self.sample_id,
+            project_root=self.root,
+        )
+        self.assertIsNone(view)
+
+    def test_none_project_root_returns_none(self) -> None:
+        view = load_latest_structural_orientation_result_view(
+            self.sample_id,
+            project_root=None,
+        )
+        self.assertIsNone(view)
 
 
 if __name__ == "__main__":

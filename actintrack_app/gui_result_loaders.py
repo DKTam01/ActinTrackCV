@@ -10,10 +10,12 @@ from actintrack_app.export_naming import motion_index_summary_json_path
 from actintrack_app.gui_result_views import (
     OpticalFlowResultView,
     SampleTrackingResultView,
+    StructuralOrientationResultView,
     optical_flow_result_view_from_dict,
     optical_flow_result_view_from_result,
     tracking_result_view_from_dict,
     tracking_result_view_from_preview,
+    structural_orientation_view_from_dict,
 )
 from actintrack_app.optical_flow_motion_index import OpticalFlowResult
 from actintrack_app.preview_workflow import CroppedPreviewAnalysis
@@ -93,3 +95,24 @@ def load_latest_optical_flow_result_view(
     if cached_result is not None:
         return optical_flow_result_view_from_result(cached_result)
     return None
+
+
+def load_latest_structural_orientation_result_view(
+    sample_id: str,
+    *,
+    project_root: Path | None,
+) -> StructuralOrientationResultView | None:
+    if project_root is None:
+        return None
+    from actintrack_app.schema_compat import (
+        resolve_draft_structural_orientation_path,
+    )
+
+    path = resolve_draft_structural_orientation_path(project_root, sample_id)
+    if path is None:
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return structural_orientation_view_from_dict(data)
+    except (OSError, json.JSONDecodeError):
+        return None

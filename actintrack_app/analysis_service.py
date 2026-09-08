@@ -49,6 +49,13 @@ class SampleMetrics:
     of_valid_pixel_fraction: Optional[float] = None
     of_has_valid_result: bool = False
     of_failure_reason: str = ""
+    toward_nucleus_velocity: Optional[float] = None
+    orientation_mean_deg: Optional[float] = None
+    orientation_median_deg: Optional[float] = None
+    orientation_measurement_count: Optional[int] = None
+    orientation_mean_coherence: Optional[float] = None
+    orientation_has_valid_result: bool = False
+    orientation_failure_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,6 +85,9 @@ class BreedSummaryRow:
     avg_of_directionality_ratio: Optional[float] = None
     avg_of_valid_pixel_fraction: Optional[float] = None
     samples_with_of_results: int = 0
+    avg_toward_nucleus_velocity: Optional[float] = None
+    avg_orientation_median_deg: Optional[float] = None
+    samples_with_orientation_results: int = 0
 
 
 @dataclass(frozen=True)
@@ -87,6 +97,9 @@ class BreedComparisonRow:
     avg_downward_velocity: Optional[float] = None
     avg_general_movement: Optional[float] = None
     avg_motion_index: Optional[float] = None
+    avg_toward_nucleus_velocity: Optional[float] = None
+    avg_orientation_median_deg: Optional[float] = None
+    avg_of_general_movement: Optional[float] = None
     valid_sample_count: int = 0
 
 
@@ -121,6 +134,15 @@ def _motion_index_path_for_row(root: Path, row: dict[str, Any]) -> Optional[Path
         final_name,
     )
     return path if path.is_file() else None
+
+
+def _optional_number(value: Any) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_tracking_payload(data: dict[str, Any], *, source_path: Path) -> SampleMetrics:
@@ -170,6 +192,9 @@ def _parse_tracking_payload(data: dict[str, Any], *, source_path: Path) -> Sampl
         confidence=confidence,
         result_updated_at=updated,
         has_valid_result=True,
+        toward_nucleus_velocity=_optional_number(
+            data.get("toward_nucleus_velocity_um_per_s")
+        ),
     )
 
 
@@ -251,9 +276,46 @@ def load_optical_flow_metrics_for_sample(root: Path, sample_id: str) -> SampleMe
     return SampleMetrics(of_has_valid_result=False)
 
 
+def load_structural_orientation_metrics_for_sample(
+    root: Path,
+    sample_id: str,
+) -> SampleMetrics:
+    from actintrack_app.schema_compat import (
+        resolve_draft_structural_orientation_path,
+    )
+
+    path = resolve_draft_structural_orientation_path(root, sample_id)
+    if path is None:
+        return SampleMetrics(orientation_has_valid_result=False)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return SampleMetrics(
+            orientation_has_valid_result=False,
+            orientation_failure_reason="Structural orientation result is unreadable.",
+        )
+    if not data.get("has_valid_result"):
+        return SampleMetrics(
+            orientation_has_valid_result=False,
+            orientation_failure_reason=str(data.get("failure_reason", "")),
+        )
+    return SampleMetrics(
+        orientation_mean_deg=_optional_number(
+            data.get("mean_angle_relative_nucleus_deg")
+        ),
+        orientation_median_deg=_optional_number(
+            data.get("median_angle_relative_nucleus_deg")
+        ),
+        orientation_measurement_count=int(data.get("measurement_count", 0) or 0),
+        orientation_mean_coherence=_optional_number(data.get("mean_coherence")),
+        orientation_has_valid_result=True,
+    )
+
+
 def _merge_sample_metrics(
     template: SampleMetrics,
     optical_flow: SampleMetrics,
+    structural_orientation: SampleMetrics,
 ) -> SampleMetrics:
     return SampleMetrics(
         downward_velocity=template.downward_velocity,
@@ -272,6 +334,21 @@ def _merge_sample_metrics(
         of_valid_pixel_fraction=optical_flow.of_valid_pixel_fraction,
         of_has_valid_result=optical_flow.of_has_valid_result,
         of_failure_reason=optical_flow.of_failure_reason,
+        toward_nucleus_velocity=template.toward_nucleus_velocity,
+        orientation_mean_deg=structural_orientation.orientation_mean_deg,
+        orientation_median_deg=structural_orientation.orientation_median_deg,
+        orientation_measurement_count=(
+            structural_orientation.orientation_measurement_count
+        ),
+        orientation_mean_coherence=(
+            structural_orientation.orientation_mean_coherence
+        ),
+        orientation_has_valid_result=(
+            structural_orientation.orientation_has_valid_result
+        ),
+        orientation_failure_reason=(
+            structural_orientation.orientation_failure_reason
+        ),
     )
 
 
@@ -334,7 +411,16 @@ def compute_sample_analysis(
         if primary_id
         else SampleMetrics(of_has_valid_result=False)
     )
-    metrics = _merge_sample_metrics(template_metrics, of_metrics)
+    orientation_metrics = (
+        load_structural_orientation_metrics_for_sample(root, primary_id)
+        if primary_id
+        else SampleMetrics(orientation_has_valid_result=False)
+    )
+    metrics = _merge_sample_metrics(
+        template_metrics,
+        of_metrics,
+        orientation_metrics,
+    )
     proc_status = str(primary.get("processing_status", "")).strip()
     return SampleAnalysisRow(
         breed=breed,
@@ -395,6 +481,19 @@ def compute_breed_analysis(
         for r in of_valid
         if r.metrics.of_valid_pixel_fraction is not None
     ]
+    toward_nucleus = [
+        r.metrics.toward_nucleus_velocity
+        for r in valid
+        if r.metrics.toward_nucleus_velocity is not None
+    ]
+    orientation_valid = [
+        r for r in sample_rows if r.metrics.orientation_has_valid_result
+    ]
+    orientation_medians = [
+        r.metrics.orientation_median_deg
+        for r in orientation_valid
+        if r.metrics.orientation_median_deg is not None
+    ]
 
     return BreedSummaryRow(
         breed=breed,
@@ -411,6 +510,9 @@ def compute_breed_analysis(
         avg_of_directionality_ratio=_mean(of_dir),
         avg_of_valid_pixel_fraction=_mean(of_valid_frac),
         samples_with_of_results=len(of_valid),
+        avg_toward_nucleus_velocity=_mean(toward_nucleus),
+        avg_orientation_median_deg=_mean(orientation_medians),
+        samples_with_orientation_results=len(orientation_valid),
     )
 
 
@@ -436,6 +538,13 @@ def build_breed_comparisons(summaries: list[BreedSummaryRow]) -> list[BreedCompa
                 avg_downward_velocity=summary.avg_downward_velocity,
                 avg_general_movement=summary.avg_general_movement,
                 avg_motion_index=summary.avg_motion_index,
+                avg_toward_nucleus_velocity=(
+                    summary.avg_toward_nucleus_velocity
+                ),
+                avg_orientation_median_deg=(
+                    summary.avg_orientation_median_deg
+                ),
+                avg_of_general_movement=summary.avg_of_general_movement,
                 valid_sample_count=summary.samples_with_results,
             )
         )

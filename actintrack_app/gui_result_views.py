@@ -1,4 +1,4 @@
-"""Display DTOs and formatting for template-tracking / optical-flow result panels."""
+"""Display DTOs and formatting for sparse-tracking / orientation / optical-flow panels."""
 
 from __future__ import annotations
 
@@ -34,6 +34,16 @@ class OpticalFlowResultView:
     directionality_ratio: Optional[float] = None
     valid_pixel_fraction: Optional[float] = None
     saturated_pixel_fraction: Optional[float] = None
+    failure_reason: str = ""
+
+
+@dataclass
+class StructuralOrientationResultView:
+    status: str  # success, failed, none
+    median_angle_deg: Optional[float] = None
+    mean_angle_deg: Optional[float] = None
+    measurement_count: int = 0
+    mean_coherence: Optional[float] = None
     failure_reason: str = ""
 
 
@@ -146,10 +156,34 @@ def optical_flow_result_view_from_result(
     )
 
 
+def structural_orientation_view_from_dict(
+    data: dict[str, Any],
+) -> StructuralOrientationResultView:
+    if not data.get("has_valid_result"):
+        return StructuralOrientationResultView(
+            status="failed",
+            failure_reason=str(data.get("failure_reason", "")).strip(),
+        )
+    return StructuralOrientationResultView(
+        status="success",
+        median_angle_deg=optional_gui_float(
+            data.get("median_angle_relative_nucleus_deg")
+        ),
+        mean_angle_deg=optional_gui_float(
+            data.get("mean_angle_relative_nucleus_deg")
+        ),
+        measurement_count=int(data.get("measurement_count", 0) or 0),
+        mean_coherence=optional_gui_float(data.get("mean_coherence")),
+    )
+
+
 def format_tracking_result_panel_lines(
     template_view: Optional[SampleTrackingResultView],
     optical_flow_view: Optional[OpticalFlowResultView],
     *,
+    structural_orientation_view: Optional[
+        StructuralOrientationResultView
+    ] = None,
     template_stale: bool = False,
     optical_flow_stale: bool = False,
     optical_flow_qc_status: str,
@@ -157,7 +191,7 @@ def format_tracking_result_panel_lines(
 ) -> str:
     lines: list[str] = []
 
-    lines.append("Template Tracking Motion Index")
+    lines.append("Sparse Tracking")
     if template_stale:
         lines.append("May not match current settings.")
     elif template_view is None or template_view.status == "none":
@@ -174,7 +208,7 @@ def format_tracking_result_panel_lines(
                 f"{template_view.tracks_requested}"
             )
         result_lines = [
-            f"Absolute Velocity: {template_view.general_movement:.4f} µm/s",
+            f"General Movement: {template_view.general_movement:.4f} µm/s",
         ]
         if template_view.toward_nucleus_velocity is not None:
             result_lines.append(
@@ -184,7 +218,8 @@ def format_tracking_result_panel_lines(
             )
         result_lines.extend(
             [
-                f"Downward Velocity: {template_view.downward_velocity:.4f} µm/s",
+                "Legacy Downward Velocity: "
+                f"{template_view.downward_velocity:.4f} µm/s",
                 tracks_line,
                 f"Valid Steps: {template_view.valid_steps}",
             ]
@@ -192,7 +227,30 @@ def format_tracking_result_panel_lines(
         lines.extend(result_lines)
 
     lines.append("")
-    lines.append("Optical Flow Motion Index (Draft)")
+    lines.append("F-actin Orientation Relative to Nucleus")
+    if (
+        structural_orientation_view is None
+        or structural_orientation_view.status == "none"
+    ):
+        lines.append("Not generated yet")
+    elif structural_orientation_view.status == "failed":
+        lines.append("Not available")
+        if structural_orientation_view.failure_reason:
+            lines.append(structural_orientation_view.failure_reason)
+    else:
+        lines.extend(
+            [
+                "Median Structural Angle: "
+                f"{fmt_optional_float(structural_orientation_view.median_angle_deg, places=2)}° "
+                "(0–90°; 0=radial to nucleus)",
+                f"Local Measurements: {structural_orientation_view.measurement_count}",
+                "Mean Coherence: "
+                f"{fmt_optional_float(structural_orientation_view.mean_coherence, places=3)}",
+            ]
+        )
+
+    lines.append("")
+    lines.append("Optical Flow")
     lines.append(f"Status: {optical_flow_qc_status}")
     if optical_flow_stale:
         lines.append("May not match current settings.")
@@ -208,8 +266,10 @@ def format_tracking_result_panel_lines(
             [
                 f"Frame pairs used: {optical_flow_frame_pair_count}",
                 f"General Movement: {fmt_optional_float(optical_flow_view.general_movement)} µm/s",
-                f"Downward Motion: {fmt_optional_float(optical_flow_view.downward_motion)} µm/s",
-                f"Net Y Velocity: {fmt_optional_float(optical_flow_view.net_y_velocity)} µm/s",
+                "Legacy Downward Motion: "
+                f"{fmt_optional_float(optical_flow_view.downward_motion)} µm/s",
+                "Legacy Net Y Velocity: "
+                f"{fmt_optional_float(optical_flow_view.net_y_velocity)} µm/s",
                 f"Directionality Ratio: {fmt_optional_float(optical_flow_view.directionality_ratio)}",
                 f"Valid Pixel Fraction: {fmt_optional_float(optical_flow_view.valid_pixel_fraction)}",
             ]

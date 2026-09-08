@@ -9,12 +9,14 @@ import numpy as np
 from actintrack_app.gui_result_views import (
     OpticalFlowResultView,
     SampleTrackingResultView,
+    StructuralOrientationResultView,
     fmt_optional_float,
     format_tracking_result_panel_lines,
     is_tracking_failed,
     optical_flow_result_view_from_dict,
     optical_flow_result_view_from_result,
     optional_gui_float,
+    structural_orientation_view_from_dict,
     tracking_result_view_from_dict,
     tracking_result_view_from_preview,
 )
@@ -174,12 +176,13 @@ class FormatTrackingResultPanelLinesTests(unittest.TestCase):
             optical_flow_qc_status="Not computed",
             optical_flow_frame_pair_count="—",
         )
-        self.assertIn("Template Tracking Motion Index", text)
-        self.assertIn("Absolute Velocity: 0.5678 µm/s", text)
-        self.assertIn("Downward Velocity: 0.1234 µm/s", text)
+        self.assertIn("Sparse Tracking", text)
+        self.assertIn("General Movement: 0.5678 µm/s", text)
+        self.assertIn("Legacy Downward Velocity: 0.1234 µm/s", text)
         self.assertIn("Tracks Used: 3 / 5", text)
         self.assertIn("Valid Steps: 10", text)
-        self.assertIn("Optical Flow Motion Index (Draft)", text)
+        self.assertIn("F-actin Orientation Relative to Nucleus", text)
+        self.assertIn("Optical Flow", text)
         self.assertIn("Status: Not computed", text)
         self.assertIn("Not generated yet", text)
 
@@ -226,11 +229,51 @@ class FormatTrackingResultPanelLinesTests(unittest.TestCase):
         self.assertIn("Status: Pass", text)
         self.assertIn("Frame pairs used: 3", text)
         self.assertIn("General Movement: 1.0000 µm/s", text)
-        self.assertIn("Downward Motion: 0.8000 µm/s", text)
-        self.assertIn("Net Y Velocity: 0.6000 µm/s", text)
+        self.assertIn("Legacy Downward Motion: 0.8000 µm/s", text)
+        self.assertIn("Legacy Net Y Velocity: 0.6000 µm/s", text)
         self.assertIn("Directionality Ratio: 0.5000", text)
         self.assertIn("Valid Pixel Fraction: 0.9000", text)
         self.assertIn("Saturated Pixel Fraction: 0.0200", text)
+
+    def test_structural_orientation_success(self) -> None:
+        orientation = StructuralOrientationResultView(
+            status="success",
+            median_angle_deg=42.5,
+            mean_angle_deg=40.0,
+            measurement_count=12,
+            mean_coherence=0.81,
+        )
+        text = format_tracking_result_panel_lines(
+            None,
+            None,
+            structural_orientation_view=orientation,
+            optical_flow_qc_status="Not computed",
+            optical_flow_frame_pair_count="—",
+        )
+        self.assertIn("F-actin Orientation Relative to Nucleus", text)
+        self.assertIn("Median Structural Angle: 42.50°", text)
+        self.assertIn("0–90°", text)
+        self.assertIn("Local Measurements: 12", text)
+        self.assertIn("Mean Coherence: 0.810", text)
+
+    def test_structural_orientation_from_dict_legacy_missing(self) -> None:
+        failed = structural_orientation_view_from_dict(
+            {"has_valid_result": False, "failure_reason": "Nucleus missing"}
+        )
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.failure_reason, "Nucleus missing")
+        ok = structural_orientation_view_from_dict(
+            {
+                "has_valid_result": True,
+                "median_angle_relative_nucleus_deg": 33.3,
+                "mean_angle_relative_nucleus_deg": 30.0,
+                "measurement_count": 7,
+                "mean_coherence": 0.55,
+            }
+        )
+        self.assertEqual(ok.status, "success")
+        self.assertEqual(ok.median_angle_deg, 33.3)
+        self.assertEqual(ok.measurement_count, 7)
 
     def test_optical_flow_failed(self) -> None:
         optical = OpticalFlowResultView(

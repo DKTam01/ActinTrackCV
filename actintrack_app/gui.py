@@ -284,11 +284,13 @@ from actintrack_app.video_processing import MediaLoadError, load_media_frame
 from actintrack_app import gui_dialogs
 from actintrack_app.gui_result_loaders import (
     load_latest_optical_flow_result_view,
+    load_latest_structural_orientation_result_view,
     load_latest_tracking_result_view,
 )
 from actintrack_app.gui_result_views import (
     OpticalFlowResultView,
     SampleTrackingResultView,
+    StructuralOrientationResultView,
     format_tracking_result_panel_lines,
 )
 from actintrack_app.debug_log import breadcrumb
@@ -1578,6 +1580,9 @@ class MainWindow(QMainWindow):
         self,
         template_view: Optional[SampleTrackingResultView],
         optical_flow_view: Optional[OpticalFlowResultView],
+        structural_orientation_view: Optional[
+            StructuralOrientationResultView
+        ] = None,
         *,
         template_stale: bool = False,
         optical_flow_stale: bool = False,
@@ -1595,6 +1600,7 @@ class MainWindow(QMainWindow):
         text = format_tracking_result_panel_lines(
             template_view,
             optical_flow_view,
+            structural_orientation_view=structural_orientation_view,
             template_stale=template_stale,
             optical_flow_stale=optical_flow_stale,
             optical_flow_qc_status=of_status,
@@ -1616,6 +1622,10 @@ class MainWindow(QMainWindow):
         self._render_tracking_result_panel(
             self.load_latest_tracking_result_for_sample(sid),
             self.load_latest_optical_flow_result_for_sample(sid),
+            load_latest_structural_orientation_result_view(
+                sid,
+                project_root=self._project_root,
+            ),
             template_stale=bool(self._tracking_result_stale_by_sample.get(sid)),
             optical_flow_stale=bool(self._optical_flow_stale_by_sample.get(sid)),
         )
