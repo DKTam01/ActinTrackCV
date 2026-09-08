@@ -28,6 +28,7 @@ V1_BACKUP_DIR = ".v1_backup"
 BATCHES_JSON = "batches.json"
 DRAFT_TRACKING_DIR = "draft_tracking"
 DRAFT_OPTICAL_FLOW_DIR = "draft_optical_flow"
+DRAFT_STRUCTURAL_ORIENTATION_DIR = "draft_structural_orientation"
 
 
 def _utc_now_iso() -> str:
@@ -316,6 +317,23 @@ def resolve_draft_optical_flow_path(root: Path, data_id: str) -> Path | None:
     root = Path(root).resolve()
     primary = draft_optical_flow_path(root, data_id)
     return primary if primary.is_file() else None
+
+
+def draft_structural_orientation_path(root: Path, data_id: str) -> Path:
+    return (
+        Path(root).resolve()
+        / METADATA_DIR
+        / DRAFT_STRUCTURAL_ORIENTATION_DIR
+        / f"{data_id}.json"
+    )
+
+
+def resolve_draft_structural_orientation_path(
+    root: Path,
+    data_id: str,
+) -> Path | None:
+    path = draft_structural_orientation_path(root, data_id)
+    return path if path.is_file() else None
 
 
 def migrate_draft_tracking_filenames(root: Path, id_map: dict[str, str]) -> int:

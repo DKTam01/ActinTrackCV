@@ -35,7 +35,11 @@ from actintrack_app.purge_manager import (
     collect_processed_artifacts_for_sample,
     complete_batch_purge,
 )
-from actintrack_app.schema_compat import draft_optical_flow_path, draft_tracking_path
+from actintrack_app.schema_compat import (
+    draft_optical_flow_path,
+    draft_structural_orientation_path,
+    draft_tracking_path,
+)
 from actintrack_app.utils import (
     METADATA_DIR,
     SAMPLES_CSV,
@@ -208,6 +212,9 @@ def sample_has_derived_state(root: Path, sample_id: str) -> bool:
     of_draft = draft_optical_flow_path(root, sample_id)
     if of_draft.is_file():
         return True
+    orientation_draft = draft_structural_orientation_path(root, sample_id)
+    if orientation_draft.is_file():
+        return True
     row = _row_by_sample_id(root, sample_id)
     if not row:
         return False
@@ -247,6 +254,10 @@ def clear_sample_derived_state(root: Path, sample_id: str) -> None:
     of_draft = draft_optical_flow_path(root, sample_id)
     if of_draft.is_file():
         of_draft.unlink(missing_ok=True)
+
+    orientation_draft = draft_structural_orientation_path(root, sample_id)
+    if orientation_draft.is_file():
+        orientation_draft.unlink(missing_ok=True)
 
     for path in collect_processed_artifacts_for_sample(root, row):
         if path.is_file():

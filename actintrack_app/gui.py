@@ -243,6 +243,10 @@ from actintrack_app.optical_flow_overlay import (
     render_optical_flow_overlay,
     resolve_qc_status,
 )
+from actintrack_app.structural_orientation import (
+    StructuralOrientationResult,
+    compute_structural_orientation,
+)
 from actintrack_app.preview_workflow import (
     CroppedPreviewAnalysis,
     analyze_cropped_preview,
@@ -1318,6 +1322,26 @@ class MainWindow(QMainWindow):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(result_to_dict(result), indent=2), encoding="utf-8")
 
+    def _draft_structural_orientation_json_path(self, data_id: str) -> Path:
+        assert self._project_root is not None
+        from actintrack_app.schema_compat import draft_structural_orientation_path
+
+        return draft_structural_orientation_path(self._project_root, data_id)
+
+    def _save_draft_structural_orientation_result(
+        self,
+        sample_id: str,
+        result: StructuralOrientationResult,
+    ) -> None:
+        if self._project_root is None:
+            return
+        path = self._draft_structural_orientation_json_path(sample_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(result.summary_dict(), indent=2),
+            encoding="utf-8",
+        )
+
     def _invalidate_optical_flow_for_sample(self, sample_id: str) -> None:
         self._optical_flow_results_by_sample.pop(sample_id, None)
         self._optical_flow_stale_by_sample.pop(sample_id, None)
@@ -1329,6 +1353,16 @@ class MainWindow(QMainWindow):
                     draft_path.unlink()
                 except OSError:
                     pass
+
+    def _invalidate_structural_orientation_for_sample(self, sample_id: str) -> None:
+        if self._project_root is None:
+            return
+        draft_path = self._draft_structural_orientation_json_path(sample_id)
+        if draft_path.is_file():
+            try:
+                draft_path.unlink()
+            except OSError:
+                pass
 
     def _clear_of_flow_cache(self, sample_id: Optional[str] = None) -> None:
         if sample_id is None:
@@ -1656,6 +1690,7 @@ class MainWindow(QMainWindow):
                 except OSError:
                     pass
         self._invalidate_optical_flow_for_sample(sample_id)
+        self._invalidate_structural_orientation_for_sample(sample_id)
 
     # ----- Decoupled per-Sample metric calculation -------------------------
     # Explicit Run Metrics computes from each Sample's saved orientation and ROI
@@ -1729,6 +1764,17 @@ class MainWindow(QMainWindow):
         ann = get_sample_annotation(self._project_root, sample_id)
         nucleus = nucleus_reference_from_annotation(ann)
         return nucleus.to_crop_local(crop) if nucleus is not None else None
+
+    def _saved_reference_frame_index_for_sample(self, sample_id: str) -> int:
+        if self._project_root is None:
+            return 0
+        ann = get_sample_annotation(self._project_root, sample_id)
+        if not ann:
+            return 0
+        try:
+            return max(0, int(ann.get("reference_frame_index", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
 
     def _sample_video_path(self, sample_id: str) -> Optional[Path]:
         row = self._persisted_sample_row_for_id(sample_id)
@@ -1863,6 +1909,10 @@ class MainWindow(QMainWindow):
             frames = load_cropped_frames_from_video(path, orientation, roi)
             valid_mask = self._saved_scientific_valid_mask_for_sample(sample_id, roi)
             nucleus_xy_px = self._saved_nucleus_xy_crop_local(sample_id, roi)
+            reference_frame_index = min(
+                self._saved_reference_frame_index_for_sample(sample_id),
+                len(frames) - 1,
+            )
             try:
                 analysis = analyze_cropped_preview(
                     frames,
@@ -1875,6 +1925,20 @@ class MainWindow(QMainWindow):
                     had_error = True
                 else:
                     ok_any = True
+            except Exception:
+                had_error = True
+            try:
+                orientation_result = compute_structural_orientation(
+                    frames[reference_frame_index],
+                    nucleus_xy_px=nucleus_xy_px,
+                    valid_mask=valid_mask,
+                    sample_id=sample_id,
+                    reference_frame_index=reference_frame_index,
+                )
+                self._save_draft_structural_orientation_result(
+                    sample_id,
+                    orientation_result,
+                )
             except Exception:
                 had_error = True
             roi_bounds = (int(roi.x), int(roi.y), int(roi.width), int(roi.height))

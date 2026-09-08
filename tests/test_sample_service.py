@@ -33,7 +33,11 @@ from actintrack_app.sample_service import (
     sample_has_derived_state,
     validate_av_mp4_data_file,
 )
-from actintrack_app.schema_compat import draft_optical_flow_path, draft_tracking_path
+from actintrack_app.schema_compat import (
+    draft_optical_flow_path,
+    draft_structural_orientation_path,
+    draft_tracking_path,
+)
 from actintrack_app.utils import DATA_FILES_CSV, METADATA_DIR, SAMPLE_REGISTRY_JSON
 
 
@@ -136,8 +140,15 @@ class SampleServiceTests(unittest.TestCase):
             sid,
             {"sample_id": sid, "group": self.breed, "status": "roi_marked"},
         )
+        orientation_draft = draft_structural_orientation_path(self.root, sid)
+        orientation_draft.parent.mkdir(parents=True, exist_ok=True)
+        orientation_draft.write_text(
+            '{"has_valid_result": true}',
+            encoding="utf-8",
+        )
         clear_sample_derived_state(self.root, sid)
         self.assertIsNone(get_sample_annotation(self.root, sid))
+        self.assertFalse(orientation_draft.exists())
         self.assertFalse(sample_has_derived_state(self.root, sid))
 
     def test_delete_sample_and_artifacts(self) -> None:
