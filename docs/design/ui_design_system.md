@@ -329,9 +329,9 @@ Stage 1 should preserve:
 
 ---
 
-## Cursor Usage
+## Contributor UI-change checklist
 
-When using Cursor on UI work:
+When changing Workbench UI:
 
 1. Reference this document.
 2. Begin with a read-only audit before editing.
@@ -341,7 +341,7 @@ When using Cursor on UI work:
 6. Do not redesign Analysis metrics unless explicitly requested.
 7. Do not commit unless explicitly approved.
 
-Example prompt fragment:
+Example task fragment:
 
 ```text
 Workbench Stage 1 UI task. Follow docs/design/ui_design_system.md.
