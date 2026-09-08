@@ -212,6 +212,7 @@ from actintrack_app.scientific_annotations import (
     reorient_cell_region,
     reorient_cutoff_boundary,
     reorient_nucleus_reference,
+    scientific_valid_mask_for_tracking,
     valid_mask_crop_local,
 )
 from actintrack_app.project_manager import (
@@ -1670,6 +1671,28 @@ class MainWindow(QMainWindow):
         orientation, roi = annotation_from_legacy(ann)
         return orientation, roi
 
+    def _saved_scientific_valid_mask_for_sample(
+        self, sample_id: str, crop: RectROI
+    ) -> np.ndarray | None:
+        """Static crop-local scientific mask from SAVED annotations.
+
+        Missing CellRegion/cutoff uses R2 fallback semantics (no fabricated
+        exclusions). Returns None only when no annotation document exists,
+        which is equivalent to an all-True scientific domain.
+        """
+        if self._project_root is None:
+            return None
+        ann = get_sample_annotation(self._project_root, sample_id)
+        if not ann:
+            return None
+        mask = scientific_valid_mask_for_tracking(crop, ann)
+        h, w = int(crop.height), int(crop.width)
+        if mask.shape != (h, w):
+            raise ValueError(
+                f"Scientific valid_mask shape {mask.shape} does not match crop {(h, w)}."
+            )
+        return mask
+
     def _sample_video_path(self, sample_id: str) -> Optional[Path]:
         row = self._persisted_sample_row_for_id(sample_id)
         project_root = self._workspace_project_root()
@@ -1801,8 +1824,11 @@ class MainWindow(QMainWindow):
         ok_any = False
         try:
             frames = load_cropped_frames_from_video(path, orientation, roi)
+            valid_mask = self._saved_scientific_valid_mask_for_sample(sample_id, roi)
             try:
-                analysis = analyze_cropped_preview(frames, params=params)
+                analysis = analyze_cropped_preview(
+                    frames, params=params, valid_mask=valid_mask
+                )
                 self._commit_tracking_result_for_sid(sample_id, analysis, params)
                 if analysis.num_tracks_with_valid_steps == 0:
                     had_error = True

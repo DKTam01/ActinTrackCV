@@ -85,6 +85,7 @@ def analyze_cropped_preview(
     frames: list[np.ndarray],
     *,
     params: MotionIndexParams | None = None,
+    valid_mask: np.ndarray | None = None,
 ) -> CroppedPreviewAnalysis:
     """Run draft motion-index tracking on in-memory cropped frames."""
     params = params or MotionIndexParams()
@@ -93,7 +94,9 @@ def analyze_cropped_preview(
 
     warning = ""
     try:
-        starting_points = select_starting_points(frames[0], params)
+        starting_points = select_starting_points(
+            frames[0], params, valid_mask=valid_mask
+        )
     except ValueError as exc:
         return CroppedPreviewAnalysis(
             frames=frames,
@@ -108,6 +111,20 @@ def analyze_cropped_preview(
             params=params,
         )
 
+    if not starting_points:
+        return CroppedPreviewAnalysis(
+            frames=frames,
+            tracks=[],
+            starting_points=[],
+            downward_velocity_index_um_per_s=0.0,
+            general_movement_index_um_per_s=0.0,
+            num_tracks_with_valid_steps=0,
+            total_valid_steps=0,
+            mean_track_length_frames=0.0,
+            tracking_warning="No starting points inside the scientific validity domain.",
+            params=params,
+        )
+
     if len(starting_points) < params.num_starting_points:
         warning = (
             f"Only {len(starting_points)} starting point(s) found "
@@ -115,7 +132,9 @@ def analyze_cropped_preview(
         )
 
     try:
-        tracks = track_points(frames, starting_points, params)
+        tracks = track_points(
+            frames, starting_points, params, valid_mask=valid_mask
+        )
     except ValueError as exc:
         return CroppedPreviewAnalysis(
             frames=frames,

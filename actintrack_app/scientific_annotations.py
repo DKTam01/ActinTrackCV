@@ -317,7 +317,10 @@ def valid_mask_crop_local(
     cell_region: CellRegion | None = None,
     cutoff: CutoffBoundary | None = None,
 ) -> np.ndarray:
-    """Crop-local boolean validity mask for R3 (visualization-only in R2).
+    """Crop-local boolean scientific-validity mask.
+
+    Tracking consumes this mask as a hard spatial domain. Visualization uses
+    the same function so preview and Run Metrics stay aligned.
 
     Semantics, +y downward:
 
@@ -348,6 +351,22 @@ def valid_mask_crop_local(
     oriented_rows = int(crop.y) + np.arange(h)
     row_valid = oriented_rows <= float(cutoff.y)
     return mask & row_valid[:, None]
+
+
+def scientific_valid_mask_for_tracking(
+    crop: RectROI,
+    annotation: dict[str, Any] | None,
+) -> np.ndarray:
+    """Build the static crop-local tracking mask from a saved annotation.
+
+    Missing CellRegion/cutoff keep the R2 fallback semantics (no fabricated
+    exclusions). Callers must not silently resize this mask to a different crop.
+    """
+    return valid_mask_crop_local(
+        crop,
+        cell_region=cell_region_from_annotation(annotation),
+        cutoff=cutoff_boundary_from_annotation(annotation),
+    )
 
 
 def fallback_cell_region(

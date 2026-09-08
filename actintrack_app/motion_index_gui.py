@@ -509,6 +509,12 @@ def run_motion_index_for_sample(
 
     starting_warning = ""
     try:
+        _orientation, saved_roi = window._saved_orientation_roi_for_sample(sample_id)
+        valid_mask = None
+        if saved_roi is not None:
+            valid_mask = window._saved_scientific_valid_mask_for_sample(
+                sample_id, saved_roi
+            )
         result = run_motion_index_analysis(
             selected.path,
             output_dir=out_dir,
@@ -517,6 +523,7 @@ def run_motion_index_for_sample(
             params=params,
             preview_fps=DEFAULT_PREVIEW_FPS,
             frame_paths=list(selected.frame_paths) if selected.frame_paths else None,
+            valid_mask=valid_mask,
         )
         requested = (params or MotionIndexParams()).num_starting_points
         if len(result.tracks) < requested:

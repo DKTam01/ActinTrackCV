@@ -460,12 +460,45 @@ def _signal_confidence(signal: np.ndarray, peak_value: float) -> float:
     return float(np.clip((float(peak_value) - low) / denom, 0.0, 1.0))
 
 
+def _as_scientific_valid_mask(
+    valid_mask: np.ndarray | None,
+    *,
+    height: int,
+    width: int,
+) -> np.ndarray | None:
+    """Return a bool mask of shape (height, width), or None for legacy behavior.
+
+    A mismatched shape is an error. Never silently resize.
+    """
+    if valid_mask is None:
+        return None
+    arr = np.asarray(valid_mask)
+    expected = (int(height), int(width))
+    if arr.shape != expected:
+        raise ValueError(
+            f"valid_mask shape {arr.shape} does not match crop {expected}."
+        )
+    return np.asarray(arr, dtype=np.bool_)
+
+
+def _xy_in_mask(x: float, y: float, mask: np.ndarray | None) -> bool:
+    if mask is None:
+        return True
+    ix = int(round(x))
+    iy = int(round(y))
+    h, w = mask.shape[:2]
+    if ix < 0 or iy < 0 or ix >= w or iy >= h:
+        return False
+    return bool(mask[iy, ix])
+
+
 def _bright_region_centroid(
     signal: np.ndarray,
     peak_x: float,
     peak_y: float,
     *,
     radius_px: int,
+    valid_mask: np.ndarray | None = None,
 ) -> tuple[float, float]:
     """Return a weighted centroid for the bright connected region around a peak."""
     h, w = signal.shape[:2]
@@ -497,6 +530,8 @@ def _bright_region_centroid(
         return float(peak_x), float(peak_y)
 
     mask = labels == peak_label
+    if valid_mask is not None:
+        mask = mask & valid_mask[y0:y1, x0:x1]
     ys, xs = np.where(mask)
     if ys.size == 0:
         return float(peak_x), float(peak_y)
@@ -637,6 +672,8 @@ def _refine_starting_point_with_filament_support(
         high_thresh=high_thresh,
         low_thresh=low_thresh,
     )
+    if valid_mask is not None:
+        local_support = local_support & valid_mask[y0:y1, x0:x1]
     if not np.any(local_support):
         return x, y
 
@@ -824,17 +861,23 @@ def _starting_point_valid_mask(signal: np.ndarray) -> np.ndarray:
 def select_starting_points(
     first_frame: np.ndarray,
     params: MotionIndexParams,
+    *,
+    valid_mask: np.ndarray | None = None,
 ) -> list[tuple[float, float]]:
     """
     Pick bright local maxima from the first frame with minimum spacing.
 
-    Returns (x, y) coordinates in image pixels.
+    Returns (x, y) coordinates in image pixels. ``valid_mask`` is an optional
+    crop-local scientific domain (True = allowed). It is composed with the
+    existing seed-heuristic mask and never invents points outside that domain.
     """
     signal = frame_to_signal(first_frame)
     h, w = signal.shape[:2]
     patch = _odd_size(max(3, params.template_patch_size_px))
     half = patch // 2
-    valid_mask = _starting_point_valid_mask(signal)
+    scientific_mask = _as_scientific_valid_mask(valid_mask, height=h, width=w)
+    seed_mask = _starting_point_valid_mask(signal)
+    composed_mask = seed_mask if scientific_mask is None else (seed_mask & scientific_mask)
 
     mask = _local_maxima_mask(signal, patch_size=5)
     ys, xs = np.where(mask)
@@ -851,17 +894,20 @@ def select_starting_points(
     for idx in order:
         x = float(xs[idx])
         y = float(ys[idx])
+        if not _xy_in_mask(x, y, scientific_mask):
+            continue
         x, y = _bright_region_centroid(
             signal,
             x,
             y,
             radius_px=max(2, half),
+            valid_mask=scientific_mask,
         )
         x, y = _refine_starting_point_with_filament_support(
             signal,
             x,
             y,
-            valid_mask=valid_mask,
+            valid_mask=composed_mask,
             border_half=half,
             search_radius_px=max(
                 half,
@@ -872,7 +918,7 @@ def select_starting_points(
         cy_i = int(round(y))
         if cx_i < 0 or cy_i < 0 or cx_i >= w or cy_i >= h:
             continue
-        if not valid_mask[cy_i, cx_i]:
+        if not composed_mask[cy_i, cx_i]:
             continue
         if x < half or y < half or x >= w - half or y >= h - half:
             continue
@@ -890,6 +936,8 @@ def select_starting_points(
             break
 
     if not selected:
+        if scientific_mask is not None:
+            return []
         raise ValueError("No valid starting points after spacing and border checks.")
     return selected
 
@@ -917,6 +965,7 @@ def _match_template_in_window(
     *,
     blocked_points: Sequence[tuple[float, float]] = (),
     blocked_radius_px: float = 0.0,
+    valid_mask: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     h, w = frame_signal.shape[:2]
     patch_h, patch_w = template.shape[:2]
@@ -942,12 +991,17 @@ def _match_template_in_window(
         y_loc, x_loc = np.unravel_index(int(flat_idx), result.shape)
         match_x = float(x0 + x_loc + half_x)
         match_y = float(y0 + y_loc + half_y)
+        if not _xy_in_mask(match_x, match_y, valid_mask):
+            continue
         refined_x, refined_y = _bright_region_centroid(
             frame_signal,
             match_x,
             match_y,
             radius_px=max(2, min(half_x, half_y)),
+            valid_mask=valid_mask,
         )
+        if not _xy_in_mask(refined_x, refined_y, valid_mask):
+            continue
         if _too_close_to_blocked(
             refined_x,
             refined_y,
@@ -968,6 +1022,7 @@ def _brightest_point_in_window(
     centroid_radius_px: int,
     blocked_points: Sequence[tuple[float, float]] = (),
     blocked_radius_px: float = 0.0,
+    valid_mask: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     h, w = frame_signal.shape[:2]
     cx = int(round(center_x))
@@ -981,10 +1036,24 @@ def _brightest_point_in_window(
     if region.size == 0:
         return center_x, center_y, -1.0
 
-    mask = _local_maxima_mask(region, patch_size=3)
-    ys, xs = np.where(mask)
+    local_valid = None
+    if valid_mask is not None:
+        local_valid = valid_mask[y0:y1, x0:x1]
+        if not np.any(local_valid):
+            return center_x, center_y, -1.0
+
+    maxima = _local_maxima_mask(region, patch_size=3)
+    if local_valid is not None:
+        maxima = maxima & local_valid
+    ys, xs = np.where(maxima)
     if ys.size == 0:
-        flat = int(np.argmax(region))
+        if local_valid is not None:
+            search = np.where(local_valid, region, -np.inf)
+            if not np.isfinite(search).any():
+                return center_x, center_y, -1.0
+            flat = int(np.argmax(search))
+        else:
+            flat = int(np.argmax(region))
         y_max, x_max = np.unravel_index(flat, region.shape)
         ys = np.array([y_max])
         xs = np.array([x_max])
@@ -995,12 +1064,17 @@ def _brightest_point_in_window(
     for idx in order:
         raw_x = float(x0 + xs[idx])
         raw_y = float(y0 + ys[idx])
+        if not _xy_in_mask(raw_x, raw_y, valid_mask):
+            continue
         x, y = _bright_region_centroid(
             frame_signal,
             raw_x,
             raw_y,
             radius_px=centroid_radius_px,
+            valid_mask=valid_mask,
         )
+        if not _xy_in_mask(x, y, valid_mask):
+            continue
         dx = x - float(center_x)
         dy = y - float(center_y)
         if (dx * dx) + (dy * dy) > max_radius_sq:
@@ -1021,6 +1095,7 @@ def _try_match_step(
     search_radius_px: int,
     blocked_points: Sequence[tuple[float, float]] = (),
     blocked_radius_px: float = 0.0,
+    valid_mask: np.ndarray | None = None,
 ) -> tuple[float, float, float]:
     patch_size = _odd_size(params.template_patch_size_px)
     if params.tracking_method == TRACKING_METHOD_BRIGHTEST_LOCAL:
@@ -1032,6 +1107,7 @@ def _try_match_step(
             centroid_radius_px=max(2, patch_size // 2),
             blocked_points=blocked_points,
             blocked_radius_px=blocked_radius_px,
+            valid_mask=valid_mask,
         )
 
     try:
@@ -1051,6 +1127,7 @@ def _try_match_step(
         search_radius_px,
         blocked_points=blocked_points,
         blocked_radius_px=blocked_radius_px,
+        valid_mask=valid_mask,
     )
 
 
@@ -1058,12 +1135,23 @@ def track_points(
     frames: Sequence[np.ndarray],
     starting_points: Sequence[tuple[float, float]],
     params: MotionIndexParams,
+    *,
+    valid_mask: np.ndarray | None = None,
 ) -> list[PointTrack]:
-    """Track starting bright points across frames using the configured local matcher."""
+    """Track starting bright points across frames using the configured local matcher.
+
+    ``valid_mask`` is an optional static crop-local scientific domain. Accepted
+    positions must remain inside it. Missing/invalid next-frame matches terminate
+    the track (R3 has no gap recovery).
+    """
     if len(frames) < 2:
         raise ValueError("At least two frames are required for tracking.")
 
     signals = [frame_to_signal(frame) for frame in frames]
+    first_h, first_w = signals[0].shape[:2]
+    scientific_mask = _as_scientific_valid_mask(
+        valid_mask, height=first_h, width=first_w
+    )
     claims_by_frame: dict[int, list[tuple[float, float]]] = {}
     blocked_radius = max(2.0, min(10.0, float(params.min_point_spacing_px) * 0.5))
 
@@ -1106,8 +1194,12 @@ def track_points(
                         search_radius_px=params.search_radius_px * frame_gap,
                         blocked_points=frame_claims,
                         blocked_radius_px=blocked_radius,
+                        valid_mask=scientific_mask,
                     )
-                    if confidence >= params.min_template_confidence:
+                    if (
+                        confidence >= params.min_template_confidence
+                        and _xy_in_mask(match_x, match_y, scientific_mask)
+                    ):
                         track.points.append(
                             TrackPoint(
                                 track_id=track.track_id,
@@ -1119,6 +1211,13 @@ def track_points(
                             )
                         )
                         frame_claims.append((match_x, match_y))
+                        continue
+                    if (
+                        confidence >= params.min_template_confidence
+                        and not _xy_in_mask(match_x, match_y, scientific_mask)
+                    ):
+                        track.active = False
+                        track.end_reason = f"invalid_region_at_frame_{next_frame}"
                         continue
                 track.active = False
                 track.end_reason = f"lost_before_frame_{next_frame}"
@@ -1132,9 +1231,14 @@ def track_points(
                 search_radius_px=params.search_radius_px,
                 blocked_points=frame_claims,
                 blocked_radius_px=blocked_radius,
+                valid_mask=scientific_mask,
             )
 
             if confidence >= params.min_template_confidence:
+                if not _xy_in_mask(match_x, match_y, scientific_mask):
+                    track.active = False
+                    track.end_reason = f"invalid_region_at_frame_{next_frame}"
+                    continue
                 track.points.append(
                     TrackPoint(
                         track_id=track.track_id,
@@ -1791,9 +1895,13 @@ def run_motion_index_analysis(
     params: MotionIndexParams | None = None,
     preview_fps: float = 5.0,
     frame_paths: Sequence[Path] | None = None,
+    valid_mask: np.ndarray | None = None,
 ) -> MotionIndexResult:
     """
     Run the full motion-index workflow on one processed ROI video or image sequence.
+
+    ``valid_mask`` is an optional static crop-local scientific domain. When
+    omitted, tracking uses legacy all-allowed spatial behavior.
     """
     params = params or MotionIndexParams()
     source_path = Path(source).resolve()
@@ -1821,11 +1929,13 @@ def run_motion_index_analysis(
             f"{patch} and search radius {radius}."
         )
 
-    starting_points = select_starting_points(first_frame, params)
+    starting_points = select_starting_points(
+        first_frame, params, valid_mask=valid_mask
+    )
     if not starting_points:
         raise ValueError("No bright starting points found in the first frame.")
 
-    tracks = track_points(frames, starting_points, params)
+    tracks = track_points(frames, starting_points, params, valid_mask=valid_mask)
     if not any(len(t.points) >= 2 for t in tracks):
         raise ValueError("No tracks survived with valid motion steps.")
 
