@@ -294,17 +294,18 @@ Use these results as draft comparison metrics. They may not always match visual 
 
 | Setting | Default |
 |---------|---------|
-| Starting points | 5 |
-| Minimum point spacing | 40 px |
-| Search radius | 15 px |
+| Starting points | 10 |
+| Minimum point spacing | 20 px |
+| Search radius | 8 px |
 | Patch size | 11 px |
-| Minimum match confidence | 0.70 |
-| Lookahead frames | 3 |
+| Minimum match confidence | 0.55 |
+| Lookahead frames | 0 |
+| Tracking method | brightest_local |
 | Microns per pixel | 0.2650 |
-| Seconds per frame | 0.2000 |
+| Seconds per frame | 30.0 |
 | Downward direction | `increasing_y` internally |
 
-The `seconds per frame` value is especially important for velocity units. Confirm it against acquisition metadata or lab notes when possible.
+The `seconds per frame` value is especially important for velocity units. The current **30.0 s/frame** default is the documented acquisition hypothesis used by the application; it is **not** automatically proven by encoded playback FPS (often ~6 fps on exported AVI/MP4 files). Confirm against acquisition metadata or lab notes when possible. Values much smaller than ~1 µm/s can indicate a timing/units investigation rather than “no motion.” Sparse tracking and Optical Flow remain separate methods and should not be expected to match numerically. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
 
 ---
 

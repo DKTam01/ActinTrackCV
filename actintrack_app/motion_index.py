@@ -64,6 +64,11 @@ TRACKING_METHOD_BRIGHTEST_LOCAL = "brightest_local"
 TRACKING_METHOD_TEMPLATE = "template"
 TRACKING_METHODS = {TRACKING_METHOD_BRIGHTEST_LOCAL, TRACKING_METHOD_TEMPLATE}
 
+# Additive output schema version for movement definitions/provenance.
+# Does not change accepted mathematics; documents units and aggregation.
+METRIC_DEFINITION_VERSION = 1
+MOVEMENT_OUTPUT_SCHEMA_VERSION = 1
+
 
 @dataclass(frozen=True)
 class MotionIndexParams:
@@ -142,6 +147,51 @@ class VelocitySummary:
 
 
 @dataclass(frozen=True)
+class StepMetrics:
+    """Authoritative per-step absolute XY movement quantities.
+
+    Coordinates are crop-local pixels. Physical conversion uses the supplied
+    microns_per_pixel and seconds_per_frame without additional scale factors.
+    """
+
+    prev_frame_index: int
+    frame_index: int
+    frame_gap: int
+    dx_px: float
+    dy_px: float
+    displacement_px: float
+    dt_s: float
+    dx_um: float
+    dy_um: float
+    displacement_um: float
+    absolute_velocity_um_per_s: float
+    downward_velocity_um_per_s: float
+    motion_angle_deg: float
+    turning_angle_deg: float | None = None
+
+    def as_csv_fields(self) -> dict[str, Any]:
+        return {
+            "prev_frame_index": self.prev_frame_index,
+            "frame_gap": self.frame_gap,
+            "dx_px": round(self.dx_px, 6),
+            "dy_px": round(self.dy_px, 6),
+            "displacement_px": round(self.displacement_px, 6),
+            "dt_s": round(self.dt_s, 6),
+            "dx_um": round(self.dx_um, 6),
+            "dy_um": round(self.dy_um, 6),
+            "displacement_um": round(self.displacement_um, 6),
+            "absolute_velocity_um_per_s": round(self.absolute_velocity_um_per_s, 6),
+            "downward_velocity_um_per_s": round(self.downward_velocity_um_per_s, 6),
+            "motion_angle_deg": round(self.motion_angle_deg, 6),
+            "turning_angle_deg": (
+                round(self.turning_angle_deg, 6)
+                if self.turning_angle_deg is not None
+                else ""
+            ),
+        }
+
+
+@dataclass(frozen=True)
 class ProcessedInputOption:
     """One discoverable processed ROI input for motion-index analysis."""
 
@@ -192,6 +242,34 @@ class MotionIndexResult:
             "frame_height": self.frame_height,
             "analysis_timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "parameters": asdict(self.params),
+            "metric_definition_version": METRIC_DEFINITION_VERSION,
+            "movement_output_schema_version": MOVEMENT_OUTPUT_SCHEMA_VERSION,
+            "movement_definition": {
+                "primary_quantity": "absolute_xy_speed_um_per_s",
+                "coordinate_space": "crop_local_pixels",
+                "formula": (
+                    "displacement_um = hypot(dx_px, dy_px) * microns_per_pixel; "
+                    "speed = displacement_um / (seconds_per_frame * frame_gap)"
+                ),
+                "general_movement_aggregation": (
+                    "unweighted mean of valid per-step absolute speeds "
+                    "(step-weighted; each valid step contributes equally)"
+                ),
+                "time_weighted_aggregation": (
+                    "total_path_length_um / total_tracked_time_s"
+                ),
+                "frame_gap_handling": (
+                    "dt_s = seconds_per_frame * max(1, frame_index_delta); "
+                    "no interpolated fake points"
+                ),
+                "temporal_calibration_note": (
+                    "seconds_per_frame is an analysis input. Encoded video "
+                    "playback FPS is not automatically treated as biological "
+                    "acquisition interval."
+                ),
+                "microns_per_pixel": float(self.params.microns_per_pixel),
+                "seconds_per_frame": float(self.params.seconds_per_frame),
+            },
             "primary_velocity_metric": "absolute_velocity_index_um_per_s",
             "recommended_scalar_speed_metric": "time_weighted_mean_speed_um_per_s",
             "primary_velocity_index_um_per_s": self.general_movement_index_um_per_s,
@@ -1269,6 +1347,68 @@ def _iter_consecutive_points(track: PointTrack) -> list[tuple[TrackPoint, TrackP
     return pairs
 
 
+def compute_step_metrics(
+    prev_pt: TrackPoint,
+    point: TrackPoint,
+    params: MotionIndexParams,
+    *,
+    previous_motion_angle_deg: float | None = None,
+) -> StepMetrics:
+    """Compute absolute XY movement for one consecutive valid track step."""
+    frame_gap = max(1, int(point.frame_index) - int(prev_pt.frame_index))
+    dt_s = float(params.seconds_per_frame) * frame_gap
+    dx_px = float(point.x) - float(prev_pt.x)
+    dy_px = float(point.y) - float(prev_pt.y)
+    displacement_px = float(np.hypot(dx_px, dy_px))
+    mpp = float(params.microns_per_pixel)
+    dx_um = dx_px * mpp
+    dy_um = dy_px * mpp
+    displacement_um = float(np.hypot(dx_um, dy_um))
+    absolute_velocity = displacement_um / dt_s
+    downward_velocity = (dy_um / dt_s) if dy_px > 0 else 0.0
+    motion_angle_deg = float(np.degrees(np.arctan2(dy_px, dx_px)))
+    turning_angle_deg: float | None = None
+    if previous_motion_angle_deg is not None:
+        turning_angle_deg = (
+            (motion_angle_deg - previous_motion_angle_deg + 180.0) % 360.0
+        ) - 180.0
+    return StepMetrics(
+        prev_frame_index=int(prev_pt.frame_index),
+        frame_index=int(point.frame_index),
+        frame_gap=frame_gap,
+        dx_px=dx_px,
+        dy_px=dy_px,
+        displacement_px=displacement_px,
+        dt_s=dt_s,
+        dx_um=dx_um,
+        dy_um=dy_um,
+        displacement_um=displacement_um,
+        absolute_velocity_um_per_s=absolute_velocity,
+        downward_velocity_um_per_s=downward_velocity,
+        motion_angle_deg=motion_angle_deg,
+        turning_angle_deg=turning_angle_deg,
+    )
+
+
+def iter_track_step_metrics(
+    track: PointTrack,
+    params: MotionIndexParams,
+) -> list[StepMetrics]:
+    """Return authoritative step metrics for every consecutive point pair."""
+    steps: list[StepMetrics] = []
+    previous_motion_angle_deg: float | None = None
+    for prev_pt, next_pt in _iter_consecutive_points(track):
+        step = compute_step_metrics(
+            prev_pt,
+            next_pt,
+            params,
+            previous_motion_angle_deg=previous_motion_angle_deg,
+        )
+        steps.append(step)
+        previous_motion_angle_deg = step.motion_angle_deg
+    return steps
+
+
 def _point_step_metrics(
     prev_pt: TrackPoint | None,
     point: TrackPoint,
@@ -1292,41 +1432,12 @@ def _point_step_metrics(
             "turning_angle_deg": "",
         }
 
-    frame_gap = max(1, point.frame_index - prev_pt.frame_index)
-    dt_s = float(params.seconds_per_frame) * frame_gap
-    dx_px = point.x - prev_pt.x
-    dy_px = point.y - prev_pt.y
-    displacement_px = float(np.hypot(dx_px, dy_px))
-    dx_um = dx_px * float(params.microns_per_pixel)
-    dy_um = dy_px * float(params.microns_per_pixel)
-    displacement_um = float(np.hypot(dx_um, dy_um))
-    absolute_velocity = displacement_um / dt_s
-    downward_velocity = (dy_um / dt_s) if dy_px > 0 else 0.0
-    motion_angle_deg = float(np.degrees(np.arctan2(dy_px, dx_px)))
-    turning_angle_deg: float | str = ""
-    if previous_motion_angle_deg is not None:
-        turning_angle_deg = (
-            (motion_angle_deg - previous_motion_angle_deg + 180.0) % 360.0
-        ) - 180.0
-    return {
-        "prev_frame_index": prev_pt.frame_index,
-        "frame_gap": frame_gap,
-        "dx_px": round(dx_px, 6),
-        "dy_px": round(dy_px, 6),
-        "displacement_px": round(displacement_px, 6),
-        "dt_s": round(dt_s, 6),
-        "dx_um": round(dx_um, 6),
-        "dy_um": round(dy_um, 6),
-        "displacement_um": round(displacement_um, 6),
-        "absolute_velocity_um_per_s": round(absolute_velocity, 6),
-        "downward_velocity_um_per_s": round(downward_velocity, 6),
-        "motion_angle_deg": round(motion_angle_deg, 6),
-        "turning_angle_deg": (
-            round(turning_angle_deg, 6)
-            if isinstance(turning_angle_deg, float)
-            else turning_angle_deg
-        ),
-    }
+    return compute_step_metrics(
+        prev_pt,
+        point,
+        params,
+        previous_motion_angle_deg=previous_motion_angle_deg,
+    ).as_csv_fields()
 
 
 def compute_motion_indices(
@@ -1342,9 +1453,6 @@ def compute_motion_indices(
     General Movement / Absolute Velocity Index:
         Mean Euclidean displacement speed in microns/s across all valid steps.
     """
-    mpp = float(params.microns_per_pixel)
-    dt = float(params.seconds_per_frame)
-
     downward_speeds: list[float] = []
     general_speeds: list[float] = []
     track_summaries: list[dict[str, Any]] = []
@@ -1356,26 +1464,16 @@ def compute_motion_indices(
         total_path_um = 0.0
         total_time_s = 0.0
 
-        for prev_pt, next_pt in _iter_consecutive_points(track):
-            frame_gap = max(1, next_pt.frame_index - prev_pt.frame_index)
-            step_dt = dt * frame_gap
-            dx_px = next_pt.x - prev_pt.x
-            dy_px = next_pt.y - prev_pt.y
-            dx_um = dx_px * mpp
-            dy_um = dy_px * mpp
-            displacement_um = float(np.hypot(dx_um, dy_um))
-            speed_general = displacement_um / step_dt
+        for step in iter_track_step_metrics(track, params):
+            track_general.append(step.absolute_velocity_um_per_s)
+            general_speeds.append(step.absolute_velocity_um_per_s)
+            total_path_um += step.displacement_um
+            total_time_s += step.dt_s
 
-            track_general.append(speed_general)
-            general_speeds.append(speed_general)
-            total_path_um += displacement_um
-            total_time_s += step_dt
-
-            if dy_px > 0:
-                speed_down = dy_um / step_dt
-                track_downward.append(speed_down)
-                downward_speeds.append(speed_down)
-                total_downward_um += dy_um
+            if step.dy_px > 0:
+                track_downward.append(step.downward_velocity_um_per_s)
+                downward_speeds.append(step.downward_velocity_um_per_s)
+                total_downward_um += step.dy_um
 
         track_summaries.append(
             {
@@ -1414,8 +1512,6 @@ def compute_velocity_summary(
     are time-weighted, which is important when lookahead creates unequal frame gaps.
     Positive image y is defined as downward.
     """
-    mpp = float(params.microns_per_pixel)
-    seconds_per_frame = float(params.seconds_per_frame)
     step_speeds: list[float] = []
     positive_downward_step_speeds: list[float] = []
     total_path_um = 0.0
@@ -1424,20 +1520,14 @@ def compute_velocity_summary(
     total_time_s = 0.0
 
     for track in tracks:
-        for prev_pt, next_pt in _iter_consecutive_points(track):
-            frame_gap = max(1, next_pt.frame_index - prev_pt.frame_index)
-            step_time_s = seconds_per_frame * frame_gap
-            dx_um = (next_pt.x - prev_pt.x) * mpp
-            dy_um = (next_pt.y - prev_pt.y) * mpp
-            displacement_um = float(np.hypot(dx_um, dy_um))
-
-            step_speeds.append(displacement_um / step_time_s)
-            if dy_um > 0:
-                positive_downward_step_speeds.append(dy_um / step_time_s)
-            total_path_um += displacement_um
-            total_vertical_um += dy_um
-            total_downward_um += max(dy_um, 0.0)
-            total_time_s += step_time_s
+        for step in iter_track_step_metrics(track, params):
+            step_speeds.append(step.absolute_velocity_um_per_s)
+            if step.dy_um > 0:
+                positive_downward_step_speeds.append(step.downward_velocity_um_per_s)
+            total_path_um += step.displacement_um
+            total_vertical_um += step.dy_um
+            total_downward_um += max(step.dy_um, 0.0)
+            total_time_s += step.dt_s
 
     if total_time_s <= 0:
         return VelocitySummary(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0)
@@ -1827,6 +1917,15 @@ def save_motion_index_outputs(
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = motion_index_output_paths(output_dir, final_export_name)
 
+    # Populate result path fields before writing summary JSON so outputs are
+    # not blank in the persisted payload.
+    result.trajectory_csv = str(paths["trajectory_csv"])
+    result.summary_json = str(paths["summary_json"])
+    result.start_points_preview = str(paths["starting_points"])
+    result.tracks_overlay_preview = str(paths["track_overlay"])
+    result.track_preview_video = str(paths["track_preview"])
+    result.track_preview_webm = str(paths["track_preview_webm"])
+
     save_trajectory_csv(paths["trajectory_csv"], tracks, result.params)
 
     cv2.imwrite(
@@ -1864,11 +1963,10 @@ def save_motion_index_outputs(
     result.track_preview_error = preview_error
     result.track_preview_mp4_codec = mp4_codec
     result.track_preview_webm_codec = webm_codec
-    result.track_preview_webm = (
-        str(paths["track_preview_webm"])
-        if paths["track_preview_webm"].is_file()
-        else ""
-    )
+    if not paths["track_preview_webm"].is_file():
+        result.track_preview_webm = ""
+    if not paths["track_preview"].is_file():
+        result.track_preview_video = ""
     summary_payload = result.summary_dict()
     summary_payload["written_at_utc"] = _utc_now_iso()
     paths["summary_json"].write_text(json.dumps(summary_payload, indent=2), encoding="utf-8")
@@ -1878,7 +1976,7 @@ def save_motion_index_outputs(
         "summary_json": str(paths["summary_json"]),
         "start_points_preview": str(paths["starting_points"]),
         "tracks_overlay_preview": str(paths["track_overlay"]),
-        "track_preview_video": str(paths["track_preview"]),
+        "track_preview_video": result.track_preview_video,
         "track_preview_webm": result.track_preview_webm,
         "track_preview_mp4_codec": mp4_codec,
         "track_preview_webm_codec": webm_codec,

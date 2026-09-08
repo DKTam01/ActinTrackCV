@@ -192,21 +192,23 @@ Status labels in the workbench:
 
 Settings changes alone do not re-run metrics. Run metrics again when you want updated results under the current Workbench settings.
 
-### Template Tracking Motion Index
+### Sparse Tracking Motion Index
 
 Sparse tracking of bright actin-associated features on cropped ROI frames:
 
 - Selects locally bright starting points on the first frame
-- Tracks small image templates frame-to-frame with template matching and optional lookahead recovery
-- Produces **General Movement** and **Downward Motion** indices (µm/s)
+- Tracks features frame-to-frame (default: brightest-local search; template matching remains available)
+- Produces **General Movement** (absolute XY) and **Downward Motion** indices (µm/s)
 
-Default tracking parameters (editable in Metric Analysis View): 5 starting points, 40 px minimum spacing, 11 px patch, 15 px search radius, 0.70 confidence, 3 lookahead frames, **0.2650 µm/pixel**, **0.2000 s/frame**.
+Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**, **0.2650 µm/pixel**, **30.0 s/frame**.
+
+`seconds_per_frame` is an analysis input. Encoded video playback FPS (often ~6 fps on these exports) is **not** automatically treated as biological acquisition interval. The current **30 s/frame** default is the documented lab hypothesis and production default; it is **not** independently validated for every exported corpus file. Confirm against acquisition metadata when available. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
 
 ### Optical Flow Motion Index
 
-Dense **OpenCV Farnebäck** optical flow on consecutive cropped ROI frame pairs:
+Dense **OpenCV Farnebäck** optical flow on consecutive cropped ROI frame pairs (separate from sparse tracking):
 
-- Masks to bright F-actin-associated pixels using a **mask percentile** on the previous frame (default **90**)
+- Masks to bright F-actin-associated pixels using a **mask percentile** on the previous frame (code default **65**)
 - Optional Gaussian blur (default kernel **3**)
 - Produces ROI-level metrics in µm/s and QC fractions:
 
@@ -219,11 +221,11 @@ Dense **OpenCV Farnebäck** optical flow on consecutive cropped ROI frame pairs:
 | **Valid Pixel Fraction** | Fraction of ROI pixels used per frame pair |
 | **Saturated Pixel Fraction** | Fraction of valid pixels near saturation (QC) |
 
-Default Farnebäck settings: `pyr_scale=0.5`, `levels=3`, `winsize=15`, `iterations=3`, `poly_n=5`, `poly_sigma=1.2`. Scale/time conversion uses the same **microns_per_pixel** and **seconds_per_frame** as Template Tracking.
+Default Farnebäck settings: `pyr_scale=0.5`, `levels=3`, `winsize=15`, `iterations=3`, `poly_n=5`, `poly_sigma=1.2`. Scale/time conversion uses the same **microns_per_pixel** and **seconds_per_frame** as sparse tracking.
 
 The on-screen overlay shows **sampled flow vectors for visualization**, not individual filament trajectories.
 
-Template Tracking and Optical Flow are **complementary**: sparse feature tracking vs. dense field motion. They answer related questions but should not be expected to match numerically.
+Sparse Tracking and Optical Flow are **complementary**: localized feature tracking vs. dense field motion. They answer related questions but should not be expected to match numerically. Do not treat either method as a correction for the other.
 
 ### Analysis
 
