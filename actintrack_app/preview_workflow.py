@@ -13,6 +13,7 @@ from actintrack_app.motion_index import (
     MotionIndexParams,
     PointTrack,
     compute_motion_indices,
+    compute_nucleus_relative_summary,
     compute_track_statistics,
     compute_velocity_summary,
     point_tracks_from_video_result,
@@ -40,6 +41,10 @@ class CroppedPreviewAnalysis:
     downward_velocity_contribution_um_per_s: float = 0.0
     tracking_warning: str = ""
     params: MotionIndexParams | None = None
+    nucleus_reference_xy_px: tuple[float, float] | None = None
+    mean_step_toward_nucleus_velocity_um_per_s: float | None = None
+    toward_nucleus_velocity_um_per_s: float | None = None
+    toward_nucleus_motion_contribution_um_per_s: float | None = None
 
     @property
     def num_tracks_started(self) -> int:
@@ -87,6 +92,7 @@ def analyze_cropped_preview(
     *,
     params: MotionIndexParams | None = None,
     valid_mask: np.ndarray | None = None,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> CroppedPreviewAnalysis:
     """Run draft motion-index tracking on in-memory cropped frames."""
     params = params or MotionIndexParams()
@@ -170,6 +176,11 @@ def analyze_cropped_preview(
 
     downward, general, _ = compute_motion_indices(tracks, params)
     velocity_summary = compute_velocity_summary(tracks, params)
+    nucleus_summary = (
+        compute_nucleus_relative_summary(tracks, params, nucleus_xy_px)
+        if nucleus_xy_px is not None
+        else None
+    )
     return CroppedPreviewAnalysis(
         frames=frames,
         tracks=tracks,
@@ -190,6 +201,22 @@ def analyze_cropped_preview(
         ),
         tracking_warning=warning,
         params=params,
+        nucleus_reference_xy_px=nucleus_xy_px,
+        mean_step_toward_nucleus_velocity_um_per_s=(
+            nucleus_summary.mean_step_toward_velocity_um_per_s
+            if nucleus_summary is not None
+            else None
+        ),
+        toward_nucleus_velocity_um_per_s=(
+            nucleus_summary.time_weighted_toward_velocity_um_per_s
+            if nucleus_summary is not None
+            else None
+        ),
+        toward_nucleus_motion_contribution_um_per_s=(
+            nucleus_summary.toward_motion_contribution_um_per_s
+            if nucleus_summary is not None
+            else None
+        ),
     )
 
 
@@ -218,6 +245,16 @@ def cropped_preview_analysis_from_draft(
         )
         or 0.0
     )
+    nucleus_payload = draft.get("nucleus_reference")
+    nucleus_xy_px: tuple[float, float] | None = None
+    if isinstance(nucleus_payload, dict):
+        try:
+            nucleus_xy_px = (
+                float(nucleus_payload["x_px"]),
+                float(nucleus_payload["y_px"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            nucleus_xy_px = None
     return CroppedPreviewAnalysis(
         frames=frames,
         tracks=tracks,
@@ -246,6 +283,22 @@ def cropped_preview_analysis_from_draft(
         ),
         tracking_warning=str(draft.get("tracking_warning", "") or ""),
         params=params,
+        nucleus_reference_xy_px=nucleus_xy_px,
+        mean_step_toward_nucleus_velocity_um_per_s=(
+            float(draft["mean_step_toward_nucleus_velocity_um_per_s"])
+            if draft.get("mean_step_toward_nucleus_velocity_um_per_s") is not None
+            else None
+        ),
+        toward_nucleus_velocity_um_per_s=(
+            float(draft["toward_nucleus_velocity_um_per_s"])
+            if draft.get("toward_nucleus_velocity_um_per_s") is not None
+            else None
+        ),
+        toward_nucleus_motion_contribution_um_per_s=(
+            float(draft["toward_nucleus_motion_contribution_um_per_s"])
+            if draft.get("toward_nucleus_motion_contribution_um_per_s") is not None
+            else None
+        ),
     )
 
 

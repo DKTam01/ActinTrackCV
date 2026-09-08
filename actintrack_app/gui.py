@@ -209,6 +209,7 @@ from actintrack_app.orientation import (
 from actintrack_app.scientific_annotations import (
     CutoffBoundary,
     NucleusReference,
+    nucleus_reference_from_annotation,
     reorient_cell_region,
     reorient_cutoff_boundary,
     reorient_nucleus_reference,
@@ -1620,8 +1621,28 @@ class MainWindow(QMainWindow):
             "tracking_result": serialize_video_tracking_result(
                 analysis.tracks,
                 params,
+                nucleus_xy_px=analysis.nucleus_reference_xy_px,
             ),
         }
+        if analysis.nucleus_reference_xy_px is not None:
+            payload.update(
+                {
+                    "nucleus_reference": {
+                        "x_px": float(analysis.nucleus_reference_xy_px[0]),
+                        "y_px": float(analysis.nucleus_reference_xy_px[1]),
+                        "coordinate_space": "crop_local_pixels",
+                    },
+                    "mean_step_toward_nucleus_velocity_um_per_s": (
+                        analysis.mean_step_toward_nucleus_velocity_um_per_s
+                    ),
+                    "toward_nucleus_velocity_um_per_s": (
+                        analysis.toward_nucleus_velocity_um_per_s
+                    ),
+                    "toward_nucleus_motion_contribution_um_per_s": (
+                        analysis.toward_nucleus_motion_contribution_um_per_s
+                    ),
+                }
+            )
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _invalidate_tracking_result_for_sample(self, sample_id: str) -> None:
@@ -1697,6 +1718,17 @@ class MainWindow(QMainWindow):
                 f"Scientific valid_mask shape {mask.shape} does not match crop {(h, w)}."
             )
         return mask
+
+    def _saved_nucleus_xy_crop_local(
+        self,
+        sample_id: str,
+        crop: RectROI,
+    ) -> tuple[float, float] | None:
+        if self._project_root is None:
+            return None
+        ann = get_sample_annotation(self._project_root, sample_id)
+        nucleus = nucleus_reference_from_annotation(ann)
+        return nucleus.to_crop_local(crop) if nucleus is not None else None
 
     def _sample_video_path(self, sample_id: str) -> Optional[Path]:
         row = self._persisted_sample_row_for_id(sample_id)
@@ -1830,9 +1862,13 @@ class MainWindow(QMainWindow):
         try:
             frames = load_cropped_frames_from_video(path, orientation, roi)
             valid_mask = self._saved_scientific_valid_mask_for_sample(sample_id, roi)
+            nucleus_xy_px = self._saved_nucleus_xy_crop_local(sample_id, roi)
             try:
                 analysis = analyze_cropped_preview(
-                    frames, params=params, valid_mask=valid_mask
+                    frames,
+                    params=params,
+                    valid_mask=valid_mask,
+                    nucleus_xy_px=nucleus_xy_px,
                 )
                 self._commit_tracking_result_for_sid(sample_id, analysis, params)
                 if analysis.num_tracks_with_valid_steps == 0:

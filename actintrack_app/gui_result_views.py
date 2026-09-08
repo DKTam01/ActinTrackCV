@@ -19,6 +19,7 @@ class SampleTrackingResultView:
     tracks_used: int = 0
     tracks_requested: int = 0
     valid_steps: int = 0
+    toward_nucleus_velocity: Optional[float] = None
     failure_reason: str = ""
 
 
@@ -81,6 +82,9 @@ def tracking_result_view_from_dict(data: dict[str, Any]) -> SampleTrackingResult
         tracks_used=tracks_used,
         tracks_requested=max(tracks_started, tracks_used),
         valid_steps=int(data.get("total_valid_steps", 0) or 0),
+        toward_nucleus_velocity=optional_gui_float(
+            data.get("toward_nucleus_velocity_um_per_s")
+        ),
     )
 
 
@@ -102,6 +106,7 @@ def tracking_result_view_from_preview(
         tracks_used=analysis.num_tracks_with_valid_steps,
         tracks_requested=max(requested, analysis.num_tracks_started),
         valid_steps=analysis.total_valid_steps,
+        toward_nucleus_velocity=analysis.toward_nucleus_velocity_um_per_s,
     )
 
 
@@ -168,14 +173,23 @@ def format_tracking_result_panel_lines(
                 f"Tracks Used: {template_view.tracks_used} / "
                 f"{template_view.tracks_requested}"
             )
-        lines.extend(
+        result_lines = [
+            f"Absolute Velocity: {template_view.general_movement:.4f} µm/s",
+        ]
+        if template_view.toward_nucleus_velocity is not None:
+            result_lines.append(
+                "Toward Nucleus: "
+                f"{template_view.toward_nucleus_velocity:.4f} µm/s "
+                "(signed)"
+            )
+        result_lines.extend(
             [
-                f"Absolute Velocity: {template_view.general_movement:.4f} µm/s",
                 f"Downward Velocity: {template_view.downward_velocity:.4f} µm/s",
                 tracks_line,
                 f"Valid Steps: {template_view.valid_steps}",
             ]
         )
+        lines.extend(result_lines)
 
     lines.append("")
     lines.append("Optical Flow Motion Index (Draft)")

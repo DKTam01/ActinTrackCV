@@ -148,6 +148,18 @@ class VelocitySummary:
 
 
 @dataclass(frozen=True)
+class NucleusRelativeSummary:
+    """Signed radial movement summaries; positive values move toward nucleus."""
+
+    mean_step_toward_velocity_um_per_s: float
+    time_weighted_toward_velocity_um_per_s: float
+    toward_motion_contribution_um_per_s: float
+    total_signed_toward_displacement_um: float
+    total_tracked_time_s: float
+    valid_step_count: int
+
+
+@dataclass(frozen=True)
 class StepMetrics:
     """Authoritative per-step absolute XY movement quantities.
 
@@ -169,6 +181,10 @@ class StepMetrics:
     downward_velocity_um_per_s: float
     motion_angle_deg: float
     turning_angle_deg: float | None = None
+    previous_distance_to_nucleus_um: float | None = None
+    distance_to_nucleus_um: float | None = None
+    delta_distance_um: float | None = None
+    toward_velocity_um_per_s: float | None = None
 
     def as_csv_fields(self) -> dict[str, Any]:
         return {
@@ -187,6 +203,26 @@ class StepMetrics:
             "turning_angle_deg": (
                 round(self.turning_angle_deg, 6)
                 if self.turning_angle_deg is not None
+                else ""
+            ),
+            "previous_distance_to_nucleus_um": (
+                round(self.previous_distance_to_nucleus_um, 6)
+                if self.previous_distance_to_nucleus_um is not None
+                else ""
+            ),
+            "distance_to_nucleus_um": (
+                round(self.distance_to_nucleus_um, 6)
+                if self.distance_to_nucleus_um is not None
+                else ""
+            ),
+            "delta_distance_um": (
+                round(self.delta_distance_um, 6)
+                if self.delta_distance_um is not None
+                else ""
+            ),
+            "toward_velocity_um_per_s": (
+                round(self.toward_velocity_um_per_s, 6)
+                if self.toward_velocity_um_per_s is not None
                 else ""
             ),
         }
@@ -231,9 +267,10 @@ class MotionIndexResult:
     total_valid_steps: int = 0
     mean_track_length_frames: float = 0.0
     track_preview_error: str = ""
+    nucleus_reference_xy_px: tuple[float, float] | None = None
 
     def summary_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "source_path": self.source_path,
             "output_dir": self.output_dir,
             "final_export_name": self.final_export_name,
@@ -298,6 +335,7 @@ class MotionIndexResult:
             "tracking_result": serialize_video_tracking_result(
                 self.tracks,
                 self.params,
+                nucleus_xy_px=self.nucleus_reference_xy_px,
             ),
             "track_preview_error": self.track_preview_error,
             "outputs": {
@@ -311,6 +349,31 @@ class MotionIndexResult:
                 "track_preview_webm_codec": self.track_preview_webm_codec,
             },
         }
+        if self.nucleus_reference_xy_px is not None:
+            nucleus_summary = compute_nucleus_relative_summary(
+                self.tracks,
+                self.params,
+                self.nucleus_reference_xy_px,
+            )
+            payload.update(
+                {
+                    "nucleus_reference": {
+                        "x_px": float(self.nucleus_reference_xy_px[0]),
+                        "y_px": float(self.nucleus_reference_xy_px[1]),
+                        "coordinate_space": "crop_local_pixels",
+                    },
+                    "mean_step_toward_nucleus_velocity_um_per_s": (
+                        nucleus_summary.mean_step_toward_velocity_um_per_s
+                    ),
+                    "toward_nucleus_velocity_um_per_s": (
+                        nucleus_summary.time_weighted_toward_velocity_um_per_s
+                    ),
+                    "toward_nucleus_motion_contribution_um_per_s": (
+                        nucleus_summary.toward_motion_contribution_um_per_s
+                    ),
+                }
+            )
+        return payload
 
 
 def _utc_now_iso() -> str:
@@ -1361,6 +1424,7 @@ def compute_step_metrics(
     params: MotionIndexParams,
     *,
     previous_motion_angle_deg: float | None = None,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> StepMetrics:
     """Compute absolute XY movement for one consecutive valid track step."""
     frame_gap = max(1, int(point.frame_index) - int(prev_pt.frame_index))
@@ -1380,6 +1444,22 @@ def compute_step_metrics(
         turning_angle_deg = (
             (motion_angle_deg - previous_motion_angle_deg + 180.0) % 360.0
         ) - 180.0
+    previous_distance_to_nucleus_um: float | None = None
+    distance_to_nucleus_um: float | None = None
+    delta_distance_um: float | None = None
+    toward_velocity_um_per_s: float | None = None
+    if nucleus_xy_px is not None:
+        nucleus_x, nucleus_y = map(float, nucleus_xy_px)
+        previous_distance_to_nucleus_um = (
+            float(np.hypot(prev_pt.x - nucleus_x, prev_pt.y - nucleus_y)) * mpp
+        )
+        distance_to_nucleus_um = (
+            float(np.hypot(point.x - nucleus_x, point.y - nucleus_y)) * mpp
+        )
+        delta_distance_um = (
+            previous_distance_to_nucleus_um - distance_to_nucleus_um
+        )
+        toward_velocity_um_per_s = delta_distance_um / dt_s
     return StepMetrics(
         prev_frame_index=int(prev_pt.frame_index),
         frame_index=int(point.frame_index),
@@ -1395,12 +1475,18 @@ def compute_step_metrics(
         downward_velocity_um_per_s=downward_velocity,
         motion_angle_deg=motion_angle_deg,
         turning_angle_deg=turning_angle_deg,
+        previous_distance_to_nucleus_um=previous_distance_to_nucleus_um,
+        distance_to_nucleus_um=distance_to_nucleus_um,
+        delta_distance_um=delta_distance_um,
+        toward_velocity_um_per_s=toward_velocity_um_per_s,
     )
 
 
 def iter_track_step_metrics(
     track: PointTrack,
     params: MotionIndexParams,
+    *,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> list[StepMetrics]:
     """Return authoritative step metrics for every consecutive point pair."""
     steps: list[StepMetrics] = []
@@ -1411,6 +1497,7 @@ def iter_track_step_metrics(
             next_pt,
             params,
             previous_motion_angle_deg=previous_motion_angle_deg,
+            nucleus_xy_px=nucleus_xy_px,
         )
         steps.append(step)
         previous_motion_angle_deg = step.motion_angle_deg
@@ -1422,8 +1509,17 @@ def _point_step_metrics(
     point: TrackPoint,
     params: MotionIndexParams,
     previous_motion_angle_deg: float | None = None,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     if prev_pt is None:
+        distance_to_nucleus: float | str = ""
+        if nucleus_xy_px is not None:
+            nucleus_x, nucleus_y = map(float, nucleus_xy_px)
+            distance_to_nucleus = round(
+                float(np.hypot(point.x - nucleus_x, point.y - nucleus_y))
+                * float(params.microns_per_pixel),
+                6,
+            )
         return {
             "prev_frame_index": "",
             "frame_gap": "",
@@ -1438,6 +1534,10 @@ def _point_step_metrics(
             "downward_velocity_um_per_s": "",
             "motion_angle_deg": "",
             "turning_angle_deg": "",
+            "previous_distance_to_nucleus_um": "",
+            "distance_to_nucleus_um": distance_to_nucleus,
+            "delta_distance_um": "",
+            "toward_velocity_um_per_s": "",
         }
 
     return compute_step_metrics(
@@ -1445,6 +1545,7 @@ def _point_step_metrics(
         point,
         params,
         previous_motion_angle_deg=previous_motion_angle_deg,
+        nucleus_xy_px=nucleus_xy_px,
     ).as_csv_fields()
 
 
@@ -1557,6 +1658,47 @@ def compute_velocity_summary(
     )
 
 
+def compute_nucleus_relative_summary(
+    tracks: Sequence[PointTrack],
+    params: MotionIndexParams,
+    nucleus_xy_px: tuple[float, float],
+) -> NucleusRelativeSummary:
+    """Compute signed radial movement without changing absolute XY movement."""
+    toward_velocities: list[float] = []
+    total_toward_um = 0.0
+    positive_toward_um = 0.0
+    total_time_s = 0.0
+    for track in tracks:
+        for step in iter_track_step_metrics(
+            track,
+            params,
+            nucleus_xy_px=nucleus_xy_px,
+        ):
+            if (
+                step.toward_velocity_um_per_s is None
+                or step.delta_distance_um is None
+            ):
+                continue
+            toward_velocities.append(step.toward_velocity_um_per_s)
+            total_toward_um += step.delta_distance_um
+            positive_toward_um += max(step.delta_distance_um, 0.0)
+            total_time_s += step.dt_s
+    return NucleusRelativeSummary(
+        mean_step_toward_velocity_um_per_s=(
+            float(np.mean(toward_velocities)) if toward_velocities else 0.0
+        ),
+        time_weighted_toward_velocity_um_per_s=(
+            total_toward_um / total_time_s if total_time_s > 0 else 0.0
+        ),
+        toward_motion_contribution_um_per_s=(
+            positive_toward_um / total_time_s if total_time_s > 0 else 0.0
+        ),
+        total_signed_toward_displacement_um=total_toward_um,
+        total_tracked_time_s=total_time_s,
+        valid_step_count=len(toward_velocities),
+    )
+
+
 def compute_track_statistics(tracks: Sequence[PointTrack]) -> tuple[int, int, float]:
     """Return (tracks_with_valid_steps, total_valid_steps, mean_track_length_frames)."""
     valid_lengths: list[int] = []
@@ -1573,9 +1715,15 @@ def compute_track_statistics(tracks: Sequence[PointTrack]) -> tuple[int, int, fl
 def serialize_point_track_result(
     track: PointTrack,
     params: MotionIndexParams,
+    *,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Return the canonical persisted scientific result for one point track."""
-    steps = iter_track_step_metrics(track, params)
+    steps = iter_track_step_metrics(
+        track,
+        params,
+        nucleus_xy_px=nucleus_xy_px,
+    )
     point_rows = [
         {
             "track_id": int(point.track_id),
@@ -1590,7 +1738,11 @@ def serialize_point_track_result(
     step_rows: list[dict[str, Any]] = []
     recovered_gaps: list[dict[str, int]] = []
     for point, step in zip(track.points[1:], steps):
-        row = asdict(step)
+        row = {
+            key: value
+            for key, value in asdict(step).items()
+            if value is not None
+        }
         row["recovered_with_lookahead"] = bool(point.recovered_with_lookahead)
         step_rows.append(row)
         if point.recovered_with_lookahead:
@@ -1608,7 +1760,7 @@ def serialize_point_track_result(
     total_time_s = float(sum(step.dt_s for step in steps))
     total_frame_intervals = int(sum(step.frame_gap for step in steps))
     step_speeds = [step.absolute_velocity_um_per_s for step in steps]
-    return {
+    payload = {
         "track_id": int(track.track_id),
         "points": point_rows,
         "valid_steps": step_rows,
@@ -1651,15 +1803,44 @@ def serialize_point_track_result(
             "frame_gap_handling": "actual_frame_index_delta",
         },
     }
+    if nucleus_xy_px is not None:
+        toward_values = [
+            step.toward_velocity_um_per_s
+            for step in steps
+            if step.toward_velocity_um_per_s is not None
+        ]
+        total_toward_um = sum(
+            step.delta_distance_um
+            for step in steps
+            if step.delta_distance_um is not None
+        )
+        payload["nucleus_relative_movement_summary"] = {
+            "mean_step_toward_velocity_um_per_s": (
+                float(np.mean(toward_values)) if toward_values else 0.0
+            ),
+            "time_weighted_toward_velocity_um_per_s": (
+                total_toward_um / total_time_s if total_time_s > 0 else 0.0
+            ),
+            "total_signed_toward_displacement_um": total_toward_um,
+            "valid_step_count": len(toward_values),
+        }
+    return payload
 
 
 def serialize_video_tracking_result(
     tracks: Sequence[PointTrack],
     params: MotionIndexParams,
+    *,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> dict[str, Any]:
     """Return one versioned video result containing all measured point tracks."""
     serialized_tracks = [
-        serialize_point_track_result(track, params) for track in tracks
+        serialize_point_track_result(
+            track,
+            params,
+            nucleus_xy_px=nucleus_xy_px,
+        )
+        for track in tracks
     ]
     valid_tracks, total_steps, mean_length = compute_track_statistics(tracks)
     all_steps = [
@@ -1667,7 +1848,7 @@ def serialize_video_tracking_result(
     ]
     total_path_px = float(sum(step.displacement_px for step in all_steps))
     total_intervals = int(sum(step.frame_gap for step in all_steps))
-    return {
+    payload = {
         "schema_version": TRACKING_RESULT_SCHEMA_VERSION,
         "summary": {
             "num_tracks_started": len(tracks),
@@ -1708,6 +1889,19 @@ def serialize_video_tracking_result(
         },
         "tracks": serialized_tracks,
     }
+    if nucleus_xy_px is not None:
+        nucleus_summary = compute_nucleus_relative_summary(
+            tracks,
+            params,
+            nucleus_xy_px,
+        )
+        payload["nucleus_reference"] = {
+            "x_px": float(nucleus_xy_px[0]),
+            "y_px": float(nucleus_xy_px[1]),
+            "coordinate_space": "crop_local_pixels",
+        }
+        payload["nucleus_relative_movement_summary"] = asdict(nucleus_summary)
+    return payload
 
 
 def point_tracks_from_video_result(payload: dict[str, Any]) -> list[PointTrack]:
@@ -1776,6 +1970,8 @@ def save_trajectory_csv(
     path: Path,
     tracks: Sequence[PointTrack],
     params: MotionIndexParams,
+    *,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1799,6 +1995,10 @@ def save_trajectory_csv(
                 "downward_velocity_um_per_s",
                 "motion_angle_deg",
                 "turning_angle_deg",
+                "previous_distance_to_nucleus_um",
+                "distance_to_nucleus_um",
+                "delta_distance_um",
+                "toward_velocity_um_per_s",
                 "confidence",
                 "recovered_with_lookahead",
             ],
@@ -1822,6 +2022,7 @@ def save_trajectory_csv(
                         point,
                         params,
                         previous_motion_angle_deg,
+                        nucleus_xy_px,
                     )
                 )
                 writer.writerow(row)
@@ -2128,7 +2329,12 @@ def save_motion_index_outputs(
     result.track_preview_video = str(paths["track_preview"])
     result.track_preview_webm = str(paths["track_preview_webm"])
 
-    save_trajectory_csv(paths["trajectory_csv"], tracks, result.params)
+    save_trajectory_csv(
+        paths["trajectory_csv"],
+        tracks,
+        result.params,
+        nucleus_xy_px=result.nucleus_reference_xy_px,
+    )
 
     cv2.imwrite(
         str(paths["starting_points"]),
@@ -2196,6 +2402,7 @@ def run_motion_index_analysis(
     preview_fps: float = 5.0,
     frame_paths: Sequence[Path] | None = None,
     valid_mask: np.ndarray | None = None,
+    nucleus_xy_px: tuple[float, float] | None = None,
 ) -> MotionIndexResult:
     """
     Run the full motion-index workflow on one processed ROI video or image sequence.
@@ -2273,6 +2480,7 @@ def run_motion_index_analysis(
         num_tracks_with_valid_steps=valid_tracks,
         total_valid_steps=total_steps,
         mean_track_length_frames=mean_len,
+        nucleus_reference_xy_px=nucleus_xy_px,
     )
 
     outputs = save_motion_index_outputs(
