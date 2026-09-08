@@ -59,6 +59,7 @@ class FramePairSummary:
     mean_downward_px_frame: float
     mean_net_x_px_frame: float
     mean_net_y_px_frame: float
+    valid_pixel_fraction_of_scientific_domain: Optional[float] = None
 
 
 @dataclass
@@ -80,6 +81,10 @@ class OpticalFlowResult:
     frame_count: int = 0
     frame_pair_count: int = 0
     frame_pair_summaries: list[FramePairSummary] = field(default_factory=list)
+    scientific_valid_mask_applied: bool = False
+    scientific_valid_pixel_count: int = 0
+    scientific_valid_pixel_fraction: Optional[float] = None
+    scientific_valid_mask_sha256: str = ""
     fingerprint: str = ""
     analysis_timestamp_utc: str = ""
     sample_id: str = ""
@@ -111,6 +116,15 @@ class OpticalFlowResult:
             "mean_net_x_px_frame": self.mean_net_x_px_frame,
             "mean_net_y_px_frame": self.mean_net_y_px_frame,
             "frame_pair_summaries": [asdict(s) for s in self.frame_pair_summaries],
+            "scientific_valid_mask_applied": self.scientific_valid_mask_applied,
+            "scientific_valid_pixel_count": self.scientific_valid_pixel_count,
+            "scientific_valid_pixel_fraction": self.scientific_valid_pixel_fraction,
+            "scientific_valid_mask_sha256": self.scientific_valid_mask_sha256,
+            "aggregation_mask_definition": (
+                "brightness_mask intersect scientific_valid_mask"
+                if self.scientific_valid_mask_applied
+                else "brightness_mask"
+            ),
         }
         if self.settings is not None:
             payload["settings"] = asdict(self.settings)
@@ -145,6 +159,16 @@ def _saturated_mask(gray: np.ndarray) -> np.ndarray:
 
 def _px_per_frame_to_um_per_s(value_px: float, settings: OpticalFlowSettings) -> float:
     return value_px * settings.microns_per_pixel / settings.seconds_per_frame
+
+
+def _valid_mask_sha256(valid_mask: np.ndarray | None) -> str:
+    if valid_mask is None:
+        return ""
+    mask = np.ascontiguousarray(np.asarray(valid_mask, dtype=np.uint8))
+    digest = hashlib.sha256()
+    digest.update(str(mask.shape).encode("ascii"))
+    digest.update(mask.tobytes())
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -205,7 +229,16 @@ def _failed_result(
     data_identity: str = "",
     roi_bounds: tuple[int, int, int, int] = (0, 0, 0, 0),
     fingerprint: str = "",
+    valid_mask: np.ndarray | None = None,
 ) -> OpticalFlowResult:
+    valid_count = (
+        int(np.count_nonzero(valid_mask)) if valid_mask is not None else 0
+    )
+    valid_fraction = (
+        valid_count / int(valid_mask.size)
+        if valid_mask is not None and valid_mask.size
+        else None
+    )
     return OpticalFlowResult(
         has_valid_result=False,
         failure_reason=reason,
@@ -215,6 +248,10 @@ def _failed_result(
         data_identity=data_identity,
         roi_bounds=roi_bounds,
         fingerprint=fingerprint,
+        scientific_valid_mask_applied=valid_mask is not None,
+        scientific_valid_pixel_count=valid_count,
+        scientific_valid_pixel_fraction=valid_fraction,
+        scientific_valid_mask_sha256=_valid_mask_sha256(valid_mask),
         analysis_timestamp_utc=datetime.now(timezone.utc).isoformat(),
     )
 
@@ -227,8 +264,18 @@ def compute_optical_flow_motion_index(
     data_identity: str = "",
     roi_bounds: tuple[int, int, int, int] = (0, 0, 0, 0),
     fingerprint: str = "",
+    valid_mask: np.ndarray | None = None,
 ) -> OpticalFlowResult:
     """Compute dense Farnebäck optical-flow metrics over consecutive cropped frames."""
+    scientific_mask: np.ndarray | None = None
+    if valid_mask is not None:
+        scientific_mask = np.asarray(valid_mask, dtype=bool)
+        expected_shape = tuple(frames[0].shape[:2]) if frames else ()
+        if scientific_mask.shape != expected_shape:
+            raise ValueError(
+                f"valid_mask shape {scientific_mask.shape} does not match "
+                f"frame {expected_shape}."
+            )
     if len(frames) < 2:
         return _failed_result(
             "At least 2 frames are required for optical flow.",
@@ -238,6 +285,7 @@ def compute_optical_flow_motion_index(
             data_identity=data_identity,
             roi_bounds=roi_bounds,
             fingerprint=fingerprint,
+            valid_mask=scientific_mask,
         )
 
     first = frames[0]
@@ -250,6 +298,7 @@ def compute_optical_flow_motion_index(
             data_identity=data_identity,
             roi_bounds=roi_bounds,
             fingerprint=fingerprint,
+            valid_mask=scientific_mask,
         )
 
     pair_summaries: list[FramePairSummary] = []
@@ -264,7 +313,11 @@ def compute_optical_flow_motion_index(
         pair = compute_dense_flow_pair(
             frames[i], frames[i + 1], settings, frame_a=i, frame_b=i + 1
         )
-        mask = pair.mask
+        mask = (
+            pair.mask
+            if scientific_mask is None
+            else pair.mask & scientific_mask
+        )
         flow = pair.flow
         prev_gray = pair.prev_gray
         valid_count = int(np.count_nonzero(mask))
@@ -282,6 +335,14 @@ def compute_optical_flow_motion_index(
         net_x_mean = float(np.mean(flow_x[mask]))
         net_y_mean = float(np.mean(flow_y[mask]))
         valid_fraction = valid_count / total_pixels
+        domain_count = (
+            int(np.count_nonzero(scientific_mask))
+            if scientific_mask is not None
+            else total_pixels
+        )
+        valid_domain_fraction = (
+            valid_count / domain_count if domain_count > 0 else None
+        )
         sat_fraction = float(np.count_nonzero(_saturated_mask(prev_gray) & mask)) / total_pixels
 
         pair_summaries.append(
@@ -295,6 +356,7 @@ def compute_optical_flow_motion_index(
                 mean_downward_px_frame=down_mean,
                 mean_net_x_px_frame=net_x_mean,
                 mean_net_y_px_frame=net_y_mean,
+                valid_pixel_fraction_of_scientific_domain=valid_domain_fraction,
             )
         )
         mag_values.append(mag_mean)
@@ -313,6 +375,7 @@ def compute_optical_flow_motion_index(
             data_identity=data_identity,
             roi_bounds=roi_bounds,
             fingerprint=fingerprint,
+            valid_mask=scientific_mask,
         )
 
     mean_mag_px = float(np.mean(mag_values))
@@ -326,6 +389,11 @@ def compute_optical_flow_motion_index(
     if mean_mag_px > 1e-12:
         directionality = mean_down_px / mean_mag_px
 
+    scientific_count = (
+        int(np.count_nonzero(scientific_mask))
+        if scientific_mask is not None
+        else 0
+    )
     return OpticalFlowResult(
         has_valid_result=True,
         optical_flow_general_movement_um_s=general_um_s,
@@ -347,6 +415,14 @@ def compute_optical_flow_motion_index(
         data_identity=data_identity,
         roi_bounds=roi_bounds,
         settings=settings,
+        scientific_valid_mask_applied=scientific_mask is not None,
+        scientific_valid_pixel_count=scientific_count,
+        scientific_valid_pixel_fraction=(
+            scientific_count / int(scientific_mask.size)
+            if scientific_mask is not None and scientific_mask.size
+            else None
+        ),
+        scientific_valid_mask_sha256=_valid_mask_sha256(scientific_mask),
     )
 
 
@@ -357,6 +433,7 @@ def build_optical_flow_fingerprint(
     settings: OpticalFlowSettings,
     data_identity: str = "",
     frame_count: int = 0,
+    valid_mask: np.ndarray | None = None,
 ) -> str:
     """Stable hash of inputs that define optical-flow reproducibility."""
     canonical = {
@@ -367,6 +444,7 @@ def build_optical_flow_fingerprint(
         "roi_bounds": list(roi_bounds),
         "frame_count": frame_count,
         "settings": asdict(settings),
+        "scientific_valid_mask_sha256": _valid_mask_sha256(valid_mask),
     }
     blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -394,6 +472,9 @@ def _frame_pair_summary_from_dict(item: dict[str, Any]) -> FramePairSummary:
         mean_downward_px_frame=float(item["mean_downward_px_frame"]),
         mean_net_x_px_frame=float(item.get("mean_net_x_px_frame", 0.0) or 0.0),
         mean_net_y_px_frame=float(item["mean_net_y_px_frame"]),
+        valid_pixel_fraction_of_scientific_domain=_optional_float(
+            item.get("valid_pixel_fraction_of_scientific_domain")
+        ),
     )
 
 
@@ -440,6 +521,18 @@ def result_from_dict(data: dict[str, Any]) -> OpticalFlowResult:
         data_identity=str(data.get("data_identity", "")),
         roi_bounds=roi_bounds,  # type: ignore[arg-type]
         settings=settings,
+        scientific_valid_mask_applied=bool(
+            data.get("scientific_valid_mask_applied", False)
+        ),
+        scientific_valid_pixel_count=int(
+            data.get("scientific_valid_pixel_count", 0) or 0
+        ),
+        scientific_valid_pixel_fraction=_optional_float(
+            data.get("scientific_valid_pixel_fraction")
+        ),
+        scientific_valid_mask_sha256=str(
+            data.get("scientific_valid_mask_sha256", "")
+        ),
     )
 
 

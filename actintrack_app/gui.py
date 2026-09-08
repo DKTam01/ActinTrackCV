@@ -1392,6 +1392,10 @@ class MainWindow(QMainWindow):
         )
         try:
             settings = self._optical_flow_settings_from_ui()
+            valid_mask = self._saved_scientific_valid_mask_for_sample(
+                self._current_sample_id,
+                check.roi_oriented,
+            )
         except ValueError:
             return ""
         return build_optical_flow_fingerprint(
@@ -1400,6 +1404,7 @@ class MainWindow(QMainWindow):
             settings=settings,
             data_identity=data_identity,
             frame_count=len(self._cropped_preview.frames),
+            valid_mask=valid_mask,
         )
 
     def _get_optical_flow_result_object(
@@ -1949,6 +1954,7 @@ class MainWindow(QMainWindow):
                     settings=of_settings,
                     data_identity=str(path.resolve()),
                     frame_count=len(frames),
+                    valid_mask=valid_mask,
                 )
                 result = compute_optical_flow_motion_index(
                     frames,
@@ -1957,6 +1963,7 @@ class MainWindow(QMainWindow):
                     data_identity=str(path.resolve()),
                     roi_bounds=roi_bounds,
                     fingerprint=fingerprint,
+                    valid_mask=valid_mask,
                 )
                 self._commit_optical_flow_result_for_sid(sample_id, result)
                 if result.has_valid_result:
