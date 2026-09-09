@@ -305,6 +305,12 @@ from actintrack_app.timing_provenance import (
     timing_from_annotation,
     timing_from_result_payload,
 )
+from actintrack_app.workflow_state import (
+    ANNOTATION_FIELD_CROP_CONFIRMED,
+    build_workflow_snapshot,
+    crop_confirmed_from_annotation,
+    format_sample_results_summary,
+)
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
     app_root,
@@ -509,6 +515,7 @@ class MainWindow(QMainWindow):
         self._scientific_placement_mode: Optional[str] = None
         self._timing: TimingMetadata | None = None
         self._timing_ui_syncing = False
+        self._crop_confirmed = False
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -1691,6 +1698,8 @@ class MainWindow(QMainWindow):
         return template_view, optical_flow_view
 
     def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
+        if sample_id is None or sample_id == self._current_sample_id:
+            self._update_sample_results_panel()
         if self.__dict__.get("lbl_tracking_result") is None:
             return
         sid = sample_id or self._current_sample_id
@@ -2104,6 +2113,30 @@ class MainWindow(QMainWindow):
             elif sid == self._current_sample_id:
                 self._update_metric_freshness_label()
             return "unavailable"
+        if sid == self._current_sample_id:
+            snap = self._workflow_snapshot_for_current()
+            reason = snap.run_metrics_block_reason()
+            if reason is not None:
+                self._status(reason)
+                if show_dialog_on_block:
+                    gui_dialogs.warning(self, "Run Metrics", reason)
+                self._sync_workflow_controls()
+                return "unavailable"
+        else:
+            # Non-current samples: require persisted crop confirmation + nucleus + timing.
+            project_root = self.__dict__.get("_project_root")
+            if project_root is not None:
+                ann = get_sample_annotation(project_root, sid)
+                if not crop_confirmed_from_annotation(ann):
+                    return "unavailable"
+                if cell_region_from_sample_annotation(ann) is None:
+                    return "unavailable"
+                nucleus, _cutoff = scientific_annotations_from_annotation(ann)
+                if nucleus is None:
+                    return "unavailable"
+                timing = timing_from_annotation(ann)
+                if timing is None or not timing.confirmed:
+                    return "unavailable"
         return self._compute_metrics_for_sample(sid)
 
     def _sample_display_label_for_id(
@@ -2186,7 +2219,14 @@ class MainWindow(QMainWindow):
         sid = self._current_sample_id
         if not sid:
             return
-        self.run_metrics_for_sample_id(sid, show_dialog_on_block=False)
+        snap = self._workflow_snapshot_for_current()
+        reason = snap.run_metrics_block_reason()
+        if reason is not None:
+            self._status(reason)
+            gui_dialogs.warning(self, "Run Metrics", reason)
+            self._sync_workflow_controls()
+            return
+        self.run_metrics_for_sample_id(sid, show_dialog_on_block=True)
 
     # ----- Metric freshness state + rendering ------------------------------
 
@@ -2277,18 +2317,153 @@ class MainWindow(QMainWindow):
             last_ts = self._last_analyzed_at_for_sample(sid)
         return render_metric_display_lines(state, last_ts)
 
-    def _update_metric_freshness_label(self) -> None:
-        if not hasattr(self, "lbl_metric_status"):
+    def _workflow_snapshot_for_current(self):
+        sid = self.__dict__.get("_current_sample_id")
+        has_sample = bool(sid) and self.__dict__.get("_base_frame") is not None
+        has_crop = False
+        canvas = self.__dict__.get("canvas")
+        if canvas is not None:
+            has_crop = canvas.rect_roi() is not None
+        timing = self.__dict__.get("_timing")
+        timing_confirmed = bool(timing is not None and timing.confirmed)
+        metrics_present = False
+        if sid:
+            if "_sample_has_measurable_draft_results" in self.__dict__:
+                metrics_present = bool(
+                    self.__dict__["_sample_has_measurable_draft_results"](sid)
+                )
+            else:
+                try:
+                    metrics_present = bool(
+                        self._sample_has_measurable_draft_results(sid)
+                    )
+                except RuntimeError:
+                    metrics_present = False
+        stale_track = self.__dict__.get("_tracking_result_stale_by_sample") or {}
+        stale_of = self.__dict__.get("_optical_flow_stale_by_sample") or {}
+        metrics_stale = bool(sid and (stale_track.get(sid) or stale_of.get(sid)))
+        inflight = self.__dict__.get("_metrics_inflight") or set()
+        running = bool(sid) and sid in inflight
+        return build_workflow_snapshot(
+            has_sample=has_sample,
+            has_crop=has_crop,
+            crop_confirmed=bool(self.__dict__.get("_crop_confirmed", False)),
+            has_cell_region=self.__dict__.get("_cell_region") is not None,
+            has_nucleus=self.__dict__.get("_nucleus_reference") is not None,
+            timing_confirmed=timing_confirmed,
+            metrics_present=metrics_present,
+            metrics_stale=metrics_stale,
+            metrics_running=running,
+        )
+
+    def _sync_workflow_controls(self) -> None:
+        """Progressively reveal next setup actions from canonical state."""
+        snap = self._workflow_snapshot_for_current()
+        if self.__dict__.get("lbl_workflow_next") is not None:
+            self.lbl_workflow_next.setText(snap.next_action_hint())
+        if self.__dict__.get("btn_select_nucleus") is not None:
+            self.btn_select_nucleus.setEnabled(
+                snap.has_sample and snap.crop_confirmed and snap.has_cell_region
+            )
+        if self.__dict__.get("btn_clear_nucleus") is not None:
+            self.btn_clear_nucleus.setEnabled(
+                snap.has_sample and self.__dict__.get("_nucleus_reference") is not None
+            )
+        if self.__dict__.get("btn_advanced_cutoff") is not None:
+            self.btn_advanced_cutoff.setEnabled(
+                snap.has_sample and snap.crop_confirmed and snap.has_cell_region
+            )
+        if self.__dict__.get("btn_clear_cutoff") is not None:
+            self.btn_clear_cutoff.setEnabled(
+                snap.has_sample and self.__dict__.get("_cutoff_boundary") is not None
+            )
+        if self.__dict__.get("btn_confirm_timing") is not None:
+            self.btn_confirm_timing.setEnabled(
+                snap.has_sample and snap.has_crop and snap.crop_confirmed
+            )
+        if self.__dict__.get("canvas") is not None and hasattr(
+            self.canvas, "set_crop_confirmed"
+        ):
+            self.canvas.set_crop_confirmed(snap.crop_confirmed and snap.has_crop)
+        if self.__dict__.get("btn_run_metrics") is not None:
+            reason = snap.run_metrics_block_reason()
+            self.btn_run_metrics.setEnabled(snap.ready_to_run)
+            tip = (
+                "Compute Template Tracking and Optical Flow for this Sample."
+                if reason is None
+                else reason
+            )
+            self.btn_run_metrics.setToolTip(tip)
+        if self.__dict__.get("btn_metric_analysis") is not None:
+            ma_reason = snap.metric_analysis_block_reason()
+            self.btn_metric_analysis.setEnabled(snap.metric_analysis_allowed)
+            tip = (
+                "Inspect persisted tracks, overlays, and playback for this Sample."
+                if ma_reason is None
+                else ma_reason
+            )
+            self.btn_metric_analysis.setToolTip(tip)
+        self._update_sample_results_panel()
+
+    def _update_sample_results_panel(self) -> None:
+        if self.__dict__.get("lbl_sample_results") is None:
             return
         sid = self._current_sample_id
-        status_line, last_line = self.render_metric_display_lines(sid)
-        self.lbl_metric_status.setText(status_line)
-        if hasattr(self, "lbl_last_analyzed"):
-            self.lbl_last_analyzed.setText(last_line)
-        has_roi = bool(sid) and self._sample_has_valid_data_and_roi(sid)
-        if hasattr(self, "btn_run_metrics"):
-            running = bool(sid) and sid in self._metrics_inflight
-            self.btn_run_metrics.setEnabled(has_roi and not running)
+        if not sid:
+            self.lbl_sample_results.setText("Sample Results\n\nSelect a sample.")
+            return
+        snap = self._workflow_snapshot_for_current()
+        if not snap.metrics_present:
+            self.lbl_sample_results.setText(
+                "Sample Results\n\nRun Metrics to populate."
+            )
+            return
+        template = self.load_latest_tracking_result_for_sample(sid)
+        of_view = self.load_latest_optical_flow_result_for_sample(sid)
+        orientation = load_latest_structural_orientation_result_view(
+            sid,
+            project_root=self._project_root,
+        )
+        template, of_view = self._attach_live_timing_to_views(template, of_view)
+        timing = self.__dict__.get("_timing")
+        if timing is not None:
+            timing_label = (
+                f"{timing.timing_source} · {timing.analysis_seconds_per_frame:.4f} s/frame"
+            )
+            timing_confirmed = timing.confirmed
+        else:
+            timing_label = "—"
+            timing_confirmed = False
+        sparse_ok = template is not None and template.status == "success"
+        of_ok = of_view is not None and of_view.status == "success"
+        orient_ok = (
+            orientation is not None and orientation.status == "success"
+        )
+        text = format_sample_results_summary(
+            sparse_px=template.general_movement_px_per_frame if sparse_ok else None,
+            sparse_um_s=template.general_movement if sparse_ok else None,
+            of_px=of_view.general_movement_px_per_frame if of_ok else None,
+            of_um_s=of_view.general_movement if of_ok else None,
+            toward_nucleus_um_s=(
+                template.toward_nucleus_velocity if sparse_ok else None
+            ),
+            orientation_deg=orientation.median_angle_deg if orient_ok else None,
+            tracks_used=template.tracks_used if sparse_ok else None,
+            tracks_requested=template.tracks_requested if sparse_ok else None,
+            timing_label=timing_label,
+            timing_confirmed=timing_confirmed,
+            stale=snap.metrics_stale,
+        )
+        self.lbl_sample_results.setText(text)
+
+    def _update_metric_freshness_label(self) -> None:
+        if hasattr(self, "lbl_metric_status"):
+            sid = self._current_sample_id
+            status_line, last_line = self.render_metric_display_lines(sid)
+            self.lbl_metric_status.setText(status_line)
+            if hasattr(self, "lbl_last_analyzed"):
+                self.lbl_last_analyzed.setText(last_line)
+        self._sync_workflow_controls()
 
     def _update_orientation_label(self) -> None:
         self.chk_mirror_y.blockSignals(True)
@@ -2327,15 +2502,19 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "lbl_roi_save_status"):
             return
         if self._current_sample is None:
-            self._set_roi_save_status("No ROI saved yet", saved=False)
+            self._set_roi_save_status("No crop saved yet", saved=False)
             return
         if self.canvas.rect_roi() is None:
-            self._set_roi_save_status("No ROI saved yet", saved=False)
+            self._set_roi_save_status("No crop saved yet", saved=False)
             return
         if self._roi_user_adjusted or self._roi_autosave_pending:
             self._set_roi_save_status("Unsaved changes", saved=False)
             return
-        self._set_roi_save_status("ROI saved", saved=True)
+        confirmed = bool(self.__dict__.get("_crop_confirmed", False))
+        if confirmed:
+            self._set_roi_save_status("Crop confirmed", saved=True)
+        else:
+            self._set_roi_save_status("Crop drawn — confirm to continue", saved=False)
 
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
         """Persist the current annotation document, with or without RectROI."""
@@ -2506,9 +2685,12 @@ class MainWindow(QMainWindow):
         if canvas is None:
             return
         preview_mode = _py_attr(self, "_preview_mode", "full")
+        metric_view = bool(_py_attr(self, "_metric_analysis_view_active", False))
         oriented_fn = _py_attr(self, "_oriented_frame", None)
         oriented = oriented_fn() if callable(oriented_fn) else None
-        if oriented is None or preview_mode != "full":
+        # Clear only in Metric Analysis cropped preview (different coordinate space).
+        # Full-sample playback must keep cutoff/nucleus/Cell Boundary visible.
+        if oriented is None or metric_view or preview_mode == "cropped_tracking":
             setter = getattr(canvas, "set_scientific_overlay", None)
             if callable(setter):
                 setter(validity_mask=None, cutoff_y=None, nucleus_xy=None)
@@ -2616,13 +2798,43 @@ class MainWindow(QMainWindow):
             return
         self._roi_user_adjusted = True
         self._roi_autosave_pending = True
+        # Editing crop requires explicit Confirm before cell detection / Run Metrics.
+        if self.__dict__.get("_crop_confirmed", False):
+            self.__dict__["_crop_confirmed"] = False
+            sid = str(self.__dict__.get("_current_sample_id") or "")
+            if sid:
+                self._mark_draft_metrics_stale(sid)
         self._set_roi_save_status("Unsaved changes", saved=False)
         if str(self._loaded_annotation_source) == "auto_suggested":
             self._loaded_annotation_source = "auto_suggested_adjusted"
         self._refresh_roi_preview_panel()
+        self._sync_workflow_controls()
 
     def on_roi_edit_finished(self) -> None:
         self._autosave_roi(quiet=True)
+        self._sync_workflow_controls()
+
+    def on_crop_confirmed(self) -> None:
+        """Confirm computational crop and derive CellRegion once."""
+        if self._current_sample is None and self.__dict__.get("canvas") is None:
+            return
+        roi = self.canvas.rect_roi() if self.__dict__.get("canvas") is not None else None
+        if roi is None:
+            self._status("Draw a crop before confirming.")
+            return
+        oriented = self._oriented_frame()
+        if oriented is None:
+            return
+        self.__dict__["_crop_confirmed"] = True
+        # Intended transition: confirmed crop → conservative whole-cell detection.
+        self._cell_region = suggest_conservative_cell_region(
+            oriented, fallback_rect=roi
+        )
+        self._sync_scientific_overlay()
+        if self._project_root is not None and self._current_sample is not None:
+            self._autosave_roi(quiet=True)
+        self._update_metric_freshness_label()
+        self._status("Crop confirmed — cell boundary identified.")
 
     def _on_clear_roi(self) -> None:
         self._exit_cropped_preview_mode()
@@ -2711,6 +2923,14 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(
                     self, _METRIC_ANALYSIS_VIEW_LABEL, "Select a sample first."
                 )
+            return False
+
+        snap = self._workflow_snapshot_for_current()
+        if not snap.metric_analysis_allowed:
+            message = snap.metric_analysis_block_reason() or (
+                "Run Metrics first."
+            )
+            self._report_metric_view_blocked(message, quiet=quiet)
             return False
 
         self._autosave_roi(quiet=True)
@@ -2852,6 +3072,8 @@ class MainWindow(QMainWindow):
         if self._base_frame is not None:
             self._sync_sample_frame_ui(self._frame_index, self._total_frames)
             self._refresh_display(keep_roi=True)
+        self._sync_scientific_overlay()
+        self._sync_workflow_controls()
 
     def _on_preview_timer_tick(self) -> None:
         if self._preview_mode == "cropped_tracking" and self._cropped_preview is not None:
@@ -3051,6 +3273,7 @@ class MainWindow(QMainWindow):
             cutoff_boundary=self._cutoff_boundary,
             cell_region=self._cell_region,
             timing=self.__dict__.get("_timing"),
+            crop_confirmed=bool(self.__dict__.get("_crop_confirmed", False)),
         )
 
     def _on_save_annotation(self) -> None:
@@ -4446,6 +4669,7 @@ class MainWindow(QMainWindow):
         )
         self._cell_region = cell_region_from_sample_annotation(ann)
         self.__dict__["_timing"] = timing_from_annotation(ann)
+        self.__dict__["_crop_confirmed"] = crop_confirmed_from_annotation(ann)
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
@@ -4472,7 +4696,12 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         self._refresh_roi_save_status_from_context()
         self._refresh_roi_preview_panel()
-        self._ensure_missing_cell_region(persist=True)
+        if self.__dict__.get("_crop_confirmed", False):
+            self._ensure_missing_cell_region(persist=True)
+        if self.__dict__.get("canvas") is not None and hasattr(
+            self.canvas, "set_crop_confirmed"
+        ):
+            self.canvas.set_crop_confirmed(bool(self.__dict__.get("_crop_confirmed")))
         self._sync_scientific_overlay()
         self._update_metric_freshness_label()
         if self.__dict__.get("lbl_timing_detected") is not None:
@@ -4748,6 +4977,7 @@ class MainWindow(QMainWindow):
         self._cell_region = None
         self._scientific_placement_mode = None
         self.__dict__["_timing"] = None
+        self.__dict__["_crop_confirmed"] = False
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
         if ann:

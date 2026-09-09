@@ -77,6 +77,8 @@ class ImageCanvas(QLabel):
         self._validity_mask: Optional[np.ndarray] = None
         self._cutoff_y: Optional[float] = None
         self._nucleus_xy: Optional[tuple[float, float]] = None
+        self._crop_confirmed: bool = False
+        self._confirm_hit_rect: Optional[tuple[int, int, int, int]] = None
         self._interactive = True
         self._draw_roi = True
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -90,15 +92,25 @@ class ImageCanvas(QLabel):
         self._validity_mask = None
         self._cutoff_y = None
         self._nucleus_xy = None
+        self._confirm_hit_rect = None
         self.clear()
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled
 
+    def set_crop_confirmed(self, confirmed: bool) -> None:
+        """Drive Confirm chip visibility; does not persist (MainWindow owns state)."""
+        flagged = bool(confirmed)
+        if self._crop_confirmed == flagged:
+            return
+        self._crop_confirmed = flagged
+        self._redraw()
+
     def set_preview_frame(self, frame: np.ndarray) -> None:
         """Display a read-only preview frame without ROI handles."""
         self._frame = frame
         self._draw_roi = False
+        self._confirm_hit_rect = None
         self._update_pixmap()
 
     def set_frame(self, frame: np.ndarray, *, keep_roi: bool = False) -> None:
@@ -106,6 +118,7 @@ class ImageCanvas(QLabel):
         self._frame = frame
         if not keep_roi:
             self._roi = None
+            self._confirm_hit_rect = None
         elif self._roi is not None:
             self._roi = self._roi.clamp(frame.shape[1], frame.shape[0])
         self._update_pixmap()
@@ -278,8 +291,27 @@ class ImageCanvas(QLabel):
                 painter.setBrush(QBrush(QColor(70, 150, 95, 180)))
                 painter.setPen(QPen(QColor(70, 150, 95, 180), 1))
                 painter.drawEllipse(sx - 3, sy - 3, 6, 6)
+            self._confirm_hit_rect = None
+            if not self._crop_confirmed:
+                # Confirm chip near lower-right of the crop (widget coords only).
+                label = "Confirm"
+                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                metrics = painter.fontMetrics()
+                tw = metrics.horizontalAdvance(label) + 16
+                th = metrics.height() + 10
+                bx = max(x0 + 4, x1 - tw - 4)
+                by = max(y0 + 4, y1 - th - 4)
+                self._confirm_hit_rect = (bx, by, tw, th)
+                painter.setBrush(QBrush(QColor(40, 110, 170, 220)))
+                painter.setPen(QPen(QColor(180, 220, 255), 1))
+                painter.drawRoundedRect(bx, by, tw, th, 4, 4)
+                painter.setPen(QColor(245, 250, 255))
+                painter.drawText(bx + 8, by + th - 8, label)
+        else:
+            self._confirm_hit_rect = None
 
-        if self._draw_roi and self._frame is not None:
+        # Scientific overlays must not depend on Metric Analysis / ROI-draw mode.
+        if self._frame is not None:
             if self._validity_mask is not None:
                 painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
                 painter.setPen(QColor(90, 210, 230))
@@ -315,6 +347,13 @@ class ImageCanvas(QLabel):
 
         painter.end()
         self.setPixmap(composite)
+
+    def _confirm_hit(self, wx: int, wy: int) -> bool:
+        hit = self._confirm_hit_rect
+        if hit is None:
+            return False
+        bx, by, tw, th = hit
+        return bx <= wx <= bx + tw and by <= wy <= by + th
 
     def _context_menu_targets_roi(self, pos) -> bool:
         """True when the click is inside the ROI or on its outline/handles."""
@@ -362,6 +401,11 @@ class ImageCanvas(QLabel):
         if event.button() != Qt.MouseButton.LeftButton or self._frame is None:
             return
         wx, wy = int(event.position().x()), int(event.position().y())
+        if self._confirm_hit(wx, wy):
+            confirm_fn = getattr(self._main_window, "on_crop_confirmed", None)
+            if callable(confirm_fn):
+                confirm_fn()
+            return
         img_pt = self._widget_to_image(wx, wy)
         if img_pt is None:
             return

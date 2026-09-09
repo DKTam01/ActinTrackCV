@@ -562,14 +562,57 @@ def build_preview_images_panel(window: MainWindow) -> QWidget:
 
 
 def build_roi_preview_panel(window: MainWindow) -> QWidget:
-    """Permanent read-only cropped ROI preview beside the microscope image."""
+    """Workbench adjacent column: setup steps, crop preview, and Sample Results."""
     host = QWidget()
     configure_workbench_adjacent_panel(host)
     layout = QVBoxLayout(host)
-    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setContentsMargins(8, 8, 8, 8)
     layout.setSpacing(ROI_HINT_STATUS_SPACING)
 
-    window.lbl_roi_preview_empty = QLabel("Select a sample to preview the ROI.")
+    window.lbl_workflow_next = QLabel("Select a sample to begin.")
+    window.lbl_workflow_next.setWordWrap(True)
+    apply_hint_style(window.lbl_workflow_next)
+    layout.addWidget(window.lbl_workflow_next)
+
+    window.btn_select_nucleus = QPushButton("Select Nucleus")
+    window.btn_select_nucleus.setToolTip(
+        "Click the nucleus center on the microscope image."
+    )
+    window.btn_select_nucleus.clicked.connect(window._on_set_nucleus_mode)
+    apply_workbench_action_button(window.btn_select_nucleus)
+    window.btn_select_nucleus.setEnabled(False)
+    layout.addWidget(window.btn_select_nucleus)
+
+    window.btn_clear_nucleus = QPushButton("Clear Nucleus")
+    window.btn_clear_nucleus.clicked.connect(window._on_clear_nucleus)
+    window.btn_clear_nucleus.setEnabled(False)
+    layout.addWidget(window.btn_clear_nucleus)
+
+    window.btn_advanced_cutoff = QPushButton("Advanced: Measurement Cutoff")
+    window.btn_advanced_cutoff.setToolTip(
+        "Optional horizontal cutoff. Not required when Cell Boundary is enough."
+    )
+    window.btn_advanced_cutoff.clicked.connect(window._on_set_cutoff_mode)
+    window.btn_advanced_cutoff.setEnabled(False)
+    layout.addWidget(window.btn_advanced_cutoff)
+
+    window.btn_clear_cutoff = QPushButton("Clear Cutoff")
+    window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
+    window.btn_clear_cutoff.setEnabled(False)
+    layout.addWidget(window.btn_clear_cutoff)
+
+    # Timing confirmation belongs in the primary setup column (before Run Metrics).
+    create_tracking_setting_widgets(window)
+    layout.addWidget(build_timing_settings_section(window))
+
+    window.lbl_sample_results = QLabel("")
+    window.lbl_sample_results.setWordWrap(True)
+    window.lbl_sample_results.setAlignment(Qt.AlignmentFlag.AlignTop)
+    apply_hint_style(window.lbl_sample_results)
+    window.lbl_sample_results.setText("Sample Results\n\nRun Metrics to populate.")
+    layout.addWidget(window.lbl_sample_results, stretch=1)
+
+    window.lbl_roi_preview_empty = QLabel("Select a sample to preview the crop.")
     window.lbl_roi_preview_empty.setWordWrap(True)
     apply_muted_hint_style(window.lbl_roi_preview_empty)
     window.lbl_roi_preview_empty.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -579,25 +622,26 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.roi_preview_canvas.set_interactive(False)
     window.roi_preview_canvas.setMinimumSize(
         ROI_PREVIEW_CANVAS_MIN_WIDTH,
-        ROI_PREVIEW_CANVAS_MIN_HEIGHT,
+        max(120, ROI_PREVIEW_CANVAS_MIN_HEIGHT // 2),
     )
+    window.roi_preview_canvas.setMaximumHeight(220)
     window.roi_preview_canvas.setSizePolicy(
         QSizePolicy.Policy.Expanding,
-        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Preferred,
     )
     window.roi_preview_canvas.hide()
-    layout.addWidget(window.roi_preview_canvas, stretch=1)
+    layout.addWidget(window.roi_preview_canvas)
     return host
 
 
 def build_roi_workflow_strip(window: MainWindow, layout: QVBoxLayout) -> None:
-    """ROI save status below the image workspace row."""
+    """Crop save status below the image workspace row."""
     strip = QVBoxLayout()
     strip.setSpacing(ROI_HINT_STATUS_SPACING)
 
     window.lbl_roi_save_status = QLabel("—")
     window.lbl_roi_save_status.setWordWrap(True)
-    window._set_roi_save_status("No ROI saved yet", saved=False)
+    window._set_roi_save_status("No crop saved yet", saved=False)
     strip.addWidget(window.lbl_roi_save_status)
 
     layout.addLayout(strip)
@@ -1030,13 +1074,15 @@ def build_tracking_settings_form(window: MainWindow) -> QWidget:
     layout = QVBoxLayout(wrap)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_SECTION_SPACING)
-    layout.addWidget(build_timing_settings_section(window))
+    # Timing radios + custom SPF live in the Workbench setup column.
     layout.addWidget(form)
     return wrap
 
 
 def build_tracking_settings_page(window: MainWindow) -> QWidget:
-    create_tracking_setting_widgets(window)
+    # Widgets are created with the Workbench setup panel when available.
+    if not hasattr(window, "spin_track_spf"):
+        create_tracking_setting_widgets(window)
     content = QWidget()
     layout = QVBoxLayout(content)
     apply_side_panel_inner_margins(layout)

@@ -37,6 +37,7 @@ from actintrack_app.timing_provenance import (
     ANNOTATION_FIELD_TIMING,
     TimingMetadata,
 )
+from actintrack_app.workflow_state import ANNOTATION_FIELD_CROP_CONFIRMED
 
 
 def _utc_now_iso() -> str:
@@ -74,14 +75,16 @@ def build_sample_annotation(
     cutoff_boundary: CutoffBoundary | None = None,
     cell_region: CellRegion | None = None,
     timing: TimingMetadata | None = None,
+    crop_confirmed: bool | None = None,
 ) -> dict[str, Any]:
     """Structured annotation for training and export.
 
     Optional ``nucleus_reference``, ``cutoff_boundary``, ``cell_region``,
-    ``timing``, and ``roi`` persist in oriented_frame_pixels (timing is
-    analysis metadata, not geometry). They are omitted when None so old
-    projects stay unchanged and a missing crop does not erase scientific
-    state. Legacy cutoff_y is not written here and is not promoted on load.
+    ``timing``, ``crop_confirmed``, and ``roi`` persist in
+    oriented_frame_pixels (timing/crop_confirmed are workflow metadata, not
+    geometry). They are omitted when None so old projects stay unchanged and
+    a missing crop does not erase scientific state. Legacy cutoff_y is not
+    written here and is not promoted on load.
     """
     ann: dict[str, Any] = {
         "sample_id": str(sample_id),
@@ -130,6 +133,8 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
     if timing is not None:
         ann[ANNOTATION_FIELD_TIMING] = timing.to_dict()
+    if crop_confirmed is not None:
+        ann[ANNOTATION_FIELD_CROP_CONFIRMED] = bool(crop_confirmed)
     return ann
 
 
