@@ -128,6 +128,13 @@ class OpticalFlowResult:
         }
         if self.settings is not None:
             payload["settings"] = asdict(self.settings)
+            payload["timing_provenance"] = {
+                "analysis_seconds_per_frame": float(self.settings.seconds_per_frame),
+                "timing_source": "settings",
+                "timing_confirmed": False,
+                "observed_video_fps": None,
+                "observed_frame_interval_s": None,
+            }
         return payload
 
 

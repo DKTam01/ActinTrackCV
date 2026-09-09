@@ -308,6 +308,13 @@ class MotionIndexResult:
                 "microns_per_pixel": float(self.params.microns_per_pixel),
                 "seconds_per_frame": float(self.params.seconds_per_frame),
             },
+            "timing_provenance": {
+                "analysis_seconds_per_frame": float(self.params.seconds_per_frame),
+                "timing_source": "parameters",
+                "timing_confirmed": False,
+                "observed_video_fps": None,
+                "observed_frame_interval_s": None,
+            },
             "primary_velocity_metric": "absolute_velocity_index_um_per_s",
             "recommended_scalar_speed_metric": "time_weighted_mean_speed_um_per_s",
             "primary_velocity_index_um_per_s": self.general_movement_index_um_per_s,

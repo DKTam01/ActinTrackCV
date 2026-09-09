@@ -33,6 +33,10 @@ from actintrack_app.scientific_annotations import (
     cutoff_boundary_from_annotation,
     nucleus_reference_from_annotation,
 )
+from actintrack_app.timing_provenance import (
+    ANNOTATION_FIELD_TIMING,
+    TimingMetadata,
+)
 
 
 def _utc_now_iso() -> str:
@@ -69,12 +73,14 @@ def build_sample_annotation(
     nucleus_reference: NucleusReference | None = None,
     cutoff_boundary: CutoffBoundary | None = None,
     cell_region: CellRegion | None = None,
+    timing: TimingMetadata | None = None,
 ) -> dict[str, Any]:
     """Structured annotation for training and export.
 
-    Optional ``nucleus_reference``, ``cutoff_boundary``, ``cell_region``, and
-    ``roi`` persist in oriented_frame_pixels. They are omitted when None so
-    old projects stay unchanged and a missing crop does not erase scientific
+    Optional ``nucleus_reference``, ``cutoff_boundary``, ``cell_region``,
+    ``timing``, and ``roi`` persist in oriented_frame_pixels (timing is
+    analysis metadata, not geometry). They are omitted when None so old
+    projects stay unchanged and a missing crop does not erase scientific
     state. Legacy cutoff_y is not written here and is not promoted on load.
     """
     ann: dict[str, Any] = {
@@ -122,6 +128,8 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_CUTOFF_BOUNDARY] = cutoff_boundary.to_dict()
     if cell_region is not None:
         ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
+    if timing is not None:
+        ann[ANNOTATION_FIELD_TIMING] = timing.to_dict()
     return ann
 
 
