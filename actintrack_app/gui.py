@@ -282,6 +282,7 @@ from actintrack_app.utils import (
 )
 from actintrack_app.video_processing import MediaLoadError, load_media_frame
 from actintrack_app import gui_dialogs
+from actintrack_app.file_importer import set_custom_export_name
 from actintrack_app.gui_result_loaders import (
     load_latest_optical_flow_result_view,
     load_latest_structural_orientation_result_view,
@@ -917,6 +918,9 @@ class MainWindow(QMainWindow):
         self._set_left_explorer_visible(False)
         self._center_stack.setCurrentIndex(1)
         self.refresh_analysis_view()
+        self._status(
+            "Analysis — condition-group results. Return to Samples to leave this view."
+        )
 
     def refresh_analysis_view(self) -> None:
         if self._project_root is None:
@@ -4269,7 +4273,9 @@ class MainWindow(QMainWindow):
 
     def _clear_preview_pane(self) -> None:
         self.lbl_auto_export_name.setText("Auto name: —")
+        self.edit_export_name.blockSignals(True)
         self.edit_export_name.clear()
+        self.edit_export_name.blockSignals(False)
         self.reset_preview_state(
             clear_image=True,
             placeholder=self._SELECT_SAMPLE_HINT,
@@ -4384,8 +4390,36 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         self._refresh_roi_save_status_from_context()
         self._refresh_roi_preview_panel()
+        self._ensure_missing_cell_region(persist=True)
         self._sync_scientific_overlay()
         self._update_metric_freshness_label()
+
+    def _ensure_missing_cell_region(self, *, persist: bool = True) -> None:
+        """Generate CellRegion when a legacy annotation has crop ROI but no cell.
+
+        Existing persisted CellRegion is never overwritten. When generation
+        succeeds and a rectangular crop is present, autosave so reopen stays
+        stable.
+        """
+        if self._cell_region is not None:
+            return
+        oriented_fn = getattr(self, "_oriented_frame", None)
+        oriented = oriented_fn() if callable(oriented_fn) else None
+        if oriented is None:
+            return
+        canvas = getattr(self, "canvas", None)
+        fallback = canvas.rect_roi() if canvas is not None else None
+        self._cell_region = suggest_conservative_cell_region(
+            oriented, fallback_rect=fallback
+        )
+        if (
+            persist
+            and canvas is not None
+            and canvas.rect_roi() is not None
+            and getattr(self, "_project_root", None) is not None
+            and getattr(self, "_current_sample", None) is not None
+        ):
+            self._autosave_roi(quiet=True)
 
     def _apply_auto_suggested_roi(self, *, render_canvas: bool) -> None:
         oriented = self._oriented_frame()
@@ -4540,16 +4574,14 @@ class MainWindow(QMainWindow):
         try:
             result = set_custom_export_name(self._project_root, sid, custom)
             self._current_sample.update(result)
-            update_samples_csv(
-                self._project_root / METADATA_DIR / SAMPLES_CSV,
-                {"sample_id": sid, **result},
-            )
             self._status(f"Export name: {result['final_export_name']}")
         except ValueError as e:
             gui_dialogs.warning(self, "Export Name", str(e))
+            self.edit_export_name.blockSignals(True)
             self.edit_export_name.setText(
                 str(self._current_sample.get("final_export_name", auto_name))
             )
+            self.edit_export_name.blockSignals(False)
 
     def _menu_new_workspace(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -5210,6 +5242,7 @@ class MainWindow(QMainWindow):
 
 def run_app() -> None:
     breadcrumb("app start", version=__version__)
+    _install_gui_exception_reporting()
     app = QApplication(sys.argv)
     app.setApplicationName("ActinTrackCV")
     app.setApplicationVersion(__version__)
@@ -5220,3 +5253,41 @@ def run_app() -> None:
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
+
+
+def _install_gui_exception_reporting() -> None:
+    """Report uncaught callback exceptions without swallowing them.
+
+    Preserves the full traceback via logging/breadcrumb and shows a concise
+    dialog when a Qt application is available. The previous excepthook still
+    runs so failures remain visible to developers and crash reporters.
+    """
+    import traceback
+
+    previous = sys.excepthook
+
+    def _hook(exc_type, exc, tb) -> None:  # type: ignore[no-untyped-def]
+        details = "".join(traceback.format_exception(exc_type, exc, tb))
+        breadcrumb(
+            "uncaught_gui_exception",
+            exception_type=getattr(exc_type, "__name__", str(exc_type)),
+            exception=str(exc),
+            traceback_tail=details[-2500:],
+        )
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                QMessageBox.critical(
+                    None,
+                    "Unexpected Error",
+                    (
+                        f"{getattr(exc_type, '__name__', 'Error')}: {exc}\n\n"
+                        "The action did not complete. See the application log "
+                        "for the full traceback."
+                    ),
+                )
+            except Exception:
+                pass
+        previous(exc_type, exc, tb)
+
+    sys.excepthook = _hook
