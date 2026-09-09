@@ -176,6 +176,65 @@ class ExceptionReportingTests(unittest.TestCase):
         self.assertIn("_install_gui_exception_reporting", src)
         self.assertTrue(callable(_install_gui_exception_reporting))
 
+    def test_gui_binds_canonical_breadcrumb(self) -> None:
+        """T2 briefly dropped this import; startup and Add Sample both need it."""
+        import actintrack_app.gui as gui_mod
+        from actintrack_app.debug_log import breadcrumb as canonical
+
+        self.assertIs(gui_mod.breadcrumb, canonical)
+        self.assertIn("breadcrumb(", inspect.getsource(gui_mod.run_app))
+        self.assertIn(
+            "breadcrumb(",
+            inspect.getsource(_install_gui_exception_reporting),
+        )
+
+    def test_run_app_startup_reaches_main_window(self) -> None:
+        """Smoke-test startup far enough to construct and show MainWindow."""
+        import actintrack_app.gui as gui_mod
+
+        created: list[object] = []
+
+        class _FakeApp:
+            def __init__(self, _argv: list[str]) -> None:
+                pass
+
+            def setApplicationName(self, _name: str) -> None:
+                pass
+
+            def setApplicationVersion(self, _version: str) -> None:
+                pass
+
+            def setOrganizationName(self, _name: str) -> None:
+                pass
+
+            def setWindowIcon(self, _icon: object) -> None:
+                pass
+
+            def exec(self) -> int:
+                return 0
+
+        class _FakeWindow:
+            def __init__(self) -> None:
+                created.append(self)
+
+            def show(self) -> None:
+                pass
+
+        with (
+            patch.object(gui_mod, "QApplication", _FakeApp),
+            patch.object(gui_mod, "MainWindow", _FakeWindow),
+            patch.object(gui_mod, "_app_qicon", return_value=None),
+            patch.object(gui_mod, "breadcrumb") as breadcrumb_mock,
+            patch.object(gui_mod, "_install_gui_exception_reporting") as install_hook,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            gui_mod.run_app()
+
+        self.assertEqual(raised.exception.code, 0)
+        breadcrumb_mock.assert_called()
+        install_hook.assert_called_once_with()
+        self.assertEqual(len(created), 1)
+
 
 class ExportNameIntegrationTests(unittest.TestCase):
     def test_set_custom_export_name_roundtrip(self) -> None:

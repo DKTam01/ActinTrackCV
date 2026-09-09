@@ -294,6 +294,7 @@ from actintrack_app.gui_result_views import (
     StructuralOrientationResultView,
     format_tracking_result_panel_lines,
 )
+from actintrack_app.debug_log import breadcrumb
 from actintrack_app.timing_provenance import (
     LAB_DEFAULT_SECONDS_PER_FRAME,
     TIMING_SOURCE_CUSTOM,
