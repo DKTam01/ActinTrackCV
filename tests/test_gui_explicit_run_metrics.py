@@ -57,15 +57,18 @@ class RoiEditExplicitRunTests(unittest.TestCase):
         window._roi_user_adjusted = False
         window._roi_autosave_pending = False
         window._loaded_annotation_source = ""
+        window._crop_confirmed = False
         window._set_roi_save_status = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
+        window._sync_workflow_controls = MagicMock()
 
         MainWindow.on_roi_changed(window, RectROI(1, 2, 10, 12))
 
         self.assertNotIn("S1", window._tracking_result_stale_by_sample)
         self.assertNotIn("S1", window._optical_flow_stale_by_sample)
         window._update_metric_freshness_label.assert_not_called()
+        window._sync_workflow_controls.assert_called()
 
     def test_autosave_marks_stale_only_when_geometry_changes_and_metrics_exist(
         self,
@@ -213,12 +216,19 @@ class RunMetricsButtonTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window.run_metrics_for_sample_id = MagicMock(return_value="analyzed")
+        window._workflow_snapshot_for_current = MagicMock(
+            return_value=MagicMock(
+                run_metrics_block_reason=MagicMock(return_value=None),
+            )
+        )
+        window._status = MagicMock()
+        window._sync_workflow_controls = MagicMock()
 
         MainWindow.run_metrics_now_for_current_sample(window)
 
         window.run_metrics_for_sample_id.assert_called_once_with(
             "S1",
-            show_dialog_on_block=False,
+            show_dialog_on_block=True,
         )
 
 

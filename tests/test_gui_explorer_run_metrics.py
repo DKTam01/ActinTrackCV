@@ -90,12 +90,17 @@ class RunMetricsForSampleIdTests(unittest.TestCase):
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
         window.run_metrics_for_sample_id = MagicMock(return_value="analyzed")
+        window._workflow_snapshot_for_current = MagicMock(
+            return_value=MagicMock(run_metrics_block_reason=MagicMock(return_value=None))
+        )
+        window._status = MagicMock()
+        window._sync_workflow_controls = MagicMock()
 
         MainWindow.run_metrics_now_for_current_sample(window)
 
         window.run_metrics_for_sample_id.assert_called_once_with(
             "S1",
-            show_dialog_on_block=False,
+            show_dialog_on_block=True,
         )
 
 

@@ -57,6 +57,15 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
         window._tracking_params_from_ui = MagicMock(return_value=MotionIndexParams())
         return window
 
+    def _allow_metric_analysis(self, window: MainWindow) -> None:
+        window._base_frame = object()
+        window._crop_confirmed = True
+        window._cell_region = object()
+        window._nucleus_reference = object()
+        window._timing = MagicMock(confirmed=True)
+        window._sample_has_measurable_draft_results = MagicMock(return_value=True)
+        window._metrics_inflight = set()
+
     def test_enter_metric_analysis_does_not_call_compute_helpers(self) -> None:
         source = inspect.getsource(MainWindow.enter_metric_analysis_view_for_current_sample)
         for token in (
@@ -72,6 +81,7 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
 
     def test_enter_with_existing_in_memory_metrics_delegates_to_display(self) -> None:
         window = self._stub_window()
+        self._allow_metric_analysis(window)
         window._tracking_results_by_sample["S1"] = _preview_analysis()
 
         with patch("actintrack_app.gui.is_supported_video_path", return_value=True):
@@ -80,32 +90,29 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
         self.assertTrue(ok)
         window._display_metric_analysis_view_for_current_sample.assert_called_once()
 
-    def test_enter_with_stale_draft_metrics_delegates_to_display(self) -> None:
+    def test_enter_with_stale_draft_metrics_is_blocked(self) -> None:
         window = self._stub_window()
+        self._allow_metric_analysis(window)
         window._tracking_result_stale_by_sample["S1"] = True
-        window._read_draft_tracking_payload = MagicMock(
-            return_value={"num_tracks_with_valid_steps": 2}
-        )
-        window._read_draft_optical_flow_payload = MagicMock(
-            return_value={"has_valid_result": True}
-        )
+        window._sample_has_measurable_draft_results = MagicMock(return_value=True)
 
-        with patch("actintrack_app.gui.is_supported_video_path", return_value=True):
-            ok = MainWindow.enter_metric_analysis_view_for_current_sample(window)
+        ok = MainWindow.enter_metric_analysis_view_for_current_sample(window)
 
-        self.assertTrue(ok)
-        window._display_metric_analysis_view_for_current_sample.assert_called_once()
+        self.assertFalse(ok)
+        window._report_metric_view_blocked.assert_called()
+        window._display_metric_analysis_view_for_current_sample.assert_not_called()
 
-    def test_enter_without_metrics_shows_display_path_not_compute(self) -> None:
+    def test_enter_without_metrics_is_blocked(self) -> None:
         window = self._stub_window()
-        window._read_draft_tracking_payload = MagicMock(return_value=None)
-        window._read_draft_optical_flow_payload = MagicMock(return_value=None)
+        window._base_frame = object()
+        window._sample_has_measurable_draft_results = MagicMock(return_value=False)
+        window._metrics_inflight = set()
 
-        with patch("actintrack_app.gui.is_supported_video_path", return_value=True):
-            ok = MainWindow.enter_metric_analysis_view_for_current_sample(window)
+        ok = MainWindow.enter_metric_analysis_view_for_current_sample(window)
 
-        self.assertTrue(ok)
-        window._display_metric_analysis_view_for_current_sample.assert_called_once()
+        self.assertFalse(ok)
+        window._report_metric_view_blocked.assert_called()
+        window._display_metric_analysis_view_for_current_sample.assert_not_called()
 
     def test_display_uses_cached_analysis_without_recompute(self) -> None:
         window = self._stub_window()
@@ -181,9 +188,21 @@ class RunMetricsUnchangedTests(unittest.TestCase):
     def test_run_metrics_still_computes(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample_id = "S1"
+        window._base_frame = object()
         window._metrics_inflight = set()
         window._sample_has_valid_data_and_roi = MagicMock(return_value=True)
         window._compute_metrics_for_sample = MagicMock(return_value="analyzed")
+        window._crop_confirmed = True
+        window._cell_region = object()
+        window._nucleus_reference = object()
+        window._timing = MagicMock(confirmed=True)
+        window.canvas = MagicMock()
+        window.canvas.rect_roi.return_value = object()
+        window._sample_has_measurable_draft_results = MagicMock(return_value=False)
+        window._tracking_result_stale_by_sample = {}
+        window._optical_flow_stale_by_sample = {}
+        window._status = MagicMock()
+        window._sync_workflow_controls = MagicMock()
 
         result = MainWindow.run_metrics_for_sample_id(
             window,
