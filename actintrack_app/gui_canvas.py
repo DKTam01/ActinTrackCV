@@ -169,7 +169,8 @@ class ImageCanvas(QLabel):
                 cv2.CHAIN_APPROX_SIMPLE,
             )
             if contours:
-                cv2.drawContours(display, contours, -1, (180, 160, 70), 1)
+                # Cyan cell/validity boundary — primary scientific region cue.
+                cv2.drawContours(display, contours, -1, (220, 200, 60), 2)
         elif self._cell_mask_overlay is not None:
             contours, _ = cv2.findContours(
                 (self._cell_mask_overlay > 0).astype(np.uint8),
@@ -260,12 +261,13 @@ class ImageCanvas(QLabel):
             r = self._roi
             x0, y0 = self._image_to_widget(r.x, r.y)
             x1, y1 = self._image_to_widget(r.x1, r.y1)
-            pen = QPen(QColor(80, 220, 120), 2)
+            # Rectangular computational crop — visually secondary to Cell Boundary.
+            pen = QPen(QColor(70, 150, 95, 160), 1)
             painter.setPen(pen)
             painter.drawRect(x0, y0, x1 - x0, y1 - y0)
-            painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
-            painter.setPen(QColor(100, 220, 120))
-            painter.drawText(x0 + 6, y0 + 16, "F-actin analysis ROI")
+            painter.setFont(QFont("Helvetica", 8))
+            painter.setPen(QColor(110, 170, 120, 200))
+            painter.drawText(x0 + 6, y0 + 14, "Crop")
             for hx, hy in (
                 (r.x, r.y),
                 (r.x1, r.y),
@@ -273,12 +275,20 @@ class ImageCanvas(QLabel):
                 (r.x1, r.y1),
             ):
                 sx, sy = self._image_to_widget(hx, hy)
-                painter.setBrush(QBrush(QColor(80, 220, 120)))
-                painter.drawEllipse(
-                    sx - 4, sy - 4, 8, 8
-                )
+                painter.setBrush(QBrush(QColor(70, 150, 95, 180)))
+                painter.setPen(QPen(QColor(70, 150, 95, 180), 1))
+                painter.drawEllipse(sx - 3, sy - 3, 6, 6)
 
         if self._draw_roi and self._frame is not None:
+            if self._validity_mask is not None:
+                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                painter.setPen(QColor(90, 210, 230))
+                painter.drawText(
+                    self._offset_x + 8,
+                    self._offset_y + 18,
+                    "Cell Boundary (analysis area)",
+                )
+
             if self._cutoff_y is not None:
                 y = float(self._cutoff_y)
                 x0, y0 = self._image_to_widget(0, y)
@@ -289,7 +299,7 @@ class ImageCanvas(QLabel):
                 painter.drawLine(x0, y0, x1, y1)
                 painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
                 painter.setPen(QColor(230, 160, 80))
-                painter.drawText(x0 + 6, max(12, y0 - 6), "Cutoff")
+                painter.drawText(x0 + 6, max(12, y0 - 6), "Measurement Cutoff")
 
             if self._nucleus_xy is not None:
                 nx, ny = self._nucleus_xy
@@ -299,6 +309,9 @@ class ImageCanvas(QLabel):
                 painter.drawEllipse(sx - 5, sy - 5, 10, 10)
                 painter.drawLine(sx - 9, sy, sx + 9, sy)
                 painter.drawLine(sx, sy - 9, sx, sy + 9)
+                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                painter.setPen(QColor(255, 120, 170))
+                painter.drawText(sx + 10, sy - 6, "Nucleus")
 
         painter.end()
         self.setPixmap(composite)

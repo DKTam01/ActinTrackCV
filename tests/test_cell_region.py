@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 
@@ -733,11 +733,13 @@ class AnnotationDecoupledFromRoiTests(unittest.TestCase):
 
     def test_legacy_rectangle_only_annotation_still_loads(self) -> None:
         window = _annotation_window(roi=None)
+        window._project_root = None
         window._refresh_display = MagicMock()
         window._update_orientation_label = MagicMock()
         window._refresh_roi_save_status_from_context = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
+        window._sync_scientific_overlay = MagicMock()
         window._roi_autosave_pending = False
         ann = {
             "sample_id": "S1",
@@ -749,11 +751,51 @@ class AnnotationDecoupledFromRoiTests(unittest.TestCase):
             "mirror_y_axis": False,
             "rectangle_roi": {"x": 1, "y": 2, "width": 10, "height": 12},
         }
-        MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+        with patch(
+            "actintrack_app.gui.suggest_conservative_cell_region",
+            return_value=CellRegion.from_rect(RectROI(1, 2, 10, 12), source="auto_suggested"),
+        ) as mock_suggest:
+            MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+            mock_suggest.assert_called_once()
         window.canvas.set_rect_roi.assert_called()
         self.assertIsNone(window._nucleus_reference)
         self.assertIsNone(window._cutoff_boundary)
-        self.assertIsNone(window._cell_region)
+        self.assertIsNotNone(window._cell_region)
+
+    def test_missing_cell_region_is_generated_on_load(self) -> None:
+        window = _annotation_window(roi=RectROI(1, 2, 10, 12))
+        window._project_root = None
+        window._cell_region = None
+        window._refresh_display = MagicMock()
+        window._update_orientation_label = MagicMock()
+        window._refresh_roi_save_status_from_context = MagicMock()
+        window._refresh_roi_preview_panel = MagicMock()
+        window._update_metric_freshness_label = MagicMock()
+        window._sync_scientific_overlay = MagicMock()
+        window._autosave_roi = MagicMock(return_value=True)
+        window._roi_autosave_pending = False
+        suggested = CellRegion.from_polygon(
+            ((2, 3), (9, 3), (8, 12), (2, 11)), source="auto_suggested"
+        )
+        ann = {
+            "sample_id": "S1",
+            "reference_frame_index": 0,
+            "notes": "",
+            "annotation_source": "manual",
+            "rotation_angle_degrees": 0.0,
+            "flipped_180": False,
+            "mirror_y_axis": False,
+            "rectangle_roi": {"x": 1, "y": 2, "width": 10, "height": 12},
+        }
+        with patch(
+            "actintrack_app.gui.suggest_conservative_cell_region",
+            return_value=suggested,
+        ) as mock_suggest:
+            MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
+            mock_suggest.assert_called_once()
+        self.assertIs(window._cell_region, suggested)
+        # No project root → ensure must not attempt autosave persistence.
+        window._autosave_roi.assert_not_called()
 
 
 if __name__ == "__main__":
