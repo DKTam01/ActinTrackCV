@@ -152,7 +152,8 @@ class AnalysisWithoutNucleusTests(unittest.TestCase):
             optical_flow_qc_status="OK",
             optical_flow_frame_pair_count="4",
         )
-        self.assertIn("General Movement: 0.0500 µm/s", text)
+        self.assertIn("Calibrated Velocity: 0.0500 µm/s", text)
+        self.assertIn("Timing unconfirmed", text)
         self.assertNotIn("Toward Nucleus:", text)
         self.assertIn("Not generated yet", text)
 

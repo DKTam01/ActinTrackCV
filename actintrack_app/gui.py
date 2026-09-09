@@ -294,7 +294,16 @@ from actintrack_app.gui_result_views import (
     StructuralOrientationResultView,
     format_tracking_result_panel_lines,
 )
-from actintrack_app.debug_log import breadcrumb
+from actintrack_app.timing_provenance import (
+    LAB_DEFAULT_SECONDS_PER_FRAME,
+    TIMING_SOURCE_CUSTOM,
+    TIMING_SOURCE_LAB_DEFAULT,
+    TIMING_SOURCE_VIDEO_HEADER,
+    TimingMetadata,
+    probe_video_playback_fps,
+    timing_from_annotation,
+    timing_from_result_payload,
+)
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
     app_root,
@@ -497,6 +506,8 @@ class MainWindow(QMainWindow):
         self._cutoff_boundary = None
         self._cell_region = None
         self._scientific_placement_mode: Optional[str] = None
+        self._timing: TimingMetadata | None = None
+        self._timing_ui_syncing = False
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -1257,6 +1268,17 @@ class MainWindow(QMainWindow):
             self._of_flow_caches.pop(prev_sid, None)
 
     def _on_tracking_setting_changed(self, *_args: object) -> None:
+        if (
+            not self.__dict__.get("_timing_ui_syncing", False)
+            and self.__dict__.get("radio_timing_custom") is not None
+            and self.radio_timing_custom.isChecked()
+            and self.__dict__.get("spin_track_spf") is not None
+        ):
+            try:
+                self.__dict__["_timing"] = self._proposed_timing_from_ui()
+                self._sync_timing_status_label()
+            except ValueError:
+                pass
         if self._current_sample_id:
             self._tracking_result_stale_by_sample[self._current_sample_id] = True
             self._optical_flow_stale_by_sample[self._current_sample_id] = True
@@ -1300,6 +1322,7 @@ class MainWindow(QMainWindow):
 
     def _optical_flow_settings_from_ui(self) -> OpticalFlowSettings:
         blur = int(self.combo_of_blur.currentData() or 0)
+        timing = self._effective_timing()
         return OpticalFlowSettings(
             mask_percentile=float(self.spin_of_mask_percentile.value()),
             gaussian_blur_kernel=blur,
@@ -1310,7 +1333,7 @@ class MainWindow(QMainWindow):
             poly_n=int(self.spin_of_poly_n.value()),
             poly_sigma=float(self.spin_of_poly_sigma.value()),
             microns_per_pixel=float(self.spin_track_mpp.value()),
-            seconds_per_frame=float(self.spin_track_spf.value()),
+            seconds_per_frame=float(timing.analysis_seconds_per_frame),
         )
 
     def _draft_optical_flow_json_path(self, data_id: str) -> Path:
@@ -1327,6 +1350,14 @@ class MainWindow(QMainWindow):
         path = self._draft_optical_flow_json_path(sample_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(result_to_dict(result), indent=2), encoding="utf-8")
+        timing = self.__dict__.get("_timing")
+        if timing is not None:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["timing_provenance"] = timing.result_provenance_dict()
+                path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            except (OSError, json.JSONDecodeError):
+                pass
 
     def _draft_structural_orientation_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
@@ -1601,6 +1632,9 @@ class MainWindow(QMainWindow):
             if result_obj is not None and result_obj.frame_pair_count
             else "—"
         )
+        template_view, optical_flow_view = self._attach_live_timing_to_views(
+            template_view, optical_flow_view
+        )
         text = format_tracking_result_panel_lines(
             template_view,
             optical_flow_view,
@@ -1611,6 +1645,49 @@ class MainWindow(QMainWindow):
             optical_flow_frame_pair_count=frame_pairs,
         )
         self.lbl_tracking_result.setText(text)
+
+    def _attach_live_timing_to_views(
+        self,
+        template_view: Optional[SampleTrackingResultView],
+        optical_flow_view: Optional[OpticalFlowResultView],
+    ) -> tuple[
+        Optional[SampleTrackingResultView],
+        Optional[OpticalFlowResultView],
+    ]:
+        timing = self.__dict__.get("_timing")
+        if timing is None:
+            return template_view, optical_flow_view
+        if template_view is not None and template_view.status == "success":
+            template_view = SampleTrackingResultView(
+                status=template_view.status,
+                downward_velocity=template_view.downward_velocity,
+                general_movement=template_view.general_movement,
+                general_movement_px_per_frame=template_view.general_movement_px_per_frame,
+                tracks_used=template_view.tracks_used,
+                tracks_requested=template_view.tracks_requested,
+                valid_steps=template_view.valid_steps,
+                toward_nucleus_velocity=template_view.toward_nucleus_velocity,
+                failure_reason=template_view.failure_reason,
+                analysis_seconds_per_frame=timing.analysis_seconds_per_frame,
+                timing_source=timing.timing_source,
+                timing_confirmed=timing.confirmed,
+            )
+        if optical_flow_view is not None and optical_flow_view.status == "success":
+            optical_flow_view = OpticalFlowResultView(
+                status=optical_flow_view.status,
+                general_movement=optical_flow_view.general_movement,
+                general_movement_px_per_frame=optical_flow_view.general_movement_px_per_frame,
+                downward_motion=optical_flow_view.downward_motion,
+                net_y_velocity=optical_flow_view.net_y_velocity,
+                directionality_ratio=optical_flow_view.directionality_ratio,
+                valid_pixel_fraction=optical_flow_view.valid_pixel_fraction,
+                saturated_pixel_fraction=optical_flow_view.saturated_pixel_fraction,
+                failure_reason=optical_flow_view.failure_reason,
+                analysis_seconds_per_frame=timing.analysis_seconds_per_frame,
+                timing_source=timing.timing_source,
+                timing_confirmed=timing.confirmed,
+            )
+        return template_view, optical_flow_view
 
     def update_tracking_result_panel(self, sample_id: Optional[str] = None) -> None:
         if self.__dict__.get("lbl_tracking_result") is None:
@@ -1696,6 +1773,8 @@ class MainWindow(QMainWindow):
                     ),
                 }
             )
+        if self.__dict__.get("_timing") is not None:
+            payload["timing_provenance"] = self.__dict__["_timing"].result_provenance_dict()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _invalidate_tracking_result_for_sample(self, sample_id: str) -> None:
@@ -2601,7 +2680,7 @@ class MainWindow(QMainWindow):
             min_template_confidence=float(self.spin_track_confidence.value()),
             lookahead_frames=int(self.spin_track_lookahead.value()),
             microns_per_pixel=float(self.spin_track_mpp.value()),
-            seconds_per_frame=float(self.spin_track_spf.value()),
+            seconds_per_frame=float(self._effective_timing().analysis_seconds_per_frame),
             downward_direction="increasing_y",
             tracking_method=str(
                 self.combo_track_method.currentData() or TRACKING_METHOD_BRIGHTEST_LOCAL
@@ -2970,6 +3049,7 @@ class MainWindow(QMainWindow):
             nucleus_reference=self._nucleus_reference,
             cutoff_boundary=self._cutoff_boundary,
             cell_region=self._cell_region,
+            timing=self.__dict__.get("_timing"),
         )
 
     def _on_save_annotation(self) -> None:
@@ -4364,6 +4444,7 @@ class MainWindow(QMainWindow):
             scientific_annotations_from_annotation(ann)
         )
         self._cell_region = cell_region_from_sample_annotation(ann)
+        self.__dict__["_timing"] = timing_from_annotation(ann)
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
@@ -4393,6 +4474,177 @@ class MainWindow(QMainWindow):
         self._ensure_missing_cell_region(persist=True)
         self._sync_scientific_overlay()
         self._update_metric_freshness_label()
+        if self.__dict__.get("lbl_timing_detected") is not None:
+            self._ensure_timing_for_current_sample(persist_observed=True)
+
+    def _effective_timing(self) -> TimingMetadata:
+        timing = self.__dict__.get("_timing")
+        if timing is not None:
+            return timing
+        return TimingMetadata.lab_default(confirmed=False)
+
+    def _selected_timing_source_from_ui(self) -> str:
+        if self.__dict__.get("radio_timing_video") is not None and self.radio_timing_video.isChecked():
+            return TIMING_SOURCE_VIDEO_HEADER
+        if self.__dict__.get("radio_timing_custom") is not None and self.radio_timing_custom.isChecked():
+            return TIMING_SOURCE_CUSTOM
+        return TIMING_SOURCE_LAB_DEFAULT
+
+    def _proposed_timing_from_ui(self) -> TimingMetadata:
+        base = self.__dict__.get("_timing") or TimingMetadata.lab_default(confirmed=False)
+        source = self._selected_timing_source_from_ui()
+        custom = (
+            float(self.spin_track_spf.value())
+            if self.__dict__.get("spin_track_spf") is not None
+            else LAB_DEFAULT_SECONDS_PER_FRAME
+        )
+        return base.with_source_choice(
+            source,
+            custom_seconds=custom,
+            confirmed=False,
+        )
+
+    def _sync_timing_ui_from_state(self) -> None:
+        if self.__dict__.get("lbl_timing_detected") is None:
+            return
+        timing = self._effective_timing()
+        self.__dict__["_timing_ui_syncing"] = True
+        try:
+            if timing.observed_video_fps is not None and timing.observed_frame_interval_s is not None:
+                detected = (
+                    "Video timing detected:\n"
+                    f"  {timing.observed_video_fps:.2f} FPS\n"
+                    f"  {timing.observed_frame_interval_s:.4f} s/frame\n\n"
+                    "Video timing = encoded playback metadata.\n"
+                    "Analysis interval = biological time for velocity."
+                )
+                self.radio_timing_video.setEnabled(True)
+                self.radio_timing_video.setText(
+                    f"Use video timing ({timing.observed_frame_interval_s:.4f} s/frame)"
+                )
+            else:
+                detected = (
+                    "Video timing detected:\n"
+                    "  unavailable\n\n"
+                    "Video timing = encoded playback metadata.\n"
+                    "Analysis interval = biological time for velocity."
+                )
+                self.radio_timing_video.setEnabled(False)
+                self.radio_timing_video.setText("Use video timing (unavailable)")
+            self.lbl_timing_detected.setText(detected)
+
+            source = timing.timing_source
+            if source == TIMING_SOURCE_VIDEO_HEADER and self.radio_timing_video.isEnabled():
+                self.radio_timing_video.setChecked(True)
+            elif source == TIMING_SOURCE_CUSTOM:
+                self.radio_timing_custom.setChecked(True)
+            else:
+                self.radio_timing_lab.setChecked(True)
+
+            self.spin_track_spf.blockSignals(True)
+            self.spin_track_spf.setValue(float(timing.analysis_seconds_per_frame))
+            self.spin_track_spf.blockSignals(False)
+            self.spin_track_spf.setEnabled(self.radio_timing_custom.isChecked())
+            self._sync_timing_status_label()
+        finally:
+            self.__dict__["_timing_ui_syncing"] = False
+
+    def _sync_timing_status_label(self) -> None:
+        if self.__dict__.get("lbl_timing_status") is None:
+            return
+        timing = self._effective_timing()
+        state = "confirmed" if timing.confirmed else "not confirmed"
+        self.lbl_timing_status.setText(
+            f"Timing: {state} · analysis {timing.analysis_seconds_per_frame:.4f} s/frame "
+            f"({timing.timing_source})"
+        )
+
+    def _on_timing_choice_changed(self, *_args: object) -> None:
+        if self.__dict__.get("_timing_ui_syncing", False):
+            return
+        if self.__dict__.get("spin_track_spf") is not None:
+            self.spin_track_spf.setEnabled(
+                self.__dict__.get("radio_timing_custom") is not None
+                and self.radio_timing_custom.isChecked()
+            )
+        try:
+            self.__dict__["_timing"] = self._proposed_timing_from_ui()
+        except ValueError as exc:
+            if self.__dict__.get("radio_timing_lab") is not None:
+                self.__dict__["_timing_ui_syncing"] = True
+                self.radio_timing_lab.setChecked(True)
+                self.__dict__["_timing_ui_syncing"] = False
+            self._status(str(exc))
+            return
+        self._sync_timing_status_label()
+        self._on_tracking_setting_changed()
+
+    def _on_confirm_timing(self) -> None:
+        try:
+            proposed = self._proposed_timing_from_ui()
+        except ValueError as exc:
+            gui_dialogs.warning(self, "Confirm Timing", str(exc))
+            return
+        self.__dict__["_timing"] = proposed.confirm()
+        self._sync_timing_ui_from_state()
+        if self._project_root is not None and self._current_sample is not None:
+            self._autosave_roi(quiet=True)
+        timing = self.__dict__["_timing"]
+        self._status(
+            f"Timing confirmed: {timing.analysis_seconds_per_frame:.4f} s/frame "
+            f"({timing.timing_source})"
+        )
+        self.update_tracking_result_panel()
+        self._update_metric_freshness_label()
+
+    def _ensure_timing_for_current_sample(self, *, persist_observed: bool = False) -> None:
+        """Load persisted timing or probe video playback FPS for the active sample."""
+        path = self._sample_file_path()
+        observed = probe_video_playback_fps(path) if path is not None else None
+
+        loaded: TimingMetadata | None = None
+        if self._project_root is not None and self._current_sample is not None:
+            sid = str(self._current_sample.get("sample_id", ""))
+            ann = get_sample_annotation(self._project_root, sid) if sid else None
+            loaded = timing_from_annotation(ann)
+            if loaded is None and sid:
+                draft_path = None
+                try:
+                    from actintrack_app.schema_compat import resolve_draft_tracking_path
+
+                    draft_path = resolve_draft_tracking_path(self._project_root, sid)
+                except Exception:
+                    draft_path = None
+                if draft_path is not None and draft_path.is_file():
+                    try:
+                        draft = json.loads(draft_path.read_text(encoding="utf-8"))
+                        loaded = timing_from_result_payload(draft)
+                    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                        loaded = None
+
+        if loaded is not None:
+            self.__dict__["_timing"] = TimingMetadata(
+                observed_video_fps=observed if observed is not None else loaded.observed_video_fps,
+                observed_frame_interval_s=None,
+                analysis_seconds_per_frame=loaded.analysis_seconds_per_frame,
+                timing_source=loaded.timing_source,
+                confirmed=loaded.confirmed,
+            )
+        else:
+            self.__dict__["_timing"] = TimingMetadata.from_observed_fps(
+                observed, prefer_video_header=True, confirmed=False
+            )
+
+        self._sync_timing_ui_from_state()
+        if (
+            persist_observed
+            and self.__dict__.get("_timing") is not None
+            and self._project_root is not None
+            and self._current_sample is not None
+            and self.__dict__.get("canvas") is not None
+            and self.canvas.rect_roi() is not None
+        ):
+            self._autosave_roi(quiet=True)
 
     def _ensure_missing_cell_region(self, *, persist: bool = True) -> None:
         """Generate CellRegion when a legacy annotation has crop ROI but no cell.
@@ -4494,6 +4746,7 @@ class MainWindow(QMainWindow):
         self._cutoff_boundary = None
         self._cell_region = None
         self._scientific_placement_mode = None
+        self.__dict__["_timing"] = None
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
         if ann:
@@ -4502,10 +4755,14 @@ class MainWindow(QMainWindow):
             self._loaded_sample_notes = ""
             self._refresh_display(keep_roi=False)
             self._apply_auto_suggested_roi(render_canvas=True)
+            if self.__dict__.get("lbl_timing_detected") is not None:
+                self._ensure_timing_for_current_sample(persist_observed=True)
         else:
             self._loaded_sample_notes = ""
             self.canvas.set_rect_roi(None)
             self._apply_auto_suggested_roi(render_canvas=False)
+            if self.__dict__.get("lbl_timing_detected") is not None:
+                self._ensure_timing_for_current_sample(persist_observed=False)
 
         if render_full_preview:
             self._preview_mode = "full"

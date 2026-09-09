@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -92,6 +94,7 @@ from actintrack_app.motion_index import (
 from actintrack_app.optical_flow_motion_index import OpticalFlowSettings
 from actintrack_app.optical_flow_overlay import OpticalFlowVisualizationSettings
 from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
+from actintrack_app.timing_provenance import LAB_DEFAULT_SECONDS_PER_FRAME
 
 if TYPE_CHECKING:
     from actintrack_app.gui import MainWindow
@@ -912,7 +915,7 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
     window.spin_track_spf.setDecimals(4)
     window.spin_track_spf.setValue(defaults.seconds_per_frame)
     window.spin_track_spf.setToolTip(
-        "Time interval between frames used to convert displacement to velocity."
+        "Custom analysis interval (biological time) used when Custom is selected."
     )
 
     window._tracking_setting_widgets = (
@@ -932,6 +935,63 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
             widget.valueChanged.connect(window._on_tracking_setting_changed)
         elif isinstance(widget, QComboBox):
             widget.currentIndexChanged.connect(window._on_tracking_setting_changed)
+
+
+def build_timing_settings_section(window: MainWindow) -> QWidget:
+    """Researcher timing confirmation: video playback vs analysis interval."""
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(SIDE_PANEL_FORM_SPACING)
+
+    title = QLabel("Analysis Timing")
+    apply_hint_style(title)
+    layout.addWidget(title)
+
+    window.lbl_timing_detected = QLabel(
+        "Video timing detected:\n  —\n\n"
+        "Video timing = encoded playback metadata.\n"
+        "Analysis interval = biological time for velocity."
+    )
+    window.lbl_timing_detected.setWordWrap(True)
+    apply_hint_style(window.lbl_timing_detected)
+    layout.addWidget(window.lbl_timing_detected)
+
+    window.radio_timing_video = QRadioButton("Use video timing")
+    window.radio_timing_lab = QRadioButton(
+        f"Lab interval ({LAB_DEFAULT_SECONDS_PER_FRAME:.1f} s/frame)"
+    )
+    window.radio_timing_custom = QRadioButton("Custom")
+    window._timing_button_group = QButtonGroup(host)
+    window._timing_button_group.addButton(window.radio_timing_video, 0)
+    window._timing_button_group.addButton(window.radio_timing_lab, 1)
+    window._timing_button_group.addButton(window.radio_timing_custom, 2)
+    window.radio_timing_lab.setChecked(True)
+    for radio in (
+        window.radio_timing_video,
+        window.radio_timing_lab,
+        window.radio_timing_custom,
+    ):
+        radio.toggled.connect(window._on_timing_choice_changed)
+        layout.addWidget(radio)
+
+    custom_row = QHBoxLayout()
+    custom_row.addWidget(QLabel("Custom s/frame"))
+    custom_row.addWidget(window.spin_track_spf, stretch=1)
+    layout.addLayout(custom_row)
+
+    window.btn_confirm_timing = QPushButton("Confirm Timing")
+    window.btn_confirm_timing.setToolTip(
+        "Confirm the analysis frame interval used for calibrated µm/s."
+    )
+    window.btn_confirm_timing.clicked.connect(window._on_confirm_timing)
+    layout.addWidget(window.btn_confirm_timing)
+
+    window.lbl_timing_status = QLabel("Timing: not confirmed")
+    window.lbl_timing_status.setWordWrap(True)
+    apply_hint_style(window.lbl_timing_status)
+    layout.addWidget(window.lbl_timing_status)
+    return host
 
 
 def build_tracking_settings_form(window: MainWindow) -> QWidget:
@@ -964,9 +1024,15 @@ def build_tracking_settings_form(window: MainWindow) -> QWidget:
             window.spin_track_lookahead.toolTip(),
         ),
         ("Microns per Pixel", window.spin_track_mpp, window.spin_track_mpp.toolTip()),
-        ("Seconds per Frame", window.spin_track_spf, window.spin_track_spf.toolTip()),
     ]
-    return build_inspector_fields_section(rows)
+    form = build_inspector_fields_section(rows)
+    wrap = QWidget()
+    layout = QVBoxLayout(wrap)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(SIDE_PANEL_SECTION_SPACING)
+    layout.addWidget(build_timing_settings_section(window))
+    layout.addWidget(form)
+    return wrap
 
 
 def build_tracking_settings_page(window: MainWindow) -> QWidget:

@@ -177,7 +177,7 @@ class FormatTrackingResultPanelLinesTests(unittest.TestCase):
             optical_flow_frame_pair_count="—",
         )
         self.assertIn("Sparse Tracking", text)
-        self.assertIn("General Movement: 0.5678 µm/s", text)
+        self.assertIn("Calibrated Velocity: 0.5678 µm/s", text)
         self.assertIn("Legacy Downward Velocity: 0.1234 µm/s", text)
         self.assertIn("Tracks Used: 3 / 5", text)
         self.assertIn("Valid Steps: 10", text)
@@ -228,7 +228,7 @@ class FormatTrackingResultPanelLinesTests(unittest.TestCase):
         )
         self.assertIn("Status: Pass", text)
         self.assertIn("Frame pairs used: 3", text)
-        self.assertIn("General Movement: 1.0000 µm/s", text)
+        self.assertIn("Calibrated Velocity: 1.0000 µm/s", text)
         self.assertIn("Legacy Downward Motion: 0.8000 µm/s", text)
         self.assertIn("Legacy Net Y Velocity: 0.6000 µm/s", text)
         self.assertIn("Directionality Ratio: 0.5000", text)
