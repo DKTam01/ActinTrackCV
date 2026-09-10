@@ -96,12 +96,12 @@ _SAMPLE_STATUS_LABELS = {
     STATUS_UNANNOTATED: "Raw",
     STATUS_CUTOFF_MARKED: "Raw",
     "cutoff_marked": "Raw",
-    STATUS_ROI_MARKED: "ROI marked",
-    STATUS_ROI_PROPAGATED: "ROI marked",
-    STATUS_ROI_APPROVED: "ROI marked",
-    STATUS_PROCESSED: "ROI marked",
-    STATUS_MOTION_INDEX_GENERATED: "ROI marked",
-    STATUS_MOTION_INDEX_FAILED: "ROI marked",
+    STATUS_ROI_MARKED: "Cell boundary set",
+    STATUS_ROI_PROPAGATED: "Cell boundary set",
+    STATUS_ROI_APPROVED: "Cell boundary set",
+    STATUS_PROCESSED: "Cell boundary set",
+    STATUS_MOTION_INDEX_GENERATED: "Cell boundary set",
+    STATUS_MOTION_INDEX_FAILED: "Cell boundary set",
     STATUS_FAILED: "Raw",
     STATUS_MISSING_FILE: "Missing file",
 }
@@ -110,8 +110,9 @@ _SAMPLE_STATUS_LABELS = {
 def sample_status_label(status: str) -> str:
     """Map an internal processing_status to a clean user-facing label.
 
-    "Raw" means Data exists but no ROI is marked. "ROI marked" means an ROI
-    exists (auto-suggested or manual). Metric freshness is shown separately.
+    "Raw" means Data exists but no cell boundary is marked. "Cell boundary set"
+    means a Cell Boundary exists (auto-suggested or persisted). Metric freshness
+    is shown separately.
     """
     return _SAMPLE_STATUS_LABELS.get(str(status).strip(), "Raw")
 

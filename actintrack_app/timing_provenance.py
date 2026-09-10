@@ -1,7 +1,13 @@
-"""Explicit video timing provenance and researcher-confirmed analysis interval.
+"""Explicit video timing provenance and analysis interval.
 
-Playback FPS from the container is metadata, not biological acquisition cadence.
-All µm/s calculations must consume one authoritative analysis_seconds_per_frame.
+Playback FPS from the container is metadata, not proven biological acquisition
+cadence. All µm/s calculations must consume one authoritative
+analysis_seconds_per_frame.
+
+Temporary Workbench policy (UX4): when a valid video FPS exists, the analysis
+interval is 1/FPS with timing_source=video_header. Researcher override UI is
+deferred; lab_default/custom sources and confirm() remain so that override can
+be restored without rewriting this module.
 """
 
 from __future__ import annotations
@@ -33,6 +39,15 @@ TIMING_SOURCES = frozenset(
 
 LAB_DEFAULT_SECONDS_PER_FRAME = float(DEFAULT_SECONDS_PER_FRAME)
 HISTORICAL_DEFAULT_SECONDS_PER_FRAME = 0.2
+
+# Temporary product policy: Workbench uses detected video interval only.
+# Flip this (and restore the timing-choice UI) to re-enable researcher override.
+ANALYSIS_USES_VIDEO_HEADER_ONLY = True
+
+MISSING_VIDEO_TIMING_MESSAGE = (
+    "Valid video timing was not detected. Calibrated µm/s cannot run until "
+    "a usable frame rate is available."
+)
 
 # Reject absurd container FPS values that cannot be acquisition/playback cadence.
 _MIN_PLAUSIBLE_FPS = 0.01
@@ -142,6 +157,85 @@ class TimingMetadata:
         object.__setattr__(self, "analysis_seconds_per_frame", spf)
         object.__setattr__(self, "timing_source", source)
         object.__setattr__(self, "confirmed", bool(self.confirmed))
+
+    @property
+    def has_valid_video_timing(self) -> bool:
+        """True when observed container FPS defines a usable interval."""
+        return (
+            self.observed_video_fps is not None
+            and self.observed_frame_interval_s is not None
+            and float(self.observed_frame_interval_s) > 0
+        )
+
+    def _video_header_interval_is_authoritative(self) -> bool:
+        if not self.has_valid_video_timing:
+            return False
+        if self.timing_source != TIMING_SOURCE_VIDEO_HEADER:
+            return False
+        return math.isclose(
+            float(self.analysis_seconds_per_frame),
+            float(self.observed_frame_interval_s),
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+
+    @property
+    def is_calibrated_analysis_ready(self) -> bool:
+        """Whether this metadata may drive calibrated µm/s.
+
+        UX4 uses detected video-header interval only. ``confirm()`` and
+        lab_default/custom sources remain so researcher override can return.
+        """
+        if ANALYSIS_USES_VIDEO_HEADER_ONLY:
+            return self._video_header_interval_is_authoritative()
+        return bool(self.confirmed) and float(self.analysis_seconds_per_frame) > 0
+
+    def display_label(self) -> str:
+        """Researcher-facing Video Timing line; not a biological claim."""
+        if not self.has_valid_video_timing:
+            return "Video timing unavailable"
+        fps = float(self.observed_video_fps)
+        interval = float(self.observed_frame_interval_s)
+        return f"{fps:.2f} FPS · {interval:.4f} s/frame"
+
+    @classmethod
+    def from_video_header(
+        cls,
+        fps: float | None,
+        *,
+        confirmed: bool = True,
+    ) -> TimingMetadata | None:
+        """Build video-header timing, or None when FPS is missing/invalid.
+
+        Does not invent an analysis interval.
+        """
+        checked = validate_observed_fps(fps)
+        interval = frame_interval_from_fps(checked)
+        if interval is None:
+            return None
+        return cls(
+            observed_video_fps=checked,
+            observed_frame_interval_s=interval,
+            analysis_seconds_per_frame=float(interval),
+            timing_source=TIMING_SOURCE_VIDEO_HEADER,
+            confirmed=confirmed,
+        )
+
+    @classmethod
+    def unresolved(
+        cls,
+        *,
+        observed_video_fps: float | None = None,
+    ) -> TimingMetadata:
+        """Observed FPS missing/invalid; not usable for calibrated metrics."""
+        checked = validate_observed_fps(observed_video_fps)
+        return cls(
+            observed_video_fps=checked,
+            observed_frame_interval_s=frame_interval_from_fps(checked),
+            analysis_seconds_per_frame=LAB_DEFAULT_SECONDS_PER_FRAME,
+            timing_source=TIMING_SOURCE_VIDEO_HEADER,
+            confirmed=False,
+        )
 
     @classmethod
     def from_observed_fps(
@@ -330,6 +424,13 @@ def timing_from_result_payload(data: dict[str, Any] | None) -> TimingMetadata | 
         except (TypeError, ValueError):
             return None
     return None
+
+
+def require_calibrated_timing(timing: TimingMetadata | None) -> TimingMetadata:
+    """Raise if timing cannot drive calibrated µm/s under current policy."""
+    if timing is None or not timing.is_calibrated_analysis_ready:
+        raise ValueError(MISSING_VIDEO_TIMING_MESSAGE)
+    return timing
 
 
 def merge_timing_into_annotation(

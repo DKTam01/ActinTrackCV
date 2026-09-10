@@ -7,7 +7,7 @@ PROCESSING_STATUS_DISPLAY: dict[str, str] = {
     "raw_imported": "Imported",
     "unannotated": "Unannotated",
     "imported": "Imported",
-    "roi_marked": "ROI marked",
+    "roi_marked": "Cell boundary set",
     "roi_propagated_needs_review": "ROI propagated — needs review",
     "roi_approved": "ROI approved",
     "processed": "Processed",

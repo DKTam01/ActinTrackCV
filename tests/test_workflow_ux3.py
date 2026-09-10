@@ -229,7 +229,10 @@ class SampleResultsPlacementTests(unittest.TestCase):
         self.assertIn("build_sample_results_beside_canvas(window)", images)
         self.assertIn("slider_cell_boundary", setup)
         self.assertIn("Select Nucleus", setup)
-        self.assertIn("Confirm Timing", layout)
+        self.assertIn("Video Timing", layout)
+        self.assertNotIn("Confirm Timing", layout)
+        self.assertNotIn("radio_timing_video", layout)
+        self.assertNotIn("Custom s/frame", layout)
 
 
 class MetricAnalysisOrientationCheckboxTests(unittest.TestCase):

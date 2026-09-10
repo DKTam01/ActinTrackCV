@@ -12,7 +12,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QAbstractSpinBox,
-    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -21,7 +20,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
@@ -94,7 +92,6 @@ from actintrack_app.motion_index import (
 from actintrack_app.optical_flow_motion_index import OpticalFlowSettings
 from actintrack_app.optical_flow_overlay import OpticalFlowVisualizationSettings
 from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox, NoWheelSpinBox
-from actintrack_app.timing_provenance import LAB_DEFAULT_SECONDS_PER_FRAME
 
 if TYPE_CHECKING:
     from actintrack_app.gui import MainWindow
@@ -104,6 +101,8 @@ DEFAULT_SPLITTER_SIZES = [LEFT_PANEL_MIN_WIDTH, 900]
 PLAYBACK_SPEED_OPTIONS = ("0.25×", "0.5×", "1×", "1.5×", "2×")
 METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis"
 ROI_PREVIEW_PANEL_OBJECT_NAME = "roiPreviewPanel"
+ROI_PREVIEW_PANEL_MIN_WIDTH = 180
+ROI_PREVIEW_PANEL_MAX_WIDTH = 280
 SAMPLE_RESULTS_PANEL_MIN_WIDTH = 168
 SAMPLE_RESULTS_PANEL_MAX_WIDTH = 220
 ROI_PREVIEW_CANVAS_MIN_WIDTH = 160
@@ -656,12 +655,12 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.btn_clear_nucleus = QPushButton("Clear")
     window.btn_clear_nucleus.setToolTip("Clear the nucleus center.")
     window.btn_clear_nucleus.clicked.connect(window._on_clear_nucleus)
+    apply_workbench_action_button(window.btn_clear_nucleus)
     window.btn_clear_nucleus.setEnabled(False)
     nucleus_row.addWidget(window.btn_select_nucleus, stretch=1)
-    nucleus_row.addWidget(window.btn_clear_nucleus)
+    nucleus_row.addWidget(window.btn_clear_nucleus, stretch=1)
     layout.addLayout(nucleus_row)
 
-    # Timing confirmation belongs in the primary setup column (before Run Metrics).
     create_tracking_setting_widgets(window)
     layout.addWidget(build_timing_settings_section(window))
 
@@ -673,10 +672,12 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
         "Optional horizontal cutoff. Adjust only when the default is not right."
     )
     window.btn_advanced_cutoff.clicked.connect(window._on_set_cutoff_mode)
+    apply_workbench_action_button(window.btn_advanced_cutoff)
     window.btn_advanced_cutoff.setEnabled(False)
     layout.addWidget(window.btn_advanced_cutoff)
     window.btn_clear_cutoff = QPushButton("Clear Cutoff")
     window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
+    apply_workbench_action_button(window.btn_clear_cutoff)
     window.btn_clear_cutoff.setEnabled(False)
     layout.addWidget(window.btn_clear_cutoff)
     layout.addStretch(1)
@@ -1009,14 +1010,6 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
         "Physical image scale used to convert pixels to microns."
     )
 
-    window.spin_track_spf = NoWheelDoubleSpinBox()
-    window.spin_track_spf.setRange(0.001, 60.0)
-    window.spin_track_spf.setDecimals(4)
-    window.spin_track_spf.setValue(defaults.seconds_per_frame)
-    window.spin_track_spf.setToolTip(
-        "Custom analysis interval (biological time) used when Custom is selected."
-    )
-
     window._tracking_setting_widgets = (
         window.combo_track_method,
         window.spin_track_points,
@@ -1026,7 +1019,6 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
         window.spin_track_confidence,
         window.spin_track_lookahead,
         window.spin_track_mpp,
-        window.spin_track_spf,
     )
     for widget in window._tracking_setting_widgets:
         configure_tracking_field(widget, full_column=True)
@@ -1037,58 +1029,29 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
 
 
 def build_timing_settings_section(window: MainWindow) -> QWidget:
-    """Researcher timing confirmation: video playback vs analysis interval."""
+    """Detected video timing readout. Researcher override UI is deferred."""
     host = QWidget()
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_FORM_SPACING)
 
-    title = QLabel("Analysis Timing")
-    apply_hint_style(title)
+    title = QLabel("Video Timing")
+    apply_inspector_field_label_style(title)
     layout.addWidget(title)
 
-    window.lbl_timing_detected = QLabel(
-        "Video timing detected:\n  —\n\n"
-        "Video timing = encoded playback metadata.\n"
-        "Analysis interval = biological time for velocity."
-    )
+    window.lbl_timing_detected = QLabel("Video timing unavailable")
     window.lbl_timing_detected.setWordWrap(True)
     apply_hint_style(window.lbl_timing_detected)
+    window.lbl_timing_detected.setToolTip(
+        "Encoded playback metadata from the video file. "
+        "This is the current analysis interval, not a proven microscope "
+        "acquisition cadence."
+    )
     layout.addWidget(window.lbl_timing_detected)
-
-    window.radio_timing_video = QRadioButton("Use video timing")
-    window.radio_timing_lab = QRadioButton(
-        f"Lab interval ({LAB_DEFAULT_SECONDS_PER_FRAME:.1f} s/frame)"
-    )
-    window.radio_timing_custom = QRadioButton("Custom")
-    window._timing_button_group = QButtonGroup(host)
-    window._timing_button_group.addButton(window.radio_timing_video, 0)
-    window._timing_button_group.addButton(window.radio_timing_lab, 1)
-    window._timing_button_group.addButton(window.radio_timing_custom, 2)
-    window.radio_timing_lab.setChecked(True)
-    for radio in (
-        window.radio_timing_video,
-        window.radio_timing_lab,
-        window.radio_timing_custom,
-    ):
-        radio.toggled.connect(window._on_timing_choice_changed)
-        layout.addWidget(radio)
-
-    custom_row = QHBoxLayout()
-    custom_row.addWidget(QLabel("Custom s/frame"))
-    custom_row.addWidget(window.spin_track_spf, stretch=1)
-    layout.addLayout(custom_row)
-
-    window.btn_confirm_timing = QPushButton("Confirm Timing")
-    window.btn_confirm_timing.setToolTip(
-        "Confirm the analysis frame interval used for calibrated µm/s."
-    )
-    window.btn_confirm_timing.clicked.connect(window._on_confirm_timing)
-    layout.addWidget(window.btn_confirm_timing)
-
-    window.lbl_timing_status = QLabel("Timing: not confirmed")
+    window.lbl_timing_status = QLabel("")
     window.lbl_timing_status.setWordWrap(True)
     apply_hint_style(window.lbl_timing_status)
+    window.lbl_timing_status.hide()
     layout.addWidget(window.lbl_timing_status)
     return host
 
@@ -1129,14 +1092,13 @@ def build_tracking_settings_form(window: MainWindow) -> QWidget:
     layout = QVBoxLayout(wrap)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_SECTION_SPACING)
-    # Timing radios + custom SPF live in the Workbench setup column.
     layout.addWidget(form)
     return wrap
 
 
 def build_tracking_settings_page(window: MainWindow) -> QWidget:
     # Widgets are created with the Workbench setup panel when available.
-    if not hasattr(window, "spin_track_spf"):
+    if not hasattr(window, "spin_track_mpp"):
         create_tracking_setting_widgets(window)
     content = QWidget()
     layout = QVBoxLayout(content)

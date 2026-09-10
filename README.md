@@ -200,9 +200,7 @@ Sparse tracking of bright actin-associated features on cropped ROI frames:
 - Tracks features frame-to-frame (default: brightest-local search; template matching remains available)
 - Produces **General Movement** (absolute XY) and **Downward Motion** indices (µm/s)
 
-Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**, **0.2650 µm/pixel**, **30.0 s/frame**.
-
-`seconds_per_frame` is an analysis input. Encoded video playback FPS (often ~6 fps on these exports) is **not** automatically treated as biological acquisition interval. The current **30 s/frame** default is the documented lab hypothesis and production default; it is **not** independently validated for every exported corpus file. Confirm against acquisition metadata when available. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
+Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**, **0.2650 µm/pixel**. The Workbench currently uses **detected video timing** (`1 / observed FPS`) for calibrated µm/s. Encoded playback FPS is **not** proven microscope acquisition cadence; px/frame remains the timing-invariant movement measure while the lab verifies biological interval. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
 
 ### Optical Flow Motion Index
 

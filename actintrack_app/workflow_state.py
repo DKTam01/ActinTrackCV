@@ -26,6 +26,7 @@ class WorkflowSnapshot:
     has_cell_region: bool = False
     has_nucleus: bool = False
     timing_confirmed: bool = False
+    has_valid_video_timing: bool = False
     metrics_present: bool = False
     metrics_stale: bool = False
     metrics_running: bool = False
@@ -45,7 +46,7 @@ class WorkflowSnapshot:
             and self.has_cell_region
             and self.has_crop
             and self.has_nucleus
-            and self.timing_confirmed
+            and self.has_valid_video_timing
             and not self.metrics_running
         )
 
@@ -69,8 +70,8 @@ class WorkflowSnapshot:
             return "Cell boundary is not ready"
         if not self.has_nucleus:
             return "Select the nucleus"
-        if not self.timing_confirmed:
-            return "Confirm analysis timing"
+        if not self.has_valid_video_timing:
+            return "Valid video timing is required"
         return None
 
     def metric_analysis_block_reason(self) -> str | None:
@@ -91,8 +92,8 @@ class WorkflowSnapshot:
             return "Identifying the cell boundary…"
         if not self.has_nucleus:
             return "Select the nucleus center."
-        if not self.timing_confirmed:
-            return "Confirm analysis timing."
+        if not self.has_valid_video_timing:
+            return "Video timing is unavailable — calibrated metrics cannot run."
         if self.metrics_running:
             return "Running metrics…"
         if self.metrics_stale:
@@ -128,14 +129,21 @@ def build_workflow_snapshot(
     metrics_present: bool,
     metrics_stale: bool,
     metrics_running: bool = False,
+    has_valid_video_timing: bool | None = None,
 ) -> WorkflowSnapshot:
+    video_timing_ready = (
+        bool(timing_confirmed)
+        if has_valid_video_timing is None
+        else bool(has_valid_video_timing)
+    )
     return WorkflowSnapshot(
         has_sample=bool(has_sample),
         has_crop=bool(has_crop),
         crop_confirmed=bool(crop_confirmed) and bool(has_crop),
         has_cell_region=bool(has_cell_region),
         has_nucleus=bool(has_nucleus),
-        timing_confirmed=bool(timing_confirmed),
+        timing_confirmed=bool(timing_confirmed) or video_timing_ready,
+        has_valid_video_timing=video_timing_ready,
         metrics_present=bool(metrics_present),
         metrics_stale=bool(metrics_stale),
         metrics_running=bool(metrics_running),
@@ -209,7 +217,7 @@ def format_sample_results_summary(
     else:
         lines.append(f"{tracks_used} valid")
     lines.append("")
-    lines.append("Timing")
+    lines.append("Video Timing")
     lines.append(timing_label or "—")
     return "\n".join(lines)
 

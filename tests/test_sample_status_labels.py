@@ -35,7 +35,7 @@ class SampleStatusLabelTests(unittest.TestCase):
             STATUS_PROCESSED,
             STATUS_MOTION_INDEX_GENERATED,
         ):
-            self.assertEqual(sample_status_label(status), "ROI marked")
+            self.assertEqual(sample_status_label(status), "Cell boundary set")
 
     def test_no_legacy_raw_imported_label(self) -> None:
         # The internal enum value must never surface in the UI label.

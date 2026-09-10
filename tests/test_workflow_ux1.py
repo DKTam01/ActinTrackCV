@@ -71,7 +71,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             metrics_present=False,
             metrics_stale=False,
         )
-        self.assertEqual(snap.run_metrics_block_reason(), "Confirm analysis timing")
+        self.assertEqual(snap.run_metrics_block_reason(), "Valid video timing is required")
 
     def test_ready_enables_run_but_not_metric_analysis(self) -> None:
         snap = build_workflow_snapshot(
@@ -160,6 +160,7 @@ class SampleResultsFormattingTests(unittest.TestCase):
         self.assertIn("Toward Nucleus", text)
         self.assertIn("33.5°", text)
         self.assertIn("8 valid / 10 requested", text)
+        self.assertIn("Video Timing", text)
         self.assertIn("video_header", text)
         self.assertNotIn("Timing unconfirmed", text)
 

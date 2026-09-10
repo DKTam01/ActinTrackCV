@@ -9,7 +9,7 @@ from actintrack_app.gui_user_strings import processing_status_display
 
 class GuiUserStringsTests(unittest.TestCase):
     def test_processing_status_display_known_codes(self) -> None:
-        self.assertEqual(processing_status_display("roi_marked"), "ROI marked")
+        self.assertEqual(processing_status_display("roi_marked"), "Cell boundary set")
         self.assertEqual(
             processing_status_display("motion_index_generated"),
             "Metrics generated",
