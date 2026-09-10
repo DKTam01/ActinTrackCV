@@ -89,6 +89,7 @@ class WorkbenchLayoutStructureTests(unittest.TestCase):
 
         self.assertIn("images_layout = QHBoxLayout(panel)", preview_panel_block)
         self.assertIn("images_layout.addWidget(window.canvas, stretch=1)", preview_panel_block)
+        self.assertIn("build_sample_results_beside_canvas(window)", preview_panel_block)
         self.assertIn(
             "QSizePolicy.Policy.Expanding",
             preview_panel_block,

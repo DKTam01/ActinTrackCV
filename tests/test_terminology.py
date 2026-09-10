@@ -136,6 +136,7 @@ class UserFacingTerminologyTests(unittest.TestCase):
             center_block,
         )
         self.assertIn("window.roi_preview_canvas", roi_preview_block)
+        self.assertNotIn("window.lbl_sample_results", roi_preview_block)
         self.assertIn("set_interactive(False)", roi_preview_block)
         self.assertIn("configure_workbench_adjacent_panel(host)", roi_preview_block)
         self.assertNotIn("def build_right_sidebar", layout_src)

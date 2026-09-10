@@ -104,8 +104,8 @@ DEFAULT_SPLITTER_SIZES = [LEFT_PANEL_MIN_WIDTH, 900]
 PLAYBACK_SPEED_OPTIONS = ("0.25×", "0.5×", "1×", "1.5×", "2×")
 METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis"
 ROI_PREVIEW_PANEL_OBJECT_NAME = "roiPreviewPanel"
-ROI_PREVIEW_PANEL_MIN_WIDTH = 180
-ROI_PREVIEW_PANEL_MAX_WIDTH = 280
+SAMPLE_RESULTS_PANEL_MIN_WIDTH = 168
+SAMPLE_RESULTS_PANEL_MAX_WIDTH = 220
 ROI_PREVIEW_CANVAS_MIN_WIDTH = 160
 ROI_PREVIEW_CANVAS_MIN_HEIGHT = 120
 WORKBENCH_ACTION_MODE_FULL = 0
@@ -453,6 +453,17 @@ def build_metric_mode_selector_section(window: MainWindow) -> QWidget:
     label.setToolTip(window.combo_metric_mode.toolTip())
     layout.addWidget(label)
     layout.addWidget(window.combo_metric_mode)
+    window.chk_show_orientation_overlay = QCheckBox("Show F-actin Orientation")
+    window.chk_show_orientation_overlay.setChecked(True)
+    window.chk_show_orientation_overlay.setToolTip(
+        "Draw persisted 0–90° nucleus-relative F-actin orientation ticks. "
+        "This is structural angle, not motion or trajectory."
+    )
+    window.chk_show_orientation_overlay.setStyleSheet(STYLE_CHECKBOX_COMPACT)
+    window.chk_show_orientation_overlay.toggled.connect(
+        window._on_show_orientation_overlay_changed
+    )
+    layout.addWidget(window.chk_show_orientation_overlay)
     return section
 
 
@@ -547,6 +558,8 @@ def build_preview_images_panel(window: MainWindow) -> QWidget:
     )
     images_layout.addWidget(window.canvas, stretch=1)
     images_layout.addWidget(build_workbench_vertical_divider())
+    images_layout.addWidget(build_sample_results_beside_canvas(window))
+    images_layout.addWidget(build_workbench_vertical_divider())
 
     window._roi_preview_host = build_roi_preview_panel(window)
     window._metric_settings_host = build_metric_settings_host(window)
@@ -561,8 +574,31 @@ def build_preview_images_panel(window: MainWindow) -> QWidget:
     return panel
 
 
+def build_sample_results_beside_canvas(window: MainWindow) -> QWidget:
+    """Current-sample results in the dark column immediately right of the video."""
+    host = QWidget()
+    apply_inspector_panel_style(host)
+    host.setMinimumWidth(SAMPLE_RESULTS_PANEL_MIN_WIDTH)
+    host.setMaximumWidth(SAMPLE_RESULTS_PANEL_MAX_WIDTH)
+    host.setSizePolicy(
+        QSizePolicy.Policy.Fixed,
+        QSizePolicy.Policy.Expanding,
+    )
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(8, 8, 8, 8)
+    layout.setSpacing(ROI_HINT_STATUS_SPACING)
+    window.lbl_sample_results = QLabel("")
+    window.lbl_sample_results.setWordWrap(True)
+    window.lbl_sample_results.setAlignment(Qt.AlignmentFlag.AlignTop)
+    apply_hint_style(window.lbl_sample_results)
+    window.lbl_sample_results.setText("Sample Results\n\nRun Metrics to populate.")
+    layout.addWidget(window.lbl_sample_results, stretch=1)
+    window._sample_results_host = host
+    return host
+
+
 def build_roi_preview_panel(window: MainWindow) -> QWidget:
-    """Workbench adjacent column: cell-first setup and Sample Results."""
+    """Far-right setup column: Cell Boundary, Nucleus, Timing, optional Cutoff."""
     host = QWidget()
     configure_workbench_adjacent_panel(host)
     layout = QVBoxLayout(host)
@@ -643,13 +679,7 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
     window.btn_clear_cutoff.setEnabled(False)
     layout.addWidget(window.btn_clear_cutoff)
-
-    window.lbl_sample_results = QLabel("")
-    window.lbl_sample_results.setWordWrap(True)
-    window.lbl_sample_results.setAlignment(Qt.AlignmentFlag.AlignTop)
-    apply_hint_style(window.lbl_sample_results)
-    window.lbl_sample_results.setText("Sample Results\n\nRun Metrics to populate.")
-    layout.addWidget(window.lbl_sample_results, stretch=1)
+    layout.addStretch(1)
 
     window.lbl_roi_preview_empty = QLabel("")
     window.lbl_roi_preview_empty.hide()
