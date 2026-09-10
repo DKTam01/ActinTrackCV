@@ -134,6 +134,7 @@ class SampleRegistryRecord:
     notes: str = ""
     auto_generated_name: bool = False
     source_filename: str = ""
+    explorer_order: int | None = None
 
     def to_v2_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -155,6 +156,8 @@ class SampleRegistryRecord:
             d["auto_generated_name"] = True
         if self.source_filename:
             d["source_filename"] = self.source_filename
+        if self.explorer_order is not None:
+            d["explorer_order"] = int(self.explorer_order)
         return d
 
     def to_v1_dict(self) -> dict[str, Any]:
@@ -165,6 +168,7 @@ class SampleRegistryRecord:
             "batch_number": d["sample_number"],
             "batch_name": d["sample_name"],
             "batch_id": d["sample_id"],
+            "sample_id": d["sample_id"],
             "contains_video": d["contains_video"],
             "video_file_count": d["video_file_count"],
             "image_file_count": d["image_file_count"],
@@ -178,10 +182,18 @@ class SampleRegistryRecord:
             out["auto_generated_name"] = True
         if d.get("source_filename"):
             out["source_filename"] = d["source_filename"]
+        if "explorer_order" in d:
+            out["explorer_order"] = d["explorer_order"]
         return out
 
     @classmethod
     def from_v1_dict(cls, entry: dict[str, Any], breed: str) -> SampleRegistryRecord:
+        order_raw = entry.get("explorer_order")
+        explorer_order: int | None
+        try:
+            explorer_order = None if order_raw is None else int(order_raw)
+        except (TypeError, ValueError):
+            explorer_order = None
         return cls(
             breed=str(entry.get("breed") or entry.get("group", breed)),
             condition_group_id=str(
@@ -200,4 +212,5 @@ class SampleRegistryRecord:
             notes=str(entry.get("notes", "")),
             auto_generated_name=bool(entry.get("auto_generated_name", False)),
             source_filename=str(entry.get("source_filename", "")),
+            explorer_order=explorer_order,
         )

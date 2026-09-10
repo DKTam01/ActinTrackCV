@@ -412,6 +412,8 @@ class ExplorerTreeWidget(QTreeWidget):
     """QTreeWidget that drags one Sample at a time onto a Condition Group target."""
 
     sample_drop_requested = pyqtSignal(str, str)
+    # sample_id, condition_group_id, before_sample_id ("" = append at end)
+    sample_reorder_requested = pyqtSignal(str, str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -455,6 +457,7 @@ class ExplorerTreeWidget(QTreeWidget):
             selected=selected,
         )
 
+    @staticmethod
     def _item_meta(item: QTreeWidgetItem | None) -> dict | None:
         return _tree_item_meta(item)
 
@@ -521,9 +524,41 @@ class ExplorerTreeWidget(QTreeWidget):
             event.ignore()
             return
         sample_id = bytes(event.mimeData().data(EXPLORER_SAMPLE_MIME)).decode("utf-8")
-        target_gid = self._drop_target_group_id(self.itemAt(event.position().toPoint()))
+        target_item = self.itemAt(event.position().toPoint())
+        target_gid = self._drop_target_group_id(target_item)
         if not sample_id or not target_gid:
             event.ignore()
             return
+
+        source_meta = None
+        for top_idx in range(self.topLevelItemCount()):
+            top = self.topLevelItem(top_idx)
+            if top is None:
+                continue
+            for child_idx in range(top.childCount()):
+                child = top.child(child_idx)
+                meta = self._item_meta(child)
+                if meta and str(meta.get("sample_id", "")).strip() == sample_id:
+                    source_meta = meta
+                    break
+            if source_meta is not None:
+                break
+        source_gid = tree_item_condition_group_id(source_meta) if source_meta else None
+
+        # Same Condition Group → preserve researcher-chosen order (no filename sort).
+        if source_gid and source_gid == target_gid:
+            before_sample_id = ""
+            target_meta = self._item_meta(target_item)
+            if (
+                target_meta
+                and target_meta.get("item_type") == ITEM_TYPE_SAMPLE
+            ):
+                anchor = str(target_meta.get("sample_id", "")).strip()
+                if anchor and anchor != sample_id:
+                    before_sample_id = anchor
+            self.sample_reorder_requested.emit(sample_id, target_gid, before_sample_id)
+            event.acceptProposedAction()
+            return
+
         self.sample_drop_requested.emit(sample_id, target_gid)
         event.acceptProposedAction()

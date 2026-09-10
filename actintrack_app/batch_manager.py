@@ -195,8 +195,114 @@ def ensure_batch_dirs(root: Path, group: str, batch_name: str) -> None:
 
 def list_batches(root: Path, group: str) -> list[dict[str, Any]]:
     registry = _load_batches_registry(root)
-    batches = [_normalize_batch_record(b, group) for b in registry.get(group, [])]
+    raw_entries = list(registry.get(group, []))
+    batches = [_normalize_batch_record(b, group) for b in raw_entries]
+    # Prefer explicit explorer_order when present so drag/drop order persists
+    # without renaming files or rewriting scientific batch_number identity.
+    order_by_name: dict[str, int] = {}
+    for entry in raw_entries:
+        name = sanitize_batch_name(str(entry.get("batch_name", "")))
+        if not name:
+            continue
+        if "explorer_order" not in entry:
+            continue
+        try:
+            order_by_name[name] = int(entry.get("explorer_order"))
+        except (TypeError, ValueError):
+            continue
+    if order_by_name:
+        return sorted(
+            batches,
+            key=lambda b: (
+                order_by_name.get(
+                    sanitize_batch_name(str(b["batch_name"])), 10**9
+                ),
+                int(b["batch_number"]),
+            ),
+        )
     return sorted(batches, key=lambda b: int(b["batch_number"]))
+
+
+def reorder_samples_in_condition_group(
+    root: Path,
+    condition_group_id: str,
+    ordered_sample_ids: list[str],
+) -> list[str]:
+    """Persist researcher-chosen Sample order within one Condition Group.
+
+    Updates ``explorer_order`` on registry entries matched by ``sample_id``.
+    Does not change ``batch_number``, folder names, or source filenames.
+    Returns the applied sample_id order (subset of requested that were found).
+    """
+    root = Path(root).resolve()
+    gid = str(condition_group_id).strip()
+    if not gid:
+        return []
+    desired = [str(sid).strip() for sid in ordered_sample_ids if str(sid).strip()]
+    if not desired:
+        return []
+
+    df = None
+    try:
+        from actintrack_app.metadata import load_samples_csv
+        from actintrack_app.utils import METADATA_DIR, SAMPLES_CSV
+
+        df = load_samples_csv(root / METADATA_DIR / SAMPLES_CSV)
+    except Exception:
+        df = None
+
+    sid_to_batch_name: dict[str, str] = {}
+    if df is not None and not df.empty:
+        for _, row in df.iterrows():
+            sid = str(row.get("sample_id", "")).strip()
+            if not sid:
+                continue
+            from actintrack_app.condition_group_manager import row_condition_group_id
+
+            if row_condition_group_id(row.to_dict()) != gid:
+                continue
+            sid_to_batch_name[sid] = sanitize_batch_name(str(row.get("batch_name", "")))
+
+    registry = _load_batches_registry(root)
+    entries = list(registry.get(gid, []))
+    if not entries:
+        return []
+
+    # Map sample_id → registry entry index via batch_name / sample_id / batch_id.
+    entry_by_sid: dict[str, int] = {}
+    for idx, entry in enumerate(entries):
+        sid = str(entry.get("sample_id") or entry.get("batch_id", "")).strip()
+        if sid:
+            entry_by_sid[sid] = idx
+        name = sanitize_batch_name(str(entry.get("batch_name", "")))
+        for sid_key, batch_name in sid_to_batch_name.items():
+            if batch_name and batch_name == name:
+                entry_by_sid[sid_key] = idx
+
+    applied: list[str] = []
+    seen_idx: set[int] = set()
+    for order_i, sid in enumerate(desired):
+        idx = entry_by_sid.get(sid)
+        if idx is None or idx in seen_idx:
+            continue
+        entries[idx]["explorer_order"] = int(order_i)
+        entries[idx]["sample_id"] = sid
+        if not str(entries[idx].get("batch_id", "")).strip():
+            entries[idx]["batch_id"] = sid
+        seen_idx.add(idx)
+        applied.append(sid)
+
+    # Keep remaining entries after the applied ones.
+    next_order = len(applied)
+    for idx, entry in enumerate(entries):
+        if idx in seen_idx:
+            continue
+        entry["explorer_order"] = int(next_order)
+        next_order += 1
+
+    registry[gid] = entries
+    _save_batches_registry(root, registry)
+    return applied
 
 
 def get_batch_by_name(root: Path, group: str, batch_name: str) -> dict[str, Any] | None:
