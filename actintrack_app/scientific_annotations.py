@@ -379,6 +379,35 @@ def valid_mask_crop_local(
     return mask & row_valid[:, None]
 
 
+def apply_scientific_domain_to_preview(
+    frame: np.ndarray,
+    valid_mask: np.ndarray,
+    *,
+    outside_gain: float = 0.0,
+) -> np.ndarray:
+    """Dim or hide pixels outside CellRegion ∩ cutoff using the tracking mask.
+
+    ``valid_mask`` must be the crop-local boolean from ``valid_mask_crop_local``.
+    This does not invent a second crop; it only visualizes that same domain.
+    """
+    mask = np.asarray(valid_mask, dtype=bool)
+    if frame.shape[:2] != mask.shape:
+        raise ScientificAnnotationError(
+            f"Preview frame shape {frame.shape[:2]} != valid_mask {mask.shape}."
+        )
+    gain = max(0.0, min(1.0, float(outside_gain)))
+    out = np.array(frame, copy=True)
+    if out.ndim == 2:
+        if gain <= 0.0:
+            out = np.where(mask, out, np.zeros_like(out))
+        else:
+            dimmed = (out.astype(np.float32) * gain).astype(out.dtype)
+            out = np.where(mask, out, dimmed)
+        return out
+    weights = np.where(mask, 1.0, gain).astype(np.float32)
+    return (out.astype(np.float32) * weights[..., None]).clip(0, 255).astype(out.dtype)
+
+
 def scientific_valid_mask_for_tracking(
     crop: RectROI,
     annotation: dict[str, Any] | None,

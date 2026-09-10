@@ -102,6 +102,34 @@ def load_latest_structural_orientation_result_view(
     *,
     project_root: Path | None,
 ) -> StructuralOrientationResultView | None:
+    data = _load_structural_orientation_payload(sample_id, project_root=project_root)
+    if data is None:
+        return None
+    return structural_orientation_view_from_dict(data)
+
+
+def load_latest_structural_orientation_result(
+    sample_id: str,
+    *,
+    project_root: Path | None,
+):
+    """Load the full persisted structural-orientation payload, or None."""
+    data = _load_structural_orientation_payload(sample_id, project_root=project_root)
+    if data is None:
+        return None
+    from actintrack_app.structural_orientation import result_from_dict
+
+    try:
+        return result_from_dict(data)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_structural_orientation_payload(
+    sample_id: str,
+    *,
+    project_root: Path | None,
+) -> dict[str, Any] | None:
     if project_root is None:
         return None
     from actintrack_app.schema_compat import (
@@ -113,6 +141,6 @@ def load_latest_structural_orientation_result_view(
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return structural_orientation_view_from_dict(data)
     except (OSError, json.JSONDecodeError):
         return None
+    return data if isinstance(data, dict) else None

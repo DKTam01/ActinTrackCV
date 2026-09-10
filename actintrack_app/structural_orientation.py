@@ -248,7 +248,12 @@ def render_structural_orientation_overlay(
     *,
     maximum_glyphs: int = 80,
 ) -> np.ndarray:
-    """Render a sparse QC overlay without collapsing local measurements."""
+    """Render subsampled QC glyphs from persisted measurements only.
+
+    Tangent ticks use ``local_orientation_deg``. Color encodes the persisted
+    0–90° nucleus-relative structural angle (cyan radial → amber tangential).
+    This does not recompute structure-tensor orientation.
+    """
     if frame.ndim == 2:
         output = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
     else:
@@ -268,13 +273,15 @@ def render_structural_orientation_overlay(
         return output
 
     stride = max(1, int(np.ceil(len(result.measurements) / max(maximum_glyphs, 1))))
-    for index, measurement in enumerate(result.measurements[::stride]):
+    sampled = result.measurements[::stride]
+    for index, measurement in enumerate(sampled):
         theta = np.deg2rad(measurement.local_orientation_deg)
-        dx, dy = 6.0 * np.cos(theta), 6.0 * np.sin(theta)
+        dx, dy = 7.0 * np.cos(theta), 7.0 * np.sin(theta)
         center = (int(round(measurement.x_px)), int(round(measurement.y_px)))
         p0 = (int(round(center[0] - dx)), int(round(center[1] - dy)))
         p1 = (int(round(center[0] + dx)), int(round(center[1] + dy)))
-        cv2.line(output, p0, p1, (0, 255, 255), 1, cv2.LINE_AA)
+        color = _nucleus_relative_angle_bgr(measurement.angle_relative_nucleus_deg)
+        cv2.line(output, p0, p1, color, 1, cv2.LINE_AA)
         if (
             index % 5 == 0
             and result.nucleus_reference_xy_px is not None
@@ -283,4 +290,33 @@ def render_structural_orientation_overlay(
                 int(round(value)) for value in result.nucleus_reference_xy_px
             )
             cv2.line(output, nucleus, center, (120, 80, 120), 1, cv2.LINE_AA)
+    cv2.putText(
+        output,
+        "F-actin orientation 0-90 deg (not motion)",
+        (8, 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (220, 220, 220),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        output,
+        "0 radial   90 tangential",
+        (8, 36),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (180, 200, 220),
+        1,
+        cv2.LINE_AA,
+    )
     return output
+
+
+def _nucleus_relative_angle_bgr(angle_deg: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, float(angle_deg) / 90.0))
+    # BGR: cyan (radial) -> amber (tangential).
+    blue = int(round(255 * (1.0 - t)))
+    green = int(round(210 - 40 * t))
+    red = int(round(40 + 215 * t))
+    return (blue, green, red)

@@ -223,6 +223,7 @@ from actintrack_app.scientific_annotations import (
     reorient_cell_region,
     reorient_cutoff_boundary,
     reorient_nucleus_reference,
+    apply_scientific_domain_to_preview,
     scientific_valid_mask_for_tracking,
     valid_mask_crop_local,
 )
@@ -256,6 +257,7 @@ from actintrack_app.optical_flow_overlay import (
 from actintrack_app.structural_orientation import (
     StructuralOrientationResult,
     compute_structural_orientation,
+    render_structural_orientation_overlay,
 )
 from actintrack_app.preview_workflow import (
     CroppedPreviewAnalysis,
@@ -295,6 +297,7 @@ from actintrack_app import gui_dialogs
 from actintrack_app.file_importer import set_custom_export_name
 from actintrack_app.gui_result_loaders import (
     load_latest_optical_flow_result_view,
+    load_latest_structural_orientation_result,
     load_latest_structural_orientation_result_view,
     load_latest_tracking_result_view,
 )
@@ -1533,6 +1536,10 @@ class MainWindow(QMainWindow):
         )
 
     def _on_show_of_overlay_changed(self, _checked: bool) -> None:
+        if self._preview_mode == "cropped_tracking":
+            self._show_cropped_preview_frame(self._preview_frame_index)
+
+    def _on_show_orientation_overlay_changed(self, _checked: bool) -> None:
         if self._preview_mode == "cropped_tracking":
             self._show_cropped_preview_frame(self._preview_frame_index)
 
@@ -3184,6 +3191,41 @@ class MainWindow(QMainWindow):
     def _on_cropped_preview_frame_slider(self, value: int) -> None:
         self._on_sample_frame_slider(value)
 
+    def _metric_analysis_valid_mask(self) -> np.ndarray | None:
+        """Crop-local CellRegion ∩ cutoff mask matching Metric Analysis frames."""
+        analysis = self.__dict__.get("_cropped_preview")
+        if analysis is None or not getattr(analysis, "frames", None):
+            return None
+        h, w = analysis.frames[0].shape[:2]
+        crop = None
+        canvas = self.__dict__.get("canvas")
+        if canvas is not None:
+            crop = canvas.rect_roi()
+        if crop is None or int(crop.width) != w or int(crop.height) != h:
+            check = (
+                self._validate_current_roi()
+                if hasattr(self, "_validate_current_roi")
+                else None
+            )
+            if check is not None and getattr(check, "roi_oriented", None) is not None:
+                crop = check.roi_oriented
+        if crop is None or int(crop.width) != w or int(crop.height) != h:
+            return None
+        cell = self.__dict__.get("_cell_region")
+        cutoff = self.__dict__.get("_cutoff_boundary")
+        if cell is not None or cutoff is not None:
+            try:
+                return valid_mask_crop_local(crop, cell_region=cell, cutoff=cutoff)
+            except Exception:
+                pass
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if sid:
+            try:
+                return self._saved_scientific_valid_mask_for_sample(sid, crop)
+            except Exception:
+                return None
+        return None
+
     def _show_cropped_preview_frame(self, index: int) -> None:
         if self._cropped_preview is None:
             return
@@ -3200,6 +3242,19 @@ class MainWindow(QMainWindow):
                     frame = render_optical_flow_overlay(frame, arrows)
         else:
             frame = render_cropped_tracking_frame(self._cropped_preview, index)
+        mask = self._metric_analysis_valid_mask()
+        if mask is not None and mask.shape == frame.shape[:2]:
+            frame = apply_scientific_domain_to_preview(frame, mask)
+        if (
+            hasattr(self, "chk_show_orientation_overlay")
+            and self.chk_show_orientation_overlay.isChecked()
+        ):
+            sid = str(self.__dict__.get("_current_sample_id") or "")
+            orientation = load_latest_structural_orientation_result(
+                sid, project_root=self.__dict__.get("_project_root")
+            )
+            if orientation is not None and orientation.has_valid_result:
+                frame = render_structural_orientation_overlay(frame, orientation)
         self._preview_frame_index = index
         self.canvas.set_preview_frame(frame)
         self.slider_frame.blockSignals(True)
