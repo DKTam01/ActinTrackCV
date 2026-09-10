@@ -104,7 +104,7 @@ class DerivedCropAndSensitivityTests(unittest.TestCase):
 
     def test_detection_parameter_payload_persists_version(self) -> None:
         payload = detection_parameters_payload(0.25)
-        self.assertEqual(payload["version"], "conservative_cell_v1")
+        self.assertEqual(payload["version"], "conservative_cell_v2")
         self.assertIn("otsu_scale", payload)
         self.assertEqual(payload["sensitivity"], 0.25)
         default_params = map_boundary_sensitivity(0.5)
@@ -318,7 +318,7 @@ class CellFirstGuiTests(unittest.TestCase):
         ann = MainWindow._current_annotation_dict(window, status="roi_marked", require_roi=False)
         self.assertEqual(ann[ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY], 0.2)
         self.assertEqual(cell_boundary_sensitivity_from_annotation(ann), 0.2)
-        self.assertEqual(ann["cell_detection"]["version"], "conservative_cell_v1")
+        self.assertEqual(ann["cell_detection"]["version"], "conservative_cell_v2")
 
 
 class ExplorerMultiSelectDeleteTests(unittest.TestCase):

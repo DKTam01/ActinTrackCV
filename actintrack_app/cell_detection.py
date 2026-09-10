@@ -8,7 +8,10 @@ too aggressive for a scientific validity domain.
 A single researcher-facing sensitivity maps onto a coherent set of
 threshold/morphology parameters. Sensitivity ``0`` is tighter (excludes more
 weak/background pixels); ``1`` is broader (retains more dim cell signal).
-The default ``0.5`` is bit-identical to the original conservative detector.
+The default ``0.5`` keeps the original threshold/morphology mapping.
+
+Geometry uses the external contour of the cleaned largest component, not a
+convex hull, so visible cell concavities are not filled with black background.
 """
 
 from __future__ import annotations
@@ -29,7 +32,8 @@ from actintrack_app.scientific_annotations import (
     fallback_cell_region,
 )
 
-CELL_DETECTION_VERSION = "conservative_cell_v1"
+CELL_DETECTION_VERSION = "conservative_cell_v2"
+CONTOUR_MODE_EXTERNAL_APPROX = "external_approx_v1"
 CELL_BOUNDARY_SENSITIVITY_DEFAULT = 0.5
 CELL_BOUNDARY_SENSITIVITY_TIGHTER = 0.0
 CELL_BOUNDARY_SENSITIVITY_BROADER = 1.0
@@ -53,6 +57,7 @@ class CellDetectionParams:
     close_iterations: int
     dilate_iterations: int
     version: str = CELL_DETECTION_VERSION
+    contour_mode: str = CONTOUR_MODE_EXTERNAL_APPROX
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -62,6 +67,7 @@ class CellDetectionParams:
             "threshold_max": float(self.threshold_max),
             "close_iterations": int(self.close_iterations),
             "dilate_iterations": int(self.dilate_iterations),
+            "contour_mode": self.contour_mode,
         }
 
 
@@ -235,22 +241,92 @@ def _detect_conservative_cell_region(
     if not contours:
         raise ValueError("No cell contour found.")
     largest = max(contours, key=cv2.contourArea)
-    hull = cv2.convexHull(largest)
-    vertices = _unique_hull_vertices(
-        hull, frame_width=int(oriented_frame.shape[1]),
+    vertices = _concavity_preserving_contour_vertices(
+        largest,
+        component=component,
+        frame_width=int(oriented_frame.shape[1]),
         frame_height=int(oriented_frame.shape[0]),
     )
     return CellRegion.from_polygon(vertices, source=CELL_REGION_SOURCE_AUTO)
 
 
-def _unique_hull_vertices(
-    hull: np.ndarray,
+def _concavity_preserving_contour_vertices(
+    contour: np.ndarray,
+    *,
+    component: np.ndarray,
+    frame_width: int,
+    frame_height: int,
+) -> list[tuple[int, int]]:
+    """External contour of the cleaned component, without a convex hull.
+
+    OpenCV contours of real cells can pinch. Persistence requires a simple
+    polygon, so we increase polygonal approximation only until the ring is
+    valid, preferring the smallest simplification that still covers the
+    component. Convex hull is a last-resort fallback, never the default.
+    """
+    import cv2
+
+    from actintrack_app.region import Region, RegionValidationError, validate_region
+
+    peri = float(cv2.arcLength(contour, True))
+    epsilons = [1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
+    peri_eps = [0.002 * peri, 0.003 * peri, 0.005 * peri, 0.008 * peri]
+    for value in peri_eps:
+        if value > epsilons[-1]:
+            epsilons.append(value)
+
+    for epsilon in epsilons:
+        approx = cv2.approxPolyDP(contour, float(epsilon), True)
+        vertices = _unique_contour_vertices(
+            approx, frame_width=frame_width, frame_height=frame_height
+        )
+        if not _filled_polygon_covers_component(
+            vertices, component, lost_fraction=0.02
+        ):
+            continue
+        try:
+            validate_region(
+                Region.from_polygon(vertices), frame_width, frame_height
+            )
+        except (ValueError, RegionValidationError):
+            continue
+        return vertices
+
+    hull = cv2.convexHull(contour)
+    return _unique_contour_vertices(
+        hull, frame_width=frame_width, frame_height=frame_height
+    )
+
+
+def _filled_polygon_covers_component(
+    vertices: list[tuple[int, int]],
+    component: np.ndarray,
+    *,
+    lost_fraction: float,
+) -> bool:
+    import cv2
+
+    if len(vertices) < 3:
+        return False
+    filled = np.zeros(component.shape[:2], dtype=np.uint8)
+    pts = np.asarray(vertices, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.fillPoly(filled, [pts], 1)
+    component_on = component.astype(bool)
+    kept = int(np.count_nonzero(component_on))
+    if kept <= 0:
+        return False
+    lost = int(np.count_nonzero(component_on & (filled == 0)))
+    return (lost / float(kept)) <= float(lost_fraction)
+
+
+def _unique_contour_vertices(
+    contour: np.ndarray,
     *,
     frame_width: int,
     frame_height: int,
 ) -> list[tuple[int, int]]:
     pts: list[tuple[int, int]] = []
-    for item in np.asarray(hull).reshape(-1, 2):
+    for item in np.asarray(contour).reshape(-1, 2):
         x = max(0, min(int(round(item[0])), frame_width - 1))
         y = max(0, min(int(round(item[1])), frame_height - 1))
         if not pts or pts[-1] != (x, y):
@@ -258,9 +334,17 @@ def _unique_hull_vertices(
     if len(pts) >= 2 and pts[0] == pts[-1]:
         pts = pts[:-1]
     pts = _drop_consecutive_collinear(pts)
-    if len(pts) < 3:
-        raise ValueError("Convex hull collapsed below three vertices.")
-    return pts
+    if len(pts) >= 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    deduped: list[tuple[int, int]] = []
+    for pt in pts:
+        if not deduped or deduped[-1] != pt:
+            deduped.append(pt)
+    if len(deduped) >= 2 and deduped[0] == deduped[-1]:
+        deduped = deduped[:-1]
+    if len(deduped) < 3:
+        raise ValueError("Cell contour collapsed below three vertices.")
+    return deduped
 
 
 def _drop_consecutive_collinear(
