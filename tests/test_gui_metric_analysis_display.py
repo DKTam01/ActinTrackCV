@@ -62,7 +62,12 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
         window._crop_confirmed = True
         window._cell_region = object()
         window._nucleus_reference = object()
-        window._timing = MagicMock(confirmed=True)
+        window._cutoff_boundary = object()
+        window._timing = MagicMock(
+            confirmed=True,
+            is_calibrated_analysis_ready=True,
+            has_valid_video_timing=True,
+        )
         window._sample_has_measurable_draft_results = MagicMock(return_value=True)
         window._metrics_inflight = set()
 
@@ -128,7 +133,7 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
 
         window._enter_cropped_preview_mode.assert_called_once_with(analysis)
 
-    def test_display_with_stale_draft_loads_frames_not_tracking(self) -> None:
+    def test_display_with_stale_draft_shows_outdated_placeholder(self) -> None:
         window = self._stub_window()
         window._tracking_result_stale_by_sample["S1"] = True
         window._read_draft_tracking_payload = MagicMock(
@@ -144,22 +149,21 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
         window.update_tracking_result_panel = MagicMock()
         window._update_optical_flow_qc_readout = MagicMock()
         window._enter_cropped_preview_mode = MagicMock()
-        frames = [np.zeros((16, 16), dtype=np.uint8) for _ in range(2)]
+        window._show_metric_analysis_placeholder = MagicMock()
 
         with patch("actintrack_app.gui.is_supported_video_path", return_value=True), patch(
             "actintrack_app.gui.load_cropped_frames_from_video",
-            return_value=frames,
         ) as load_frames, patch(
             "actintrack_app.gui.analyze_cropped_preview",
         ) as analyze:
             MainWindow._display_metric_analysis_view_for_current_sample(window)
 
-        load_frames.assert_called_once()
+        load_frames.assert_not_called()
         analyze.assert_not_called()
-        window._enter_cropped_preview_mode.assert_called_once()
-        displayed = window._enter_cropped_preview_mode.call_args.args[0]
-        self.assertEqual(displayed.general_movement_index_um_per_s, 1.5)
-        self.assertEqual(displayed.num_tracks_with_valid_steps, 2)
+        window._enter_cropped_preview_mode.assert_not_called()
+        window._show_metric_analysis_placeholder.assert_called_once_with(
+            "Run Metrics to generate the analysis preview."
+        )
 
     def test_display_without_metrics_shows_placeholder(self) -> None:
         window = self._stub_window()
@@ -195,7 +199,12 @@ class RunMetricsUnchangedTests(unittest.TestCase):
         window._crop_confirmed = True
         window._cell_region = object()
         window._nucleus_reference = object()
-        window._timing = MagicMock(confirmed=True)
+        window._cutoff_boundary = object()
+        window._timing = MagicMock(
+            confirmed=True,
+            is_calibrated_analysis_ready=True,
+            has_valid_video_timing=True,
+        )
         window.canvas = MagicMock()
         window.canvas.rect_roi.return_value = object()
         window._sample_has_measurable_draft_results = MagicMock(return_value=False)

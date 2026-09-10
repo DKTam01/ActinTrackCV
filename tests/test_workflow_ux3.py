@@ -240,15 +240,19 @@ class MetricAnalysisOrientationCheckboxTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls._app = QApplication.instance() or QApplication([])
 
-    def test_checkbox_exists_in_metric_mode_selector(self) -> None:
+    def test_orientation_is_inspection_mode_not_tracking_checkbox(self) -> None:
         layout = Path(__file__).resolve().parents[1].joinpath(
             "actintrack_app/gui_layout_builders.py"
         ).read_text(encoding="utf-8")
-        block = layout.split("def build_metric_mode_selector_section", 1)[1].split(
+        create_block = layout.split("def create_metric_mode_widgets", 1)[1].split(
+            "def build_metric_mode_selector_section", 1
+        )[0]
+        section_block = layout.split("def build_metric_mode_selector_section", 1)[1].split(
             "def build_workbench_action_mode_slot", 1
         )[0]
-        self.assertIn("chk_show_orientation_overlay", block)
-        self.assertIn("Show F-actin Orientation", block)
+        self.assertIn("Display / Inspection Mode", section_block)
+        self.assertIn('addItem("F-actin Orientation", "orientation")', create_block)
+        self.assertNotIn("layout.addWidget(window.chk_show_orientation_overlay)", section_block)
 
 
 if __name__ == "__main__":

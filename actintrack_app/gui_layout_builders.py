@@ -402,6 +402,9 @@ def build_explorer_tree_host(window: MainWindow) -> QWidget:
     window.tree_samples.sample_drop_requested.connect(
         window._on_explorer_sample_dropped
     )
+    window.tree_samples.sample_reorder_requested.connect(
+        window._on_explorer_sample_reordered
+    )
     tree_container = QWidget()
     tree_layout = QVBoxLayout(tree_container)
     apply_explorer_tree_content_margins(tree_layout)
@@ -423,48 +426,45 @@ def build_samples_panel(window: MainWindow) -> QWidget:
 
 
 def create_metric_mode_widgets(window: MainWindow) -> None:
-    """Analysis technique selector shown at the top of the metric settings panel."""
+    """Inspection-mode selector at the top of the Metric Analysis side panel."""
     if hasattr(window, "combo_metric_mode"):
         return
     window.combo_metric_mode = QComboBox()
     window.combo_metric_mode.addItem("Template Tracking", "template")
-    window.combo_metric_mode.addItem("Optical Flow (Draft)", "optical_flow")
+    window.combo_metric_mode.addItem("Optical Flow", "optical_flow")
+    window.combo_metric_mode.addItem("F-actin Orientation", "orientation")
     window.combo_metric_mode.setToolTip(
-        "Switch between Template Tracking and Optical Flow preview modes."
+        "Display / Inspection Mode: Template Tracking and Optical Flow are "
+        "motion analyses; F-actin Orientation is structural (persisted R7)."
     )
     apply_workbench_settings_combo(window.combo_metric_mode)
     window.combo_metric_mode.currentIndexChanged.connect(
         window._on_cropped_metric_mode_changed
     )
+    # Internal overlay flags kept for tests/debugging; not researcher-facing.
+    window.chk_show_orientation_overlay = QCheckBox("Show F-actin Orientation")
+    window.chk_show_orientation_overlay.setChecked(True)
+    window.chk_show_orientation_overlay.hide()
+    window.chk_show_orientation_overlay.toggled.connect(
+        window._on_show_orientation_overlay_changed
+    )
     window._metric_mode_widgets = ()
 
 
 def build_metric_mode_selector_section(window: MainWindow) -> QWidget:
-    """Technique selector pinned above metric settings in the adjacent side panel."""
+    """Inspection-mode selector pinned above metric settings."""
     create_metric_mode_widgets(window)
     section = QWidget()
     layout = QVBoxLayout(section)
     apply_side_panel_inner_margins(layout)
     layout.setSpacing(SIDE_PANEL_LABEL_CONTROL_GAP)
-    label = QLabel("Tracking method")
+    label = QLabel("Display / Inspection Mode")
     label.setWordWrap(True)
     apply_inspector_field_label_style(label)
     label.setToolTip(window.combo_metric_mode.toolTip())
     layout.addWidget(label)
     layout.addWidget(window.combo_metric_mode)
-    window.chk_show_orientation_overlay = QCheckBox("Show F-actin Orientation")
-    window.chk_show_orientation_overlay.setChecked(True)
-    window.chk_show_orientation_overlay.setToolTip(
-        "Draw persisted 0–90° nucleus-relative F-actin orientation ticks. "
-        "This is structural angle, not motion or trajectory."
-    )
-    window.chk_show_orientation_overlay.setStyleSheet(STYLE_CHECKBOX_COMPACT)
-    window.chk_show_orientation_overlay.toggled.connect(
-        window._on_show_orientation_overlay_changed
-    )
-    layout.addWidget(window.chk_show_orientation_overlay)
     return section
-
 
 def build_workbench_action_mode_slot(window: MainWindow) -> QStackedWidget:
     """Swap Metric Analysis and Return to Full Preview in one fixed slot."""
@@ -597,17 +597,18 @@ def build_sample_results_beside_canvas(window: MainWindow) -> QWidget:
 
 
 def build_roi_preview_panel(window: MainWindow) -> QWidget:
-    """Far-right setup column: Cell Boundary, Nucleus, Timing, optional Cutoff."""
+    """Far-right setup column: Cell Boundary, Nucleus, Timing, Cutoff."""
     host = QWidget()
     configure_workbench_adjacent_panel(host)
     layout = QVBoxLayout(host)
     layout.setContentsMargins(8, 8, 8, 8)
-    layout.setSpacing(ROI_HINT_STATUS_SPACING)
+    layout.setSpacing(SIDE_PANEL_FIELD_GROUP_SPACING)
 
     window.lbl_workflow_next = QLabel("Select a sample to begin.")
     window.lbl_workflow_next.setWordWrap(True)
     apply_hint_style(window.lbl_workflow_next)
     layout.addWidget(window.lbl_workflow_next)
+    layout.addSpacing(SIDE_PANEL_SECTION_SPACING)
 
     window.lbl_cell_boundary = QLabel("Cell Boundary")
     apply_inspector_field_label_style(window.lbl_cell_boundary)
@@ -637,8 +638,9 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     sensitivity_row.addWidget(window.slider_cell_boundary, stretch=1)
     sensitivity_row.addWidget(window.lbl_cell_boundary_broader)
     layout.addLayout(sensitivity_row)
+    layout.addSpacing(SIDE_PANEL_SECTION_SPACING)
 
-    window.lbl_nucleus_section = QLabel("Nucleus")
+    window.lbl_nucleus_section = QLabel("Nucleus (optional)")
     apply_inspector_field_label_style(window.lbl_nucleus_section)
     layout.addWidget(window.lbl_nucleus_section)
 
@@ -647,7 +649,8 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     nucleus_row.setSpacing(6)
     window.btn_select_nucleus = QPushButton("Select Nucleus")
     window.btn_select_nucleus.setToolTip(
-        "Click the nucleus center on the microscope image."
+        "Optional. Click the nucleus center for Toward Nucleus and "
+        "F-actin Orientation. Does not constrain the Measurement Cutoff."
     )
     window.btn_select_nucleus.clicked.connect(window._on_set_nucleus_mode)
     apply_workbench_action_button(window.btn_select_nucleus, expanding=True)
@@ -660,22 +663,28 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     nucleus_row.addWidget(window.btn_select_nucleus, stretch=1)
     nucleus_row.addWidget(window.btn_clear_nucleus, stretch=1)
     layout.addLayout(nucleus_row)
+    layout.addSpacing(SIDE_PANEL_SECTION_SPACING)
 
     create_tracking_setting_widgets(window)
     layout.addWidget(build_timing_settings_section(window))
+    layout.addSpacing(SIDE_PANEL_SECTION_SPACING)
 
     window.lbl_cutoff_section = QLabel("Measurement Cutoff")
     apply_inspector_field_label_style(window.lbl_cutoff_section)
     layout.addWidget(window.lbl_cutoff_section)
     window.btn_advanced_cutoff = QPushButton("Advanced: Adjust Cutoff")
     window.btn_advanced_cutoff.setToolTip(
-        "Optional horizontal cutoff. Adjust only when the default is not right."
+        "Required horizontal cutoff for Run Metrics. Adjust when the "
+        "automatic default is not right."
     )
     window.btn_advanced_cutoff.clicked.connect(window._on_set_cutoff_mode)
     apply_workbench_action_button(window.btn_advanced_cutoff, expanding=True)
     window.btn_advanced_cutoff.setEnabled(False)
     layout.addWidget(window.btn_advanced_cutoff)
     window.btn_clear_cutoff = QPushButton("Clear Cutoff")
+    window.btn_clear_cutoff.setToolTip(
+        "Clear the Measurement Cutoff. Run Metrics stays disabled until set again."
+    )
     window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
     apply_workbench_action_button(window.btn_clear_cutoff, expanding=True)
     window.btn_clear_cutoff.setEnabled(False)
@@ -1160,11 +1169,11 @@ def create_optical_flow_setting_widgets(window: MainWindow) -> None:
     window.spin_of_poly_sigma.setValue(defaults.poly_sigma)
 
     viz_defaults = OpticalFlowVisualizationSettings()
+    # Internal toggle retained for tests/debugging; OF inspection mode shows
+    # the overlay automatically for researchers.
     window.chk_show_of_overlay = QCheckBox("Show Optical Flow Overlay")
     window.chk_show_of_overlay.setChecked(True)
-    window.chk_show_of_overlay.setToolTip(
-        "Draw sampled optical-flow arrows on the cropped ROI preview."
-    )
+    window.chk_show_of_overlay.hide()
     window.chk_show_of_overlay.toggled.connect(window._on_show_of_overlay_changed)
 
     window.spin_of_arrow_spacing = NoWheelSpinBox()
@@ -1214,8 +1223,6 @@ def build_optical_flow_overlay_section(window: MainWindow) -> QWidget:
     layout = QVBoxLayout(section)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_FORM_SPACING)
-    window.chk_show_of_overlay.setStyleSheet(STYLE_CHECKBOX_COMPACT)
-    layout.addWidget(window.chk_show_of_overlay)
     add_tracking_setting_row(
         layout,
         "Arrow Spacing (px)",
