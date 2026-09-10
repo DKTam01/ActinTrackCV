@@ -643,14 +643,23 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.lbl_nucleus_section = QLabel("Nucleus (optional)")
     apply_inspector_field_label_style(window.lbl_nucleus_section)
     layout.addWidget(window.lbl_nucleus_section)
+    window.lbl_nucleus_cutoff_hint = QLabel(
+        "Place the Measurement Cutoff through the nucleus, "
+        "then select the nucleus center."
+    )
+    window.lbl_nucleus_cutoff_hint.setWordWrap(True)
+    apply_muted_hint_style(window.lbl_nucleus_cutoff_hint)
+    layout.addWidget(window.lbl_nucleus_cutoff_hint)
 
     nucleus_row = QHBoxLayout()
     nucleus_row.setContentsMargins(0, 0, 0, 0)
     nucleus_row.setSpacing(6)
     window.btn_select_nucleus = QPushButton("Select Nucleus")
+    window.btn_select_nucleus.setCheckable(True)
     window.btn_select_nucleus.setToolTip(
-        "Optional. Click the nucleus center for Toward Nucleus and "
-        "F-actin Orientation. Does not constrain the Measurement Cutoff."
+        "Click the nucleus center. You choose the horizontal position; "
+        "the Measurement Cutoff sets the vertical level. Required for "
+        "Toward Nucleus and F-actin Orientation."
     )
     window.btn_select_nucleus.clicked.connect(window._on_set_nucleus_mode)
     apply_workbench_action_button(window.btn_select_nucleus, expanding=True)
