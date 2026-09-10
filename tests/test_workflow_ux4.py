@@ -301,19 +301,19 @@ class WorkbenchControlStyleTests(unittest.TestCase):
             self.assertEqual(btn.height(), WORKBENCH_CONTROL_HEIGHT)
         layout = _read("actintrack_app/gui_layout_builders.py")
         self.assertIn(
-            "apply_workbench_action_button(window.btn_select_nucleus)",
+            "apply_workbench_action_button(window.btn_select_nucleus, expanding=True)",
             layout,
         )
         self.assertIn(
-            "apply_workbench_action_button(window.btn_clear_nucleus)",
+            "apply_workbench_action_button(window.btn_clear_nucleus, expanding=True)",
             layout,
         )
         self.assertIn(
-            "apply_workbench_action_button(window.btn_advanced_cutoff)",
+            "apply_workbench_action_button(window.btn_advanced_cutoff, expanding=True)",
             layout,
         )
         self.assertIn(
-            "apply_workbench_action_button(window.btn_clear_cutoff)",
+            "apply_workbench_action_button(window.btn_clear_cutoff, expanding=True)",
             layout,
         )
 

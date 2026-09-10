@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyleFactory,
     QVBoxLayout,
     QWidget,
 )
@@ -59,9 +60,19 @@ COLOR_CONTROL_BACKGROUND_HOVER = "#333333"
 COLOR_CONTROL_BACKGROUND_PRESSED = "#252526"
 COLOR_CONTROL_BACKGROUND_DISABLED = "#262626"
 COLOR_CONTROL_BORDER = "#3c3c3c"
-COLOR_CONTROL_BORDER_FOCUS = "#4a4a4a"
+COLOR_CONTROL_BORDER_FOCUS = "#c8c8c8"
 COLOR_CONTROL_TEXT = "#cccccc"
 COLOR_CONTROL_TEXT_DISABLED = "#666666"
+
+# Editable field interiors (combo/spin/line) — neutral grey, not saturated blue
+COLOR_FIELD_BACKGROUND = "#3a3a3a"
+COLOR_FIELD_BACKGROUND_HOVER = "#454545"
+COLOR_FIELD_BACKGROUND_DISABLED = "#2e2e2e"
+COLOR_FIELD_BORDER = "#4a4a4a"
+COLOR_FIELD_BORDER_FOCUS = "#c8c8c8"
+COLOR_FIELD_TEXT = "#f0f0f0"
+COLOR_FIELD_SELECTION_BACKGROUND = "#555555"
+COLOR_FIELD_SELECTION_TEXT = "#f0f0f0"
 
 # Backward-compatible aliases used across Workbench QSS
 COLOR_BUTTON_BACKGROUND = COLOR_CONTROL_BACKGROUND
@@ -71,9 +82,9 @@ COLOR_BUTTON_BACKGROUND_DISABLED = COLOR_CONTROL_BACKGROUND_DISABLED
 COLOR_BUTTON_BORDER = COLOR_CONTROL_BORDER
 COLOR_BUTTON_TEXT = COLOR_CONTROL_TEXT
 COLOR_BUTTON_TEXT_DISABLED = COLOR_CONTROL_TEXT_DISABLED
-COLOR_INSPECTOR_FIELD_BACKGROUND = COLOR_CONTROL_BACKGROUND
-COLOR_INSPECTOR_FIELD_BORDER = COLOR_CONTROL_BORDER
-COLOR_INSPECTOR_FIELD_BORDER_FOCUS = COLOR_CONTROL_BORDER_FOCUS
+COLOR_INSPECTOR_FIELD_BACKGROUND = COLOR_FIELD_BACKGROUND
+COLOR_INSPECTOR_FIELD_BORDER = COLOR_FIELD_BORDER
+COLOR_INSPECTOR_FIELD_BORDER_FOCUS = COLOR_FIELD_BORDER_FOCUS
 
 EXPLORER_CONTENT_PADDING = 8
 EXPLORER_CONTENT_LEFT_PADDING = 6
@@ -158,7 +169,7 @@ ORIENT_PANEL_BUTTON_MIN_HEIGHT = 28
 ROI_HINT_STATUS_SPACING = 2
 
 _STYLE_WORKBENCH_CONTROL_METRICS = (
-    f"border: none;"
+    f"border: 1px solid {COLOR_CONTROL_BORDER};"
     f"border-radius: {WORKBENCH_CONTROL_RADIUS}px;"
     f"padding: {WORKBENCH_CONTROL_PADDING_V}px {WORKBENCH_CONTROL_PADDING_H}px;"
     f"font-size: {WORKBENCH_CONTROL_FONT_SIZE}px;"
@@ -167,13 +178,44 @@ _STYLE_WORKBENCH_CONTROL_METRICS = (
 )
 
 _STYLE_INSPECTOR_FIELD_METRICS = (
-    f"background-color: {COLOR_CONTROL_BACKGROUND};"
-    f"color: {COLOR_CONTROL_TEXT};"
-    f"border: 1px solid {COLOR_CONTROL_BORDER};"
+    f"background-color: {COLOR_FIELD_BACKGROUND};"
+    f"color: {COLOR_FIELD_TEXT};"
+    f"border: 1px solid {COLOR_FIELD_BORDER};"
     f"border-radius: {WORKBENCH_CONTROL_RADIUS}px;"
     f"padding: 2px 6px;"
     f"min-height: {TRACKING_FIELD_MIN_HEIGHT}px;"
     f"font-size: {FONT_SIZE_HINT}px;"
+)
+
+_STYLE_INSPECTOR_FIELD_HOVER_FOCUS = (
+    f"QSpinBox:hover, QDoubleSpinBox:hover, QLineEdit:hover, QComboBox:hover {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_HOVER};"
+    "}"
+    f"QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus, QComboBox:focus {{"
+    f"  border: 1px solid {COLOR_FIELD_BORDER_FOCUS};"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_HOVER};"
+    "}"
+    f"QSpinBox:disabled, QDoubleSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_DISABLED};"
+    f"  color: {COLOR_CONTROL_TEXT_DISABLED};"
+    "}"
+    f"QComboBox QAbstractItemView {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND};"
+    f"  color: {COLOR_FIELD_TEXT};"
+    f"  selection-background-color: {COLOR_FIELD_SELECTION_BACKGROUND};"
+    f"  selection-color: {COLOR_FIELD_SELECTION_TEXT};"
+    f"  border: 1px solid {COLOR_FIELD_BORDER};"
+    "}"
+    "QSpinBox::up-button, QDoubleSpinBox::up-button, "
+    "QSpinBox::down-button, QDoubleSpinBox::down-button {"
+    f"  background-color: {COLOR_FIELD_BACKGROUND};"
+    "  border: none;"
+    "  width: 16px;"
+    "}"
+    "QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover, "
+    "QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_HOVER};"
+    "}"
 )
 
 STYLE_EXPLORER_PANEL = (
@@ -265,14 +307,20 @@ STYLE_WORKBENCH_ACTION_BUTTON = (
     f"  color: {COLOR_BUTTON_TEXT};"
     f"{_STYLE_WORKBENCH_CONTROL_METRICS}"
     "}"
-    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:hover "
-    f"{{ background-color: {COLOR_BUTTON_BACKGROUND_HOVER}; }}"
-    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:pressed "
-    f"{{ background-color: {COLOR_BUTTON_BACKGROUND_PRESSED}; }}"
-    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:disabled "
-    f"{{"
+    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:hover {{"
+    f"  background-color: {COLOR_BUTTON_BACKGROUND_HOVER};"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER};"
+    "}"
+    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:pressed {{"
+    f"  background-color: {COLOR_BUTTON_BACKGROUND_PRESSED};"
+    "}"
+    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:disabled {{"
     f"  background-color: {COLOR_BUTTON_BACKGROUND_DISABLED};"
     f"  color: {COLOR_BUTTON_TEXT_DISABLED};"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER};"
+    "}"
+    f"QPushButton#{WORKBENCH_ACTION_BUTTON_OBJECT_NAME}:focus {{"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER_FOCUS};"
     "}"
 )
 STYLE_WORKBENCH_PLAYBACK_BUTTON = (
@@ -282,21 +330,27 @@ STYLE_WORKBENCH_PLAYBACK_BUTTON = (
     f"{_STYLE_WORKBENCH_CONTROL_METRICS}"
     f"  min-width: {WORKBENCH_PLAYBACK_BUTTON_MIN_WIDTH}px;"
     "}"
-    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:hover "
-    f"{{ background-color: {COLOR_BUTTON_BACKGROUND_HOVER}; }}"
-    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:pressed "
-    f"{{ background-color: {COLOR_BUTTON_BACKGROUND_PRESSED}; }}"
-    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:disabled "
-    f"{{"
+    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:hover {{"
+    f"  background-color: {COLOR_BUTTON_BACKGROUND_HOVER};"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER};"
+    "}"
+    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:pressed {{"
+    f"  background-color: {COLOR_BUTTON_BACKGROUND_PRESSED};"
+    "}"
+    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:disabled {{"
     f"  background-color: {COLOR_BUTTON_BACKGROUND_DISABLED};"
     f"  color: {COLOR_BUTTON_TEXT_DISABLED};"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER};"
+    "}"
+    f"QPushButton#{WORKBENCH_PLAYBACK_BUTTON_OBJECT_NAME}:focus {{"
+    f"  border: 1px solid {COLOR_CONTROL_BORDER_FOCUS};"
     "}"
 )
 STYLE_WORKBENCH_PLAYBACK_SPEED_COMBO = (
     f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME} {{"
-    f"  background-color: {COLOR_CONTROL_BACKGROUND};"
-    f"  color: {COLOR_CONTROL_TEXT};"
-    f"  border: 1px solid {COLOR_CONTROL_BORDER};"
+    f"  background-color: {COLOR_FIELD_BACKGROUND};"
+    f"  color: {COLOR_FIELD_TEXT};"
+    f"  border: 1px solid {COLOR_FIELD_BORDER};"
     f"  border-radius: {WORKBENCH_CONTROL_RADIUS}px;"
     f"  padding: {WORKBENCH_CONTROL_PADDING_V}px 6px;"
     f"  padding-right: 18px;"
@@ -304,42 +358,64 @@ STYLE_WORKBENCH_PLAYBACK_SPEED_COMBO = (
     f"  min-height: {WORKBENCH_CONTROL_HEIGHT}px;"
     f"  max-height: {WORKBENCH_CONTROL_HEIGHT}px;"
     "}"
-    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}:disabled "
-    f"{{"
-    f"  background-color: {COLOR_CONTROL_BACKGROUND_DISABLED};"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}:hover {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_HOVER};"
+    "}"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}:focus {{"
+    f"  border: 1px solid {COLOR_FIELD_BORDER_FOCUS};"
+    "}"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}:disabled {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_DISABLED};"
     f"  color: {COLOR_CONTROL_TEXT_DISABLED};"
     "}"
-    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}::drop-down "
-    "{"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}::drop-down {{"
     "  subcontrol-origin: padding;"
     "  subcontrol-position: top right;"
     "  width: 16px;"
-    f"  border-left: 1px solid {COLOR_CONTROL_BORDER};"
+    f"  border-left: 1px solid {COLOR_FIELD_BORDER};"
     "}"
-    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}::down-arrow "
-    "{ width: 8px; height: 8px; }"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME}::down-arrow {{"
+    "  width: 8px; height: 8px;"
+    "}"
+    f"QComboBox#{WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME} QAbstractItemView {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND};"
+    f"  color: {COLOR_FIELD_TEXT};"
+    f"  selection-background-color: {COLOR_FIELD_SELECTION_BACKGROUND};"
+    f"  selection-color: {COLOR_FIELD_SELECTION_TEXT};"
+    f"  border: 1px solid {COLOR_FIELD_BORDER};"
+    "}"
 )
 STYLE_WORKBENCH_SETTINGS_COMBO = (
     f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME} {{"
     f"{_STYLE_INSPECTOR_FIELD_METRICS}"
     f"  padding-right: 22px;"
     "}"
-    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}:disabled "
-    f"{{"
-    f"  background-color: {COLOR_BUTTON_BACKGROUND_DISABLED};"
-    f"  color: {COLOR_BUTTON_TEXT_DISABLED};"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}:hover {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_HOVER};"
     "}"
-    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}:focus "
-    f"{{ border-color: {COLOR_INSPECTOR_FIELD_BORDER_FOCUS}; }}"
-    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}::drop-down "
-    "{"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}:disabled {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND_DISABLED};"
+    f"  color: {COLOR_CONTROL_TEXT_DISABLED};"
+    "}"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}:focus {{"
+    f"  border: 1px solid {COLOR_INSPECTOR_FIELD_BORDER_FOCUS};"
+    "}"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}::drop-down {{"
     "  subcontrol-origin: padding;"
     "  subcontrol-position: top right;"
     "  width: 18px;"
     f"  border-left: 1px solid {COLOR_INSPECTOR_FIELD_BORDER};"
     "}"
-    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}::down-arrow "
-    "{ width: 8px; height: 8px; }"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME}::down-arrow {{"
+    "  width: 8px; height: 8px;"
+    "}"
+    f"QComboBox#{WORKBENCH_SETTINGS_COMBO_OBJECT_NAME} QAbstractItemView {{"
+    f"  background-color: {COLOR_FIELD_BACKGROUND};"
+    f"  color: {COLOR_FIELD_TEXT};"
+    f"  selection-background-color: {COLOR_FIELD_SELECTION_BACKGROUND};"
+    f"  selection-color: {COLOR_FIELD_SELECTION_TEXT};"
+    f"  border: 1px solid {COLOR_FIELD_BORDER};"
+    "}"
 )
 STYLE_INSPECTOR_FIELD = (
     f"QSpinBox, QDoubleSpinBox, QLineEdit {{"
@@ -349,8 +425,7 @@ STYLE_INSPECTOR_FIELD = (
     f"{_STYLE_INSPECTOR_FIELD_METRICS}"
     f"  padding-right: 22px;"
     "}"
-    f"QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus, QComboBox:focus "
-    f"{{ border-color: {COLOR_INSPECTOR_FIELD_BORDER_FOCUS}; }}"
+    f"{_STYLE_INSPECTOR_FIELD_HOVER_FOCUS}"
     "QComboBox::drop-down {"
     "  subcontrol-origin: padding;"
     "  subcontrol-position: top right;"
@@ -616,13 +691,32 @@ def _apply_workbench_control_geometry(
     )
 
 
-def apply_workbench_action_button(button: QPushButton) -> None:
+def _apply_neutral_field_style(widget: QWidget) -> None:
+    """Use Fusion so macOS aqua/blue native fills do not override field QSS."""
+    fusion = QStyleFactory.create("Fusion")
+    if fusion is not None:
+        widget.setStyle(fusion)
+    widget.setAttribute(Qt.WidgetAttribute.WA_MacShowFocusRect, True)
+
+
+def apply_workbench_action_button(
+    button: QPushButton,
+    *,
+    expanding: bool = False,
+    min_width: int | None = None,
+) -> None:
     button.setObjectName(WORKBENCH_ACTION_BUTTON_OBJECT_NAME)
     button.setStyleSheet(STYLE_WORKBENCH_ACTION_BUTTON)
-    _apply_workbench_control_geometry(
-        button,
-        min_width=WORKBENCH_ACTION_CONTROL_MIN_WIDTH,
-    )
+    if expanding:
+        button.setFixedHeight(WORKBENCH_CONTROL_HEIGHT)
+        button.setMinimumWidth(0)
+        button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        return
+    width = WORKBENCH_ACTION_CONTROL_MIN_WIDTH if min_width is None else min_width
+    _apply_workbench_control_geometry(button, min_width=width)
 
 
 def apply_workbench_playback_button(button: QPushButton) -> None:
@@ -635,6 +729,7 @@ def apply_workbench_playback_button(button: QPushButton) -> None:
 
 
 def apply_workbench_playback_speed_combo(combo: QWidget) -> None:
+    _apply_neutral_field_style(combo)
     combo.setObjectName(WORKBENCH_PLAYBACK_SPEED_COMBO_OBJECT_NAME)
     combo.setStyleSheet(STYLE_WORKBENCH_PLAYBACK_SPEED_COMBO)
     combo.setFixedHeight(WORKBENCH_CONTROL_HEIGHT)
@@ -646,6 +741,7 @@ def apply_workbench_playback_speed_combo(combo: QWidget) -> None:
 
 
 def apply_workbench_settings_combo(combo: QWidget) -> None:
+    _apply_neutral_field_style(combo)
     combo.setObjectName(WORKBENCH_SETTINGS_COMBO_OBJECT_NAME)
     combo.setStyleSheet(STYLE_WORKBENCH_SETTINGS_COMBO)
     combo.setMinimumHeight(TRACKING_FIELD_MIN_HEIGHT)
@@ -656,6 +752,7 @@ def apply_workbench_settings_combo(combo: QWidget) -> None:
 
 
 def apply_inspector_field_style(widget: QWidget) -> None:
+    _apply_neutral_field_style(widget)
     widget.setStyleSheet(STYLE_INSPECTOR_FIELD)
 
 

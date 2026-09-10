@@ -121,6 +121,10 @@ class GuiStylesTests(unittest.TestCase):
         )
         self.assertEqual(
             gui_styles.COLOR_INSPECTOR_FIELD_BACKGROUND,
+            gui_styles.COLOR_FIELD_BACKGROUND,
+        )
+        self.assertNotEqual(
+            gui_styles.COLOR_FIELD_BACKGROUND,
             gui_styles.COLOR_CONTROL_BACKGROUND,
         )
         self.assertIn(
@@ -141,7 +145,20 @@ class GuiStylesTests(unittest.TestCase):
             f"min-height: {gui_styles.WORKBENCH_CONTROL_HEIGHT}px",
             gui_styles.STYLE_WORKBENCH_ACTION_BUTTON,
         )
-        self.assertNotIn("border: 1px solid", gui_styles.STYLE_WORKBENCH_ACTION_BUTTON)
+        self.assertIn("border: 1px solid", gui_styles.STYLE_WORKBENCH_ACTION_BUTTON)
+        self.assertIn(":focus", gui_styles.STYLE_WORKBENCH_ACTION_BUTTON)
+        self.assertEqual(
+            gui_styles.COLOR_INSPECTOR_FIELD_BACKGROUND,
+            gui_styles.COLOR_FIELD_BACKGROUND,
+        )
+        self.assertNotEqual(
+            gui_styles.COLOR_FIELD_BACKGROUND,
+            gui_styles.COLOR_FIELD_BACKGROUND_HOVER,
+        )
+        self.assertGreater(
+            int(gui_styles.COLOR_FIELD_BORDER_FOCUS[1:], 16),
+            int(gui_styles.COLOR_FIELD_BORDER[1:], 16),
+        )
 
     def test_orient_panel_layout_tokens(self) -> None:
         self.assertEqual(gui_styles.ORIENT_PANEL_BUTTON_MIN_HEIGHT, 28)
@@ -155,6 +172,47 @@ class GuiStylesTests(unittest.TestCase):
         button.setSizePolicy.assert_called_once()
         button.setMinimumHeight.assert_called_once_with(
             gui_styles.ORIENT_PANEL_BUTTON_MIN_HEIGHT
+        )
+
+    def test_inspector_fields_use_neutral_grey_and_visible_focus(self) -> None:
+        from PyQt6.QtWidgets import QApplication, QComboBox
+
+        from actintrack_app.qt_spin_boxes import NoWheelDoubleSpinBox
+
+        _app = QApplication.instance() or QApplication([])
+        self.assertIn(gui_styles.COLOR_FIELD_BACKGROUND, gui_styles.STYLE_INSPECTOR_FIELD)
+        self.assertIn(
+            gui_styles.COLOR_FIELD_BACKGROUND_HOVER, gui_styles.STYLE_INSPECTOR_FIELD
+        )
+        self.assertIn(gui_styles.COLOR_FIELD_TEXT, gui_styles.STYLE_INSPECTOR_FIELD)
+        self.assertIn(":focus", gui_styles.STYLE_INSPECTOR_FIELD)
+        self.assertIn(":focus", gui_styles.STYLE_WORKBENCH_ACTION_BUTTON)
+        combo = QComboBox()
+        gui_styles.apply_inspector_field_style(combo)
+        self.assertIn(gui_styles.COLOR_FIELD_BACKGROUND, combo.styleSheet())
+        spin = NoWheelDoubleSpinBox()
+        gui_styles.apply_inspector_field_style(spin)
+        self.assertIn(gui_styles.COLOR_FIELD_BORDER_FOCUS, spin.styleSheet())
+
+    def test_setup_buttons_can_expand_in_the_shared_family(self) -> None:
+        from PyQt6.QtWidgets import QApplication, QPushButton, QSizePolicy
+
+        _app = QApplication.instance() or QApplication([])
+        button = QPushButton("Select Nucleus")
+        gui_styles.apply_workbench_action_button(button, expanding=True)
+        self.assertEqual(
+            button.objectName(), gui_styles.WORKBENCH_ACTION_BUTTON_OBJECT_NAME
+        )
+        self.assertEqual(
+            button.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding
+        )
+        layout = (
+            __import__("pathlib").Path(__file__).resolve().parents[1]
+            / "actintrack_app/gui_layout_builders.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "apply_workbench_action_button(window.btn_select_nucleus, expanding=True)",
+            layout,
         )
 
 
