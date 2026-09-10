@@ -1,7 +1,8 @@
 """Derive Workbench setup readiness from canonical persisted fields.
 
 No second redundant workflow enum is stored. Callers compose CellRegion,
-derived computational crop, nucleus, timing, and metric freshness into UI gating.
+derived computational crop, optional nucleus, required cutoff, timing, and
+metric freshness into UI gating.
 
 Legacy ``crop_confirmed`` remains readable for old projects but no longer
 drives researcher-facing readiness.
@@ -25,6 +26,7 @@ class WorkflowSnapshot:
     crop_confirmed: bool = False
     has_cell_region: bool = False
     has_nucleus: bool = False
+    has_cutoff: bool = False
     timing_confirmed: bool = False
     has_valid_video_timing: bool = False
     metrics_present: bool = False
@@ -45,7 +47,7 @@ class WorkflowSnapshot:
             self.has_sample
             and self.has_cell_region
             and self.has_crop
-            and self.has_nucleus
+            and self.has_cutoff
             and self.has_valid_video_timing
             and not self.metrics_running
         )
@@ -68,8 +70,8 @@ class WorkflowSnapshot:
             return "Wait for the cell boundary to be identified"
         if not self.has_crop:
             return "Cell boundary is not ready"
-        if not self.has_nucleus:
-            return "Select the nucleus"
+        if not self.has_cutoff:
+            return "Set the Measurement Cutoff to continue."
         if not self.has_valid_video_timing:
             return "Valid video timing is required"
         return None
@@ -90,8 +92,8 @@ class WorkflowSnapshot:
             return "Select a sample to begin."
         if not self.has_cell_region:
             return "Identifying the cell boundary…"
-        if not self.has_nucleus:
-            return "Select the nucleus center."
+        if not self.has_cutoff:
+            return "Set the Measurement Cutoff to continue."
         if not self.has_valid_video_timing:
             return "Video timing is unavailable — calibrated metrics cannot run."
         if self.metrics_running:
@@ -99,7 +101,9 @@ class WorkflowSnapshot:
         if self.metrics_stale:
             return "Setup changed — run Metrics again."
         if not self.metrics_present:
-            return "Ready — click Run Metrics."
+            if self.has_nucleus:
+                return "Ready — click Run Metrics."
+            return "Ready — click Run Metrics (nucleus optional for Toward Nucleus / Orientation)."
         return "Metrics current. Open Metric Analysis for detail, or switch samples."
 
 
@@ -130,6 +134,7 @@ def build_workflow_snapshot(
     metrics_stale: bool,
     metrics_running: bool = False,
     has_valid_video_timing: bool | None = None,
+    has_cutoff: bool = False,
 ) -> WorkflowSnapshot:
     video_timing_ready = (
         bool(timing_confirmed)
@@ -142,6 +147,7 @@ def build_workflow_snapshot(
         crop_confirmed=bool(crop_confirmed) and bool(has_crop),
         has_cell_region=bool(has_cell_region),
         has_nucleus=bool(has_nucleus),
+        has_cutoff=bool(has_cutoff),
         timing_confirmed=bool(timing_confirmed) or video_timing_ready,
         has_valid_video_timing=video_timing_ready,
         metrics_present=bool(metrics_present),
@@ -163,6 +169,7 @@ def format_sample_results_summary(
     timing_label: str,
     timing_confirmed: bool,
     stale: bool = False,
+    has_nucleus: bool = True,
 ) -> str:
     """Concise Workbench Sample Results text from persisted display values."""
 
@@ -201,10 +208,15 @@ def format_sample_results_summary(
         lines.append("Timing unconfirmed")
     lines.append("")
     lines.append("Toward Nucleus")
-    lines.append(_um(toward_nucleus_um_s) if toward_nucleus_um_s is not None else "—")
+    if not has_nucleus:
+        lines.append("Nucleus required")
+    else:
+        lines.append(_um(toward_nucleus_um_s) if toward_nucleus_um_s is not None else "—")
     lines.append("")
     lines.append("F-actin Orientation")
-    if orientation_deg is None:
+    if not has_nucleus:
+        lines.append("Nucleus required")
+    elif orientation_deg is None:
         lines.append("—")
     else:
         lines.append(f"{float(orientation_deg):.1f}°")

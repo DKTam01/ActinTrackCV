@@ -113,13 +113,14 @@ class DerivedCropAndSensitivityTests(unittest.TestCase):
 
 
 class WorkflowGatingUx2Tests(unittest.TestCase):
-    def test_run_metrics_requires_cell_nucleus_timing_not_crop_confirmed(self) -> None:
+    def test_run_metrics_requires_cell_cutoff_timing_not_crop_confirmed(self) -> None:
         snap = build_workflow_snapshot(
             has_sample=True,
             has_crop=True,
             crop_confirmed=False,
             has_cell_region=True,
-            has_nucleus=True,
+            has_nucleus=False,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=False,
             metrics_stale=False,
@@ -134,6 +135,7 @@ class WorkflowGatingUx2Tests(unittest.TestCase):
             has_crop=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=True,
             metrics_stale=True,
@@ -148,6 +150,7 @@ class WorkflowGatingUx2Tests(unittest.TestCase):
             crop_confirmed=False,
             has_cell_region=True,
             has_nucleus=False,
+            has_cutoff=False,
             timing_confirmed=False,
             metrics_present=False,
             metrics_stale=False,

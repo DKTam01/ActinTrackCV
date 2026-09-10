@@ -136,12 +136,13 @@ class VideoTimingPolicyTests(unittest.TestCase):
 
 
 class WorkflowReadinessUx4Tests(unittest.TestCase):
-    def test_run_metrics_uses_cell_nucleus_and_valid_video_timing(self) -> None:
+    def test_run_metrics_uses_cell_cutoff_and_valid_video_timing(self) -> None:
         incomplete = build_workflow_snapshot(
             has_sample=True,
             has_crop=True,
             has_cell_region=True,
-            has_nucleus=True,
+            has_nucleus=False,
+            has_cutoff=True,
             timing_confirmed=False,
             has_valid_video_timing=False,
             metrics_present=False,
@@ -157,7 +158,8 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
             has_sample=True,
             has_crop=True,
             has_cell_region=True,
-            has_nucleus=True,
+            has_nucleus=False,
+            has_cutoff=True,
             timing_confirmed=True,
             has_valid_video_timing=True,
             metrics_present=False,
@@ -167,12 +169,30 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
         self.assertIsNone(ready.run_metrics_block_reason())
         self.assertFalse(ready.metric_analysis_allowed)
 
+        no_cutoff = build_workflow_snapshot(
+            has_sample=True,
+            has_crop=True,
+            has_cell_region=True,
+            has_nucleus=True,
+            has_cutoff=False,
+            timing_confirmed=True,
+            has_valid_video_timing=True,
+            metrics_present=False,
+            metrics_stale=False,
+        )
+        self.assertFalse(no_cutoff.ready_to_run)
+        self.assertEqual(
+            no_cutoff.run_metrics_block_reason(),
+            "Set the Measurement Cutoff to continue.",
+        )
+
     def test_metric_analysis_gating_unchanged(self) -> None:
         current = build_workflow_snapshot(
             has_sample=True,
             has_crop=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             has_valid_video_timing=True,
             metrics_present=True,
@@ -184,6 +204,7 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
             has_crop=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             has_valid_video_timing=True,
             metrics_present=True,

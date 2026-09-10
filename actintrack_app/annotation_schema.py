@@ -27,6 +27,7 @@ from actintrack_app.scientific_annotations import (
     ANNOTATION_FIELD_CELL_DETECTION,
     ANNOTATION_FIELD_CELL_REGION,
     ANNOTATION_FIELD_CUTOFF_BOUNDARY,
+    ANNOTATION_FIELD_CUTOFF_CLEARED,
     ANNOTATION_FIELD_NUCLEUS_REFERENCE,
     CellRegion,
     CutoffBoundary,
@@ -75,6 +76,7 @@ def build_sample_annotation(
     review_status: str = "approved",
     nucleus_reference: NucleusReference | None = None,
     cutoff_boundary: CutoffBoundary | None = None,
+    cutoff_cleared: bool | None = None,
     cell_region: CellRegion | None = None,
     timing: TimingMetadata | None = None,
     crop_confirmed: bool | None = None,
@@ -133,6 +135,8 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_NUCLEUS_REFERENCE] = nucleus_reference.to_dict()
     if cutoff_boundary is not None:
         ann[ANNOTATION_FIELD_CUTOFF_BOUNDARY] = cutoff_boundary.to_dict()
+    elif cutoff_cleared:
+        ann[ANNOTATION_FIELD_CUTOFF_CLEARED] = True
     if cell_region is not None:
         ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
     if timing is not None:

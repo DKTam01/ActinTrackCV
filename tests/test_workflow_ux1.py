@@ -39,7 +39,8 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             has_crop=True,
             crop_confirmed=False,
             has_cell_region=True,
-            has_nucleus=True,
+            has_nucleus=False,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=False,
             metrics_stale=False,
@@ -47,18 +48,37 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
         self.assertTrue(snap.ready_to_run)
         self.assertIsNone(snap.run_metrics_block_reason())
 
-    def test_cell_without_nucleus_blocks_run(self) -> None:
+    def test_cell_without_nucleus_still_ready(self) -> None:
         snap = build_workflow_snapshot(
             has_sample=True,
             has_crop=True,
             crop_confirmed=True,
             has_cell_region=True,
             has_nucleus=False,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=False,
             metrics_stale=False,
         )
-        self.assertEqual(snap.run_metrics_block_reason(), "Select the nucleus")
+        self.assertTrue(snap.ready_to_run)
+        self.assertIsNone(snap.run_metrics_block_reason())
+
+    def test_missing_cutoff_blocks_run(self) -> None:
+        snap = build_workflow_snapshot(
+            has_sample=True,
+            has_crop=True,
+            crop_confirmed=True,
+            has_cell_region=True,
+            has_nucleus=True,
+            has_cutoff=False,
+            timing_confirmed=True,
+            metrics_present=False,
+            metrics_stale=False,
+        )
+        self.assertEqual(
+            snap.run_metrics_block_reason(),
+            "Set the Measurement Cutoff to continue.",
+        )
 
     def test_timing_unconfirmed_blocks_run(self) -> None:
         snap = build_workflow_snapshot(
@@ -67,6 +87,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             crop_confirmed=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=False,
             metrics_present=False,
             metrics_stale=False,
@@ -80,6 +101,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             crop_confirmed=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=False,
             metrics_stale=False,
@@ -95,6 +117,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             crop_confirmed=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=True,
             metrics_stale=False,
@@ -109,6 +132,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             crop_confirmed=True,
             has_cell_region=True,
             has_nucleus=True,
+            has_cutoff=True,
             timing_confirmed=True,
             metrics_present=True,
             metrics_stale=True,

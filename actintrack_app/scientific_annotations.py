@@ -44,6 +44,7 @@ from actintrack_app.region import (
 
 ANNOTATION_FIELD_NUCLEUS_REFERENCE = "nucleus_reference"
 ANNOTATION_FIELD_CUTOFF_BOUNDARY = "cutoff_boundary"
+ANNOTATION_FIELD_CUTOFF_CLEARED = "cutoff_cleared"
 ANNOTATION_FIELD_CELL_REGION = "cell_region"
 
 CELL_REGION_SOURCE_AUTO = "auto_suggested"
