@@ -50,6 +50,12 @@ CELL_REGION_SOURCE_AUTO = "auto_suggested"
 CELL_REGION_SOURCE_FALLBACK_ROI = "fallback_rect_roi"
 CELL_REGION_SOURCE_FALLBACK_FRAME = "fallback_full_frame"
 
+CUTOFF_SOURCE_AUTO = "auto"
+CUTOFF_SOURCE_MANUAL = "manual"
+
+ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY = "cell_boundary_sensitivity"
+ANNOTATION_FIELD_CELL_DETECTION = "cell_detection"
+
 
 class ScientificAnnotationError(ValueError):
     """Raised when nucleus or cutoff annotation data is invalid."""
@@ -135,16 +141,22 @@ class CutoffBoundary:
 
     y: float
     coordinate_space: str = COORDINATE_SPACE_ORIENTED_FRAME_PIXELS
+    source: str | None = None
 
     def __post_init__(self) -> None:
         _require_oriented_space(self.coordinate_space, label="CutoffBoundary")
         object.__setattr__(self, "y", float(self.y))
+        if self.source is not None:
+            object.__setattr__(self, "source", str(self.source))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "y": float(self.y),
             "coordinate_space": self.coordinate_space,
         }
+        if self.source:
+            payload["source"] = self.source
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CutoffBoundary:
@@ -161,14 +173,28 @@ class CutoffBoundary:
         space = str(
             data.get("coordinate_space", COORDINATE_SPACE_ORIENTED_FRAME_PIXELS)
         )
-        return cls(y=y, coordinate_space=space)
+        source = data.get("source")
+        return cls(
+            y=y,
+            coordinate_space=space,
+            source=None if source in (None, "") else str(source),
+        )
 
     def to_crop_local(self, crop: RectROI) -> float:
         return oriented_y_to_crop_local(self.y, crop)
 
     @classmethod
-    def from_crop_local(cls, y: float, crop: RectROI) -> CutoffBoundary:
-        return cls(y=crop_local_y_to_oriented(y, crop))
+    def from_crop_local(
+        cls,
+        y: float,
+        crop: RectROI,
+        *,
+        source: str | None = None,
+    ) -> CutoffBoundary:
+        return cls(y=crop_local_y_to_oriented(y, crop), source=source)
+
+    def is_auto(self) -> bool:
+        return self.source == CUTOFF_SOURCE_AUTO
 
 
 def nucleus_reference_from_annotation(
@@ -433,7 +459,7 @@ def reorient_cutoff_boundary(
     )
     if new_y is None:
         return None
-    return CutoffBoundary(y=new_y)
+    return CutoffBoundary(y=new_y, source=cutoff.source)
 
 
 def reorient_cell_region(

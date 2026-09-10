@@ -23,6 +23,8 @@ from actintrack_app.roi_workflow import (
     roi_original_as_dict,
 )
 from actintrack_app.scientific_annotations import (
+    ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY,
+    ANNOTATION_FIELD_CELL_DETECTION,
     ANNOTATION_FIELD_CELL_REGION,
     ANNOTATION_FIELD_CUTOFF_BOUNDARY,
     ANNOTATION_FIELD_NUCLEUS_REFERENCE,
@@ -76,6 +78,8 @@ def build_sample_annotation(
     cell_region: CellRegion | None = None,
     timing: TimingMetadata | None = None,
     crop_confirmed: bool | None = None,
+    cell_boundary_sensitivity: float | None = None,
+    cell_detection_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Structured annotation for training and export.
 
@@ -135,6 +139,12 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_TIMING] = timing.to_dict()
     if crop_confirmed is not None:
         ann[ANNOTATION_FIELD_CROP_CONFIRMED] = bool(crop_confirmed)
+    if cell_boundary_sensitivity is not None:
+        ann[ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY] = float(
+            cell_boundary_sensitivity
+        )
+    if cell_detection_parameters:
+        ann[ANNOTATION_FIELD_CELL_DETECTION] = dict(cell_detection_parameters)
     return ann
 
 
@@ -239,3 +249,22 @@ def cell_region_from_sample_annotation(
 ) -> CellRegion | None:
     """Load optional CellRegion. Missing fields return None, not defaults."""
     return cell_region_from_annotation(annotation)
+
+
+def cell_boundary_sensitivity_from_annotation(
+    annotation: dict[str, Any] | None,
+) -> float | None:
+    """Load persisted Cell Boundary Sensitivity. Missing returns None."""
+    if not annotation:
+        return None
+    raw = annotation.get(ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY)
+    if raw in (None, ""):
+        detection = annotation.get(ANNOTATION_FIELD_CELL_DETECTION)
+        if isinstance(detection, dict) and detection.get("sensitivity") is not None:
+            raw = detection.get("sensitivity")
+        else:
+            return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None

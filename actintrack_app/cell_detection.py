@@ -4,26 +4,154 @@ This is not filament segmentation. The detector favors over-inclusion so that
 uncertain background is preferred over excluding real cell/F-actin.
 ``segment_cell()`` is not used: it is an Otsu+open orientation helper and is
 too aggressive for a scientific validity domain.
+
+A single researcher-facing sensitivity maps onto a coherent set of
+threshold/morphology parameters. Sensitivity ``0`` is tighter (excludes more
+weak/background pixels); ``1`` is broader (retains more dim cell signal).
+The default ``0.5`` is bit-identical to the original conservative detector.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
 
-from actintrack_app.image_processing import actin_signal_image
+from actintrack_app.image_processing import actin_signal_image, detect_tracking_crop
 from actintrack_app.orientation import RectROI
 from actintrack_app.region import RegionValidationError, validate_region
 from actintrack_app.scientific_annotations import (
     CELL_REGION_SOURCE_AUTO,
+    CUTOFF_SOURCE_AUTO,
     CellRegion,
+    CutoffBoundary,
     fallback_cell_region,
 )
+
+CELL_DETECTION_VERSION = "conservative_cell_v1"
+CELL_BOUNDARY_SENSITIVITY_DEFAULT = 0.5
+CELL_BOUNDARY_SENSITIVITY_TIGHTER = 0.0
+CELL_BOUNDARY_SENSITIVITY_BROADER = 1.0
+DEFAULT_COMPUTATIONAL_CROP_PADDING_PX = 8
+
+# Default (sensitivity 0.5) — original conservative detector.
+_DEFAULT_OTSU_SCALE = 0.30
+_DEFAULT_THRESHOLD_MIN = 0.02
+_DEFAULT_THRESHOLD_MAX = 0.08
+_DEFAULT_CLOSE_ITERATIONS = 3
+_DEFAULT_DILATE_ITERATIONS = 2
+
+
+@dataclass(frozen=True)
+class CellDetectionParams:
+    """Internal detector parameterization mapped from user sensitivity."""
+
+    otsu_scale: float
+    threshold_min: float
+    threshold_max: float
+    close_iterations: int
+    dilate_iterations: int
+    version: str = CELL_DETECTION_VERSION
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "otsu_scale": float(self.otsu_scale),
+            "threshold_min": float(self.threshold_min),
+            "threshold_max": float(self.threshold_max),
+            "close_iterations": int(self.close_iterations),
+            "dilate_iterations": int(self.dilate_iterations),
+        }
+
+
+def clamp_cell_boundary_sensitivity(value: float | None) -> float:
+    if value is None:
+        return CELL_BOUNDARY_SENSITIVITY_DEFAULT
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except (TypeError, ValueError):
+        return CELL_BOUNDARY_SENSITIVITY_DEFAULT
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return float(a) + (float(b) - float(a)) * float(t)
+
+
+def map_boundary_sensitivity(sensitivity: float | None) -> CellDetectionParams:
+    """Map normalized Tighter→Broader sensitivity onto detector parameters.
+
+    Control points are piecewise-linear around the original default at 0.5 so
+    the default path does not change scientific inclusion.
+    """
+    s = clamp_cell_boundary_sensitivity(sensitivity)
+    if abs(s - CELL_BOUNDARY_SENSITIVITY_DEFAULT) < 1e-12:
+        return CellDetectionParams(
+            otsu_scale=_DEFAULT_OTSU_SCALE,
+            threshold_min=_DEFAULT_THRESHOLD_MIN,
+            threshold_max=_DEFAULT_THRESHOLD_MAX,
+            close_iterations=_DEFAULT_CLOSE_ITERATIONS,
+            dilate_iterations=_DEFAULT_DILATE_ITERATIONS,
+        )
+    if s < CELL_BOUNDARY_SENSITIVITY_DEFAULT:
+        t = s / CELL_BOUNDARY_SENSITIVITY_DEFAULT
+        return CellDetectionParams(
+            otsu_scale=_lerp(0.50, _DEFAULT_OTSU_SCALE, t),
+            threshold_min=_lerp(0.040, _DEFAULT_THRESHOLD_MIN, t),
+            threshold_max=_lerp(0.14, _DEFAULT_THRESHOLD_MAX, t),
+            close_iterations=int(round(_lerp(2.0, float(_DEFAULT_CLOSE_ITERATIONS), t))),
+            dilate_iterations=int(round(_lerp(0.0, float(_DEFAULT_DILATE_ITERATIONS), t))),
+        )
+    t = (s - CELL_BOUNDARY_SENSITIVITY_DEFAULT) / (
+        1.0 - CELL_BOUNDARY_SENSITIVITY_DEFAULT
+    )
+    return CellDetectionParams(
+        otsu_scale=_lerp(_DEFAULT_OTSU_SCALE, 0.12, t),
+        threshold_min=_lerp(_DEFAULT_THRESHOLD_MIN, 0.008, t),
+        threshold_max=_lerp(_DEFAULT_THRESHOLD_MAX, 0.035, t),
+        close_iterations=int(round(_lerp(float(_DEFAULT_CLOSE_ITERATIONS), 4.0, t))),
+        dilate_iterations=int(round(_lerp(float(_DEFAULT_DILATE_ITERATIONS), 4.0, t))),
+    )
+
+
+def detection_parameters_payload(
+    sensitivity: float | None,
+) -> dict[str, Any]:
+    """Persist detector version + mapped parameters for reproducibility."""
+    s = clamp_cell_boundary_sensitivity(sensitivity)
+    params = map_boundary_sensitivity(s)
+    payload = params.as_dict()
+    payload["sensitivity"] = s
+    return payload
+
+
+def computational_crop_from_cell_region(
+    cell: CellRegion,
+    frame_width: int,
+    frame_height: int,
+    *,
+    padding_px: int = DEFAULT_COMPUTATIONAL_CROP_PADDING_PX,
+) -> RectROI:
+    """Derive an internal RectROI from the CellRegion bounding box + padding."""
+    fw, fh = int(frame_width), int(frame_height)
+    if fw <= 0 or fh <= 0:
+        raise ValueError("Frame dimensions must be positive.")
+    bbox = cell.bounding_box()
+    pad = max(0, int(padding_px))
+    x0 = max(0, int(bbox.x) - pad)
+    y0 = max(0, int(bbox.y) - pad)
+    x1 = min(fw, int(bbox.x1) + pad)
+    y1 = min(fh, int(bbox.y1) + pad)
+    width = max(1, x1 - x0)
+    height = max(1, y1 - y0)
+    return RectROI(x0, y0, width, height).clamp(fw, fh)
 
 
 def suggest_conservative_cell_region(
     oriented_frame: np.ndarray,
     *,
     fallback_rect: RectROI | None = None,
+    sensitivity: float | None = None,
 ) -> CellRegion:
     """Return a conservative CellRegion in oriented-frame pixels.
 
@@ -31,8 +159,9 @@ def suggest_conservative_cell_region(
     otherwise the full oriented frame. Never returns an empty region.
     """
     fh, fw = int(oriented_frame.shape[0]), int(oriented_frame.shape[1])
+    params = map_boundary_sensitivity(sensitivity)
     try:
-        cell = _detect_conservative_cell_region(oriented_frame)
+        cell = _detect_conservative_cell_region(oriented_frame, params)
         validate_region(cell.region, fw, fh)
         bbox = cell.bounding_box()
         if bbox.width < 4 or bbox.height < 4:
@@ -44,7 +173,33 @@ def suggest_conservative_cell_region(
         )
 
 
-def _detect_conservative_cell_region(oriented_frame: np.ndarray) -> CellRegion:
+def suggest_default_cutoff_boundary(
+    oriented_frame: np.ndarray,
+    *,
+    cell_region: CellRegion | None = None,
+) -> CutoffBoundary | None:
+    """Default Measurement Cutoff from the existing tracking-crop heuristic.
+
+    Falls back to 65% of the CellRegion bbox height (inside the detector's
+    0.35–0.82 search window) when gradient detection cannot run.
+    """
+    try:
+        crop = detect_tracking_crop(oriented_frame)
+        return CutoffBoundary(y=float(crop.cutoff_y), source=CUTOFF_SOURCE_AUTO)
+    except ValueError:
+        pass
+    if cell_region is None:
+        return None
+    bbox = cell_region.bounding_box()
+    y = float(bbox.y) + 0.65 * float(max(1, bbox.height))
+    y = max(0.0, min(y, float(oriented_frame.shape[0] - 1)))
+    return CutoffBoundary(y=y, source=CUTOFF_SOURCE_AUTO)
+
+
+def _detect_conservative_cell_region(
+    oriented_frame: np.ndarray,
+    params: CellDetectionParams,
+) -> CellRegion:
     import cv2
 
     signal, _source = actin_signal_image(oriented_frame)
@@ -52,13 +207,19 @@ def _detect_conservative_cell_region(oriented_frame: np.ndarray) -> CellRegion:
     otsu_value, _ = cv2.threshold(
         signal_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
-    # Lower than tracking-crop detection: include dim cell body / halo.
-    threshold = max(0.02, min(0.08, float(otsu_value / 255.0) * 0.30))
+    threshold = max(
+        float(params.threshold_min),
+        min(float(params.threshold_max), float(otsu_value / 255.0) * float(params.otsu_scale)),
+    )
     mask = (signal > threshold).astype(np.uint8)
     close_k = np.ones((7, 7), dtype=np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k, iterations=3)
-    dilate_k = np.ones((5, 5), dtype=np.uint8)
-    mask = cv2.dilate(mask, dilate_k, iterations=2)
+    close_iter = max(0, int(params.close_iterations))
+    if close_iter:
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_k, iterations=close_iter)
+    dilate_iter = max(0, int(params.dilate_iterations))
+    if dilate_iter:
+        dilate_k = np.ones((5, 5), dtype=np.uint8)
+        mask = cv2.dilate(mask, dilate_k, iterations=dilate_iter)
 
     n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     if n_labels <= 1:
