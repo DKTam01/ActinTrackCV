@@ -562,7 +562,7 @@ def build_preview_images_panel(window: MainWindow) -> QWidget:
 
 
 def build_roi_preview_panel(window: MainWindow) -> QWidget:
-    """Workbench adjacent column: setup steps, crop preview, and Sample Results."""
+    """Workbench adjacent column: cell-first setup and Sample Results."""
     host = QWidget()
     configure_workbench_adjacent_panel(host)
     layout = QVBoxLayout(host)
@@ -574,6 +574,42 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     apply_hint_style(window.lbl_workflow_next)
     layout.addWidget(window.lbl_workflow_next)
 
+    window.lbl_cell_boundary = QLabel("Cell Boundary")
+    apply_inspector_field_label_style(window.lbl_cell_boundary)
+    layout.addWidget(window.lbl_cell_boundary)
+
+    sensitivity_row = QHBoxLayout()
+    sensitivity_row.setContentsMargins(0, 0, 0, 0)
+    sensitivity_row.setSpacing(6)
+    window.lbl_cell_boundary_tighter = QLabel("Tighter")
+    apply_muted_hint_style(window.lbl_cell_boundary_tighter)
+    window.slider_cell_boundary = QSlider(Qt.Orientation.Horizontal)
+    window.slider_cell_boundary.setRange(0, 100)
+    window.slider_cell_boundary.setValue(50)
+    window.slider_cell_boundary.setToolTip(
+        "Tighter excludes more weak/background pixels. "
+        "Broader retains more dim cell signal."
+    )
+    window.slider_cell_boundary.valueChanged.connect(
+        window._on_cell_boundary_slider_changed
+    )
+    window.slider_cell_boundary.sliderReleased.connect(
+        window._on_cell_boundary_slider_released
+    )
+    window.lbl_cell_boundary_broader = QLabel("Broader")
+    apply_muted_hint_style(window.lbl_cell_boundary_broader)
+    sensitivity_row.addWidget(window.lbl_cell_boundary_tighter)
+    sensitivity_row.addWidget(window.slider_cell_boundary, stretch=1)
+    sensitivity_row.addWidget(window.lbl_cell_boundary_broader)
+    layout.addLayout(sensitivity_row)
+
+    window.lbl_nucleus_section = QLabel("Nucleus")
+    apply_inspector_field_label_style(window.lbl_nucleus_section)
+    layout.addWidget(window.lbl_nucleus_section)
+
+    nucleus_row = QHBoxLayout()
+    nucleus_row.setContentsMargins(0, 0, 0, 0)
+    nucleus_row.setSpacing(6)
     window.btn_select_nucleus = QPushButton("Select Nucleus")
     window.btn_select_nucleus.setToolTip(
         "Click the nucleus center on the microscope image."
@@ -581,29 +617,32 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.btn_select_nucleus.clicked.connect(window._on_set_nucleus_mode)
     apply_workbench_action_button(window.btn_select_nucleus)
     window.btn_select_nucleus.setEnabled(False)
-    layout.addWidget(window.btn_select_nucleus)
-
-    window.btn_clear_nucleus = QPushButton("Clear Nucleus")
+    window.btn_clear_nucleus = QPushButton("Clear")
+    window.btn_clear_nucleus.setToolTip("Clear the nucleus center.")
     window.btn_clear_nucleus.clicked.connect(window._on_clear_nucleus)
     window.btn_clear_nucleus.setEnabled(False)
-    layout.addWidget(window.btn_clear_nucleus)
-
-    window.btn_advanced_cutoff = QPushButton("Advanced: Measurement Cutoff")
-    window.btn_advanced_cutoff.setToolTip(
-        "Optional horizontal cutoff. Not required when Cell Boundary is enough."
-    )
-    window.btn_advanced_cutoff.clicked.connect(window._on_set_cutoff_mode)
-    window.btn_advanced_cutoff.setEnabled(False)
-    layout.addWidget(window.btn_advanced_cutoff)
-
-    window.btn_clear_cutoff = QPushButton("Clear Cutoff")
-    window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
-    window.btn_clear_cutoff.setEnabled(False)
-    layout.addWidget(window.btn_clear_cutoff)
+    nucleus_row.addWidget(window.btn_select_nucleus, stretch=1)
+    nucleus_row.addWidget(window.btn_clear_nucleus)
+    layout.addLayout(nucleus_row)
 
     # Timing confirmation belongs in the primary setup column (before Run Metrics).
     create_tracking_setting_widgets(window)
     layout.addWidget(build_timing_settings_section(window))
+
+    window.lbl_cutoff_section = QLabel("Measurement Cutoff")
+    apply_inspector_field_label_style(window.lbl_cutoff_section)
+    layout.addWidget(window.lbl_cutoff_section)
+    window.btn_advanced_cutoff = QPushButton("Advanced: Adjust Cutoff")
+    window.btn_advanced_cutoff.setToolTip(
+        "Optional horizontal cutoff. Adjust only when the default is not right."
+    )
+    window.btn_advanced_cutoff.clicked.connect(window._on_set_cutoff_mode)
+    window.btn_advanced_cutoff.setEnabled(False)
+    layout.addWidget(window.btn_advanced_cutoff)
+    window.btn_clear_cutoff = QPushButton("Clear Cutoff")
+    window.btn_clear_cutoff.clicked.connect(window._on_clear_cutoff)
+    window.btn_clear_cutoff.setEnabled(False)
+    layout.addWidget(window.btn_clear_cutoff)
 
     window.lbl_sample_results = QLabel("")
     window.lbl_sample_results.setWordWrap(True)
@@ -612,25 +651,11 @@ def build_roi_preview_panel(window: MainWindow) -> QWidget:
     window.lbl_sample_results.setText("Sample Results\n\nRun Metrics to populate.")
     layout.addWidget(window.lbl_sample_results, stretch=1)
 
-    window.lbl_roi_preview_empty = QLabel("Select a sample to preview the crop.")
-    window.lbl_roi_preview_empty.setWordWrap(True)
-    apply_muted_hint_style(window.lbl_roi_preview_empty)
-    window.lbl_roi_preview_empty.setAlignment(Qt.AlignmentFlag.AlignTop)
-    layout.addWidget(window.lbl_roi_preview_empty)
-
+    window.lbl_roi_preview_empty = QLabel("")
+    window.lbl_roi_preview_empty.hide()
     window.roi_preview_canvas = ImageCanvas(window)
     window.roi_preview_canvas.set_interactive(False)
-    window.roi_preview_canvas.setMinimumSize(
-        ROI_PREVIEW_CANVAS_MIN_WIDTH,
-        max(120, ROI_PREVIEW_CANVAS_MIN_HEIGHT // 2),
-    )
-    window.roi_preview_canvas.setMaximumHeight(220)
-    window.roi_preview_canvas.setSizePolicy(
-        QSizePolicy.Policy.Expanding,
-        QSizePolicy.Policy.Preferred,
-    )
     window.roi_preview_canvas.hide()
-    layout.addWidget(window.roi_preview_canvas)
     return host
 
 
@@ -641,7 +666,7 @@ def build_roi_workflow_strip(window: MainWindow, layout: QVBoxLayout) -> None:
 
     window.lbl_roi_save_status = QLabel("—")
     window.lbl_roi_save_status.setWordWrap(True)
-    window._set_roi_save_status("No crop saved yet", saved=False)
+    window._set_roi_save_status("Select a sample", saved=False)
     strip.addWidget(window.lbl_roi_save_status)
 
     layout.addLayout(strip)
@@ -675,7 +700,7 @@ def create_metric_action_buttons(window: MainWindow) -> tuple[QPushButton, QPush
     window.btn_run_metrics = window._tool_button(
         "Run Metrics",
         "Compute Template Tracking and Optical Flow metrics for the current "
-        "Sample using its marked ROI.",
+        "Sample using its cell boundary and nucleus.",
         window._on_run_metrics_clicked,
     )
     window.btn_run_metrics.setEnabled(False)

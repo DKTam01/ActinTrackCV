@@ -81,6 +81,7 @@ class ImageCanvas(QLabel):
         self._confirm_hit_rect: Optional[tuple[int, int, int, int]] = None
         self._interactive = True
         self._draw_roi = True
+        self._show_computational_crop = False
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -99,11 +100,16 @@ class ImageCanvas(QLabel):
         self._interactive = enabled
 
     def set_crop_confirmed(self, confirmed: bool) -> None:
-        """Drive Confirm chip visibility; does not persist (MainWindow owns state)."""
-        flagged = bool(confirmed)
-        if self._crop_confirmed == flagged:
+        """Legacy no-op: Confirm Crop is no longer part of the researcher canvas."""
+        self._crop_confirmed = bool(confirmed)
+        self._confirm_hit_rect = None
+
+    def set_show_computational_crop(self, visible: bool) -> None:
+        """Developer/debug overlay for the internal RectROI crop."""
+        flagged = bool(visible)
+        if self._show_computational_crop == flagged:
             return
-        self._crop_confirmed = flagged
+        self._show_computational_crop = flagged
         self._redraw()
 
     def set_preview_frame(self, frame: np.ndarray) -> None:
@@ -141,7 +147,7 @@ class ImageCanvas(QLabel):
         self._cell_mask_overlay = mask
         self._redraw()
 
-    def set_rect_roi(self, roi: Optional[RectROI]) -> None:
+    def set_rect_roi(self, roi: Optional[RectROI], *, notify: bool = True) -> None:
         if self._frame is None:
             self._roi = roi
             return
@@ -153,7 +159,7 @@ class ImageCanvas(QLabel):
             return
         self._roi = new_roi
         self._redraw()
-        if new_roi is not None:
+        if notify and new_roi is not None:
             self._main_window.on_roi_changed(self._roi)
 
     def rect_roi(self) -> Optional[RectROI]:
@@ -270,45 +276,19 @@ class ImageCanvas(QLabel):
         painter = QPainter(composite)
         painter.drawPixmap(self._offset_x, self._offset_y, scaled)
 
-        if self._draw_roi and self._roi is not None and self._frame is not None:
+        self._confirm_hit_rect = None
+        if (
+            self._show_computational_crop
+            and self._draw_roi
+            and self._roi is not None
+            and self._frame is not None
+        ):
             r = self._roi
             x0, y0 = self._image_to_widget(r.x, r.y)
             x1, y1 = self._image_to_widget(r.x1, r.y1)
-            # Rectangular computational crop — visually secondary to Cell Boundary.
-            pen = QPen(QColor(70, 150, 95, 160), 1)
+            pen = QPen(QColor(70, 150, 95, 90), 1)
             painter.setPen(pen)
             painter.drawRect(x0, y0, x1 - x0, y1 - y0)
-            painter.setFont(QFont("Helvetica", 8))
-            painter.setPen(QColor(110, 170, 120, 200))
-            painter.drawText(x0 + 6, y0 + 14, "Crop")
-            for hx, hy in (
-                (r.x, r.y),
-                (r.x1, r.y),
-                (r.x, r.y1),
-                (r.x1, r.y1),
-            ):
-                sx, sy = self._image_to_widget(hx, hy)
-                painter.setBrush(QBrush(QColor(70, 150, 95, 180)))
-                painter.setPen(QPen(QColor(70, 150, 95, 180), 1))
-                painter.drawEllipse(sx - 3, sy - 3, 6, 6)
-            self._confirm_hit_rect = None
-            if not self._crop_confirmed:
-                # Confirm chip near lower-right of the crop (widget coords only).
-                label = "Confirm"
-                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
-                metrics = painter.fontMetrics()
-                tw = metrics.horizontalAdvance(label) + 16
-                th = metrics.height() + 10
-                bx = max(x0 + 4, x1 - tw - 4)
-                by = max(y0 + 4, y1 - th - 4)
-                self._confirm_hit_rect = (bx, by, tw, th)
-                painter.setBrush(QBrush(QColor(40, 110, 170, 220)))
-                painter.setPen(QPen(QColor(180, 220, 255), 1))
-                painter.drawRoundedRect(bx, by, tw, th, 4, 4)
-                painter.setPen(QColor(245, 250, 255))
-                painter.drawText(bx + 8, by + th - 8, label)
-        else:
-            self._confirm_hit_rect = None
 
         # Scientific overlays must not depend on Metric Analysis / ROI-draw mode.
         if self._frame is not None:
@@ -401,11 +381,6 @@ class ImageCanvas(QLabel):
         if event.button() != Qt.MouseButton.LeftButton or self._frame is None:
             return
         wx, wy = int(event.position().x()), int(event.position().y())
-        if self._confirm_hit(wx, wy):
-            confirm_fn = getattr(self._main_window, "on_crop_confirmed", None)
-            if callable(confirm_fn):
-                confirm_fn()
-            return
         img_pt = self._widget_to_image(wx, wy)
         if img_pt is None:
             return
@@ -422,29 +397,6 @@ class ImageCanvas(QLabel):
             self._drag_mode = DragMode.CUTOFF
             self._drag_start_img = (ix, iy)
             return
-
-        handle = self._handle_at(wx, wy)
-        if handle and self._roi is not None:
-            self._drag_mode = DragMode.RESIZE
-            self._resize_handle = handle
-            self._roi_at_drag_start = RectROI(
-                self._roi.x, self._roi.y, self._roi.width, self._roi.height
-            )
-            self._drag_start_img = (ix, iy)
-            return
-
-        if self._roi is not None:
-            r = self._roi
-            if r.x <= ix < r.x1 and r.y <= iy < r.y1:
-                self._drag_mode = DragMode.MOVE
-                self._roi_at_drag_start = RectROI(r.x, r.y, r.width, r.height)
-                self._drag_start_img = (ix, iy)
-                return
-
-        self._drag_mode = DragMode.DRAW
-        self._drag_start_img = (ix, iy)
-        self._roi = RectROI(ix, iy, 1, 1)
-        self._redraw()
 
     def mouseMoveEvent(self, event):
         if not self._interactive:
@@ -465,57 +417,9 @@ class ImageCanvas(QLabel):
             self._main_window.on_cutoff_dragged(float(y))
             return
 
-        if self._drag_mode == DragMode.DRAW and self._drag_start_img is not None:
-            x0, y0 = self._drag_start_img
-            self._roi = RectROI.from_xyxy(x0, y0, ix, iy).clamp(w_img, h_img)
-            self._redraw()
-            self._main_window.on_roi_changed(self._roi)
-            return
-
-        if (
-            self._drag_mode == DragMode.MOVE
-            and self._roi_at_drag_start is not None
-            and self._drag_start_img is not None
-        ):
-            dx = ix - self._drag_start_img[0]
-            dy = iy - self._drag_start_img[1]
-            r0 = self._roi_at_drag_start
-            self._roi = RectROI(
-                r0.x + dx, r0.y + dy, r0.width, r0.height
-            ).clamp(w_img, h_img)
-            self._redraw()
-            self._main_window.on_roi_changed(self._roi)
-            return
-
-        if (
-            self._drag_mode == DragMode.RESIZE
-            and self._roi_at_drag_start is not None
-            and self._resize_handle
-        ):
-            r0 = self._roi_at_drag_start
-            x0, y0, x1, y1 = r0.x, r0.y, r0.x1, r0.y1
-            if "l" in self._resize_handle:
-                x0 = ix
-            if "r" in self._resize_handle:
-                x1 = ix
-            if "t" in self._resize_handle:
-                y0 = iy
-            if "b" in self._resize_handle:
-                y1 = iy
-            self._roi = RectROI.from_xyxy(x0, y0, x1, y1).clamp(w_img, h_img)
-            self._redraw()
-            self._main_window.on_roi_changed(self._roi)
-
     def mouseReleaseEvent(self, event):
-        had_drag = self._drag_mode != DragMode.NONE
         cutoff_drag = self._drag_mode == DragMode.CUTOFF
         self._drag_mode = DragMode.NONE
         self._resize_handle = None
-        if self._roi is not None and self._roi.width < 4 and self._roi.height < 4:
-            self._roi = None
-            self._redraw()
         if cutoff_drag:
             self._main_window.on_cutoff_edit_finished()
-            return
-        if had_drag:
-            self._main_window.on_roi_edit_finished()

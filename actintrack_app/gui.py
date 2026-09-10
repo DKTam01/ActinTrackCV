@@ -54,6 +54,7 @@ from actintrack_app.annotation_schema import (
     annotation_from_legacy,
     annotation_without_rect_roi,
     build_sample_annotation,
+    cell_boundary_sensitivity_from_annotation,
     cell_region_from_sample_annotation,
     merge_processed_into_annotation,
     scientific_annotations_from_annotation,
@@ -78,7 +79,14 @@ from actintrack_app.batch_manager import (
     sanitize_batch_name,
     sync_registry_from_samples,
 )
-from actintrack_app.cell_detection import suggest_conservative_cell_region
+from actintrack_app.cell_detection import (
+    CELL_BOUNDARY_SENSITIVITY_DEFAULT,
+    clamp_cell_boundary_sensitivity,
+    computational_crop_from_cell_region,
+    detection_parameters_payload,
+    suggest_conservative_cell_region,
+    suggest_default_cutoff_boundary,
+)
 from actintrack_app.gui_menus import (
     PurgeFilteredDialog,
     refresh_recent_workspaces_menu,
@@ -207,6 +215,8 @@ from actintrack_app.orientation import (
     tracking_crop_to_rect,
 )
 from actintrack_app.scientific_annotations import (
+    CUTOFF_SOURCE_AUTO,
+    CUTOFF_SOURCE_MANUAL,
     CutoffBoundary,
     NucleusReference,
     nucleus_reference_from_annotation,
@@ -309,6 +319,7 @@ from actintrack_app.workflow_state import (
     ANNOTATION_FIELD_CROP_CONFIRMED,
     build_workflow_snapshot,
     crop_confirmed_from_annotation,
+    format_delete_samples_confirmation,
     format_sample_results_summary,
 )
 from actintrack_app.__version__ import __version__
@@ -516,6 +527,9 @@ class MainWindow(QMainWindow):
         self._timing: TimingMetadata | None = None
         self._timing_ui_syncing = False
         self._crop_confirmed = False
+        self._cell_boundary_sensitivity = CELL_BOUNDARY_SENSITIVITY_DEFAULT
+        self._cell_boundary_slider_timer: QTimer | None = None
+        self._cell_boundary_preview_pending = False
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -758,32 +772,14 @@ class MainWindow(QMainWindow):
     def _refresh_roi_preview_panel(self) -> None:
         if not hasattr(self, "roi_preview_canvas"):
             return
+        if hasattr(self, "roi_preview_canvas"):
+            self.roi_preview_canvas.hide()
+        if hasattr(self, "lbl_roi_preview_empty"):
+            self.lbl_roi_preview_empty.hide()
         if self._metric_analysis_view_active or self._preview_mode == "cropped_tracking":
             self._set_roi_preview_panel_visible(False)
             return
         self._set_roi_preview_panel_visible(True)
-        if self._current_sample is None or self._base_frame is None:
-            self._set_roi_preview_placeholder("Select a sample to preview the ROI.")
-            return
-        roi = self.canvas.rect_roi()
-        if roi is None:
-            self._set_roi_preview_placeholder("Draw an ROI on the preview.")
-            return
-        oriented = self._oriented_frame()
-        if oriented is None:
-            self._set_roi_preview_placeholder("No frame loaded.")
-            return
-        try:
-            cropped = crop_rect_roi(oriented, roi)
-        except (ValueError, IndexError):
-            self._set_roi_preview_placeholder("ROI is outside the frame.")
-            return
-        if cropped.size == 0:
-            self._set_roi_preview_placeholder("ROI crop is empty.")
-            return
-        self.lbl_roi_preview_empty.hide()
-        self.roi_preview_canvas.show()
-        self.roi_preview_canvas.set_preview_frame(cropped)
 
     def _show_tracking_settings_view(self) -> None:
         self._right_stack.setCurrentIndex(0)
@@ -1901,7 +1897,12 @@ class MainWindow(QMainWindow):
         if self._sample_video_path(sample_id) is None:
             return False
         _orientation, roi = self._saved_orientation_roi_for_sample(sample_id)
-        return roi is not None
+        if roi is not None:
+            return True
+        if self._project_root is None:
+            return False
+        ann = get_sample_annotation(self._project_root, sample_id)
+        return cell_region_from_sample_annotation(ann) is not None
 
     @staticmethod
     def _roi_key_from_rect(roi: Optional[RectROI]) -> tuple[int, int, int, int] | None:
@@ -2105,7 +2106,8 @@ class MainWindow(QMainWindow):
             return "running"
         if not self._sample_has_valid_data_and_roi(sid):
             message = (
-                "Run Metrics requires a Sample with valid Data and a saved ROI."
+                "Run Metrics requires a Sample with valid Data, a cell boundary, "
+                "a nucleus, and confirmed analysis timing."
             )
             self._status(message)
             if show_dialog_on_block:
@@ -2127,8 +2129,6 @@ class MainWindow(QMainWindow):
             project_root = self.__dict__.get("_project_root")
             if project_root is not None:
                 ann = get_sample_annotation(project_root, sid)
-                if not crop_confirmed_from_annotation(ann):
-                    return "unavailable"
                 if cell_region_from_sample_annotation(ann) is None:
                     return "unavailable"
                 nucleus, _cutoff = scientific_annotations_from_annotation(ann)
@@ -2324,6 +2324,8 @@ class MainWindow(QMainWindow):
         canvas = self.__dict__.get("canvas")
         if canvas is not None:
             has_crop = canvas.rect_roi() is not None
+        if not has_crop and self.__dict__.get("_cell_region") is not None:
+            has_crop = True
         timing = self.__dict__.get("_timing")
         timing_confirmed = bool(timing is not None and timing.confirmed)
         metrics_present = False
@@ -2362,25 +2364,21 @@ class MainWindow(QMainWindow):
         if self.__dict__.get("lbl_workflow_next") is not None:
             self.lbl_workflow_next.setText(snap.next_action_hint())
         if self.__dict__.get("btn_select_nucleus") is not None:
-            self.btn_select_nucleus.setEnabled(
-                snap.has_sample and snap.crop_confirmed and snap.has_cell_region
-            )
+            self.btn_select_nucleus.setEnabled(snap.cell_region_ready)
         if self.__dict__.get("btn_clear_nucleus") is not None:
             self.btn_clear_nucleus.setEnabled(
                 snap.has_sample and self.__dict__.get("_nucleus_reference") is not None
             )
         if self.__dict__.get("btn_advanced_cutoff") is not None:
-            self.btn_advanced_cutoff.setEnabled(
-                snap.has_sample and snap.crop_confirmed and snap.has_cell_region
-            )
+            self.btn_advanced_cutoff.setEnabled(snap.cell_region_ready)
         if self.__dict__.get("btn_clear_cutoff") is not None:
             self.btn_clear_cutoff.setEnabled(
                 snap.has_sample and self.__dict__.get("_cutoff_boundary") is not None
             )
         if self.__dict__.get("btn_confirm_timing") is not None:
-            self.btn_confirm_timing.setEnabled(
-                snap.has_sample and snap.has_crop and snap.crop_confirmed
-            )
+            self.btn_confirm_timing.setEnabled(snap.cell_region_ready)
+        if self.__dict__.get("slider_cell_boundary") is not None:
+            self.slider_cell_boundary.setEnabled(snap.has_sample)
         if self.__dict__.get("canvas") is not None and hasattr(
             self.canvas, "set_crop_confirmed"
         ):
@@ -2486,7 +2484,9 @@ class MainWindow(QMainWindow):
         roi = self.canvas.rect_roi() if keep_roi else None
         self.canvas.set_frame(oriented, keep_roi=keep_roi)
         if roi is not None:
-            self.canvas.set_rect_roi(roi.clamp(oriented.shape[1], oriented.shape[0]))
+            self._set_computational_crop(
+                roi.clamp(oriented.shape[1], oriented.shape[0])
+            )
         self._update_orientation_label()
         if keep_roi and roi is not None:
             self._autosave_roi(quiet=True)
@@ -2502,19 +2502,12 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "lbl_roi_save_status"):
             return
         if self._current_sample is None:
-            self._set_roi_save_status("No crop saved yet", saved=False)
+            self._set_roi_save_status("Select a sample", saved=False)
             return
-        if self.canvas.rect_roi() is None:
-            self._set_roi_save_status("No crop saved yet", saved=False)
+        if self.__dict__.get("_cell_region") is None:
+            self._set_roi_save_status("Identifying cell boundary…", saved=False)
             return
-        if self._roi_user_adjusted or self._roi_autosave_pending:
-            self._set_roi_save_status("Unsaved changes", saved=False)
-            return
-        confirmed = bool(self.__dict__.get("_crop_confirmed", False))
-        if confirmed:
-            self._set_roi_save_status("Crop confirmed", saved=True)
-        else:
-            self._set_roi_save_status("Crop drawn — confirm to continue", saved=False)
+        self._set_roi_save_status("Cell boundary saved", saved=True)
 
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
         """Persist the current annotation document, with or without RectROI."""
@@ -2741,7 +2734,7 @@ class MainWindow(QMainWindow):
         self._status("Nucleus center set.")
 
     def on_cutoff_placed(self, y: float) -> None:
-        self._cutoff_boundary = CutoffBoundary(y=y)
+        self._cutoff_boundary = CutoffBoundary(y=y, source=CUTOFF_SOURCE_MANUAL)
         self._scientific_placement_mode = None
         self._sync_scientific_overlay()
         self._autosave_roi(quiet=True)
@@ -2752,7 +2745,11 @@ class MainWindow(QMainWindow):
         self._status("Cutoff set.")
 
     def on_cutoff_dragged(self, y: float) -> None:
-        self._cutoff_boundary = CutoffBoundary(y=y)
+        previous = self.__dict__.get("_cutoff_boundary")
+        source = CUTOFF_SOURCE_MANUAL
+        if previous is not None and getattr(previous, "source", None):
+            source = CUTOFF_SOURCE_MANUAL
+        self._cutoff_boundary = CutoffBoundary(y=y, source=source)
         self._sync_scientific_overlay()
 
     def on_cutoff_edit_finished(self) -> None:
@@ -2796,17 +2793,9 @@ class MainWindow(QMainWindow):
     def on_roi_changed(self, roi: Optional[RectROI]) -> None:
         if roi is None:
             return
-        self._roi_user_adjusted = True
+        self._roi_user_adjusted = False
         self._roi_autosave_pending = True
-        # Editing crop requires explicit Confirm before cell detection / Run Metrics.
-        if self.__dict__.get("_crop_confirmed", False):
-            self.__dict__["_crop_confirmed"] = False
-            sid = str(self.__dict__.get("_current_sample_id") or "")
-            if sid:
-                self._mark_draft_metrics_stale(sid)
-        self._set_roi_save_status("Unsaved changes", saved=False)
-        if str(self._loaded_annotation_source) == "auto_suggested":
-            self._loaded_annotation_source = "auto_suggested_adjusted"
+        self._set_roi_save_status("Cell boundary saved", saved=True)
         self._refresh_roi_preview_panel()
         self._sync_workflow_controls()
 
@@ -2815,26 +2804,112 @@ class MainWindow(QMainWindow):
         self._sync_workflow_controls()
 
     def on_crop_confirmed(self) -> None:
-        """Confirm computational crop and derive CellRegion once."""
-        if self._current_sample is None and self.__dict__.get("canvas") is None:
+        """Legacy entry point kept for compatibility; runs cell-first setup."""
+        self._ensure_cell_first_setup(persist=True, regenerate_cell=False)
+
+    def _set_computational_crop(self, roi: Optional[RectROI]) -> None:
+        canvas = self.__dict__.get("canvas")
+        if canvas is None:
             return
-        roi = self.canvas.rect_roi() if self.__dict__.get("canvas") is not None else None
-        if roi is None:
-            self._status("Draw a crop before confirming.")
+        setter = getattr(canvas, "set_rect_roi", None)
+        if not callable(setter):
             return
-        oriented = self._oriented_frame()
+        try:
+            setter(roi, notify=False)
+        except TypeError:
+            setter(roi)
+
+    def _derive_computational_crop_from_cell(self) -> None:
+        cell = self.__dict__.get("_cell_region")
+        oriented = self._oriented_frame() if hasattr(self, "_oriented_frame") else None
+        if cell is None or oriented is None:
+            return
+        fh, fw = int(oriented.shape[0]), int(oriented.shape[1])
+        derived = computational_crop_from_cell_region(cell, fw, fh)
+        self._set_computational_crop(derived)
+
+    def _sync_cell_boundary_slider(self) -> None:
+        slider = self.__dict__.get("slider_cell_boundary")
+        if slider is None:
+            return
+        value = int(round(clamp_cell_boundary_sensitivity(
+            self.__dict__.get("_cell_boundary_sensitivity")
+        ) * 100.0))
+        slider.blockSignals(True)
+        slider.setValue(value)
+        slider.blockSignals(False)
+
+    def _on_cell_boundary_slider_changed(self, value: int) -> None:
+        self.__dict__["_cell_boundary_sensitivity"] = clamp_cell_boundary_sensitivity(
+            float(value) / 100.0
+        )
+        slider = self.__dict__.get("slider_cell_boundary")
+        dragging = bool(slider is not None and slider.isSliderDown())
+        if dragging:
+            timer = self.__dict__.get("_cell_boundary_slider_timer")
+            if timer is None:
+                parent = self if isinstance(self, QWidget) else None
+                timer = QTimer(parent)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._preview_cell_boundary_from_slider)
+                self.__dict__["_cell_boundary_slider_timer"] = timer
+            self.__dict__["_cell_boundary_preview_pending"] = True
+            timer.start(80)
+            return
+        self._preview_cell_boundary_from_slider()
+        self._commit_cell_boundary_sensitivity()
+
+    def _preview_cell_boundary_from_slider(self) -> None:
+        self.__dict__["_cell_boundary_preview_pending"] = False
+        oriented = self._oriented_frame() if hasattr(self, "_oriented_frame") else None
         if oriented is None:
             return
-        self.__dict__["_crop_confirmed"] = True
-        # Intended transition: confirmed crop → conservative whole-cell detection.
+        canvas = self.__dict__.get("canvas")
+        fallback = canvas.rect_roi() if canvas is not None else None
         self._cell_region = suggest_conservative_cell_region(
-            oriented, fallback_rect=roi
+            oriented,
+            fallback_rect=fallback,
+            sensitivity=self.__dict__.get("_cell_boundary_sensitivity"),
         )
+        self._derive_computational_crop_from_cell()
         self._sync_scientific_overlay()
-        if self._project_root is not None and self._current_sample is not None:
+        self._sync_workflow_controls()
+
+    def _on_cell_boundary_slider_released(self) -> None:
+        timer = self.__dict__.get("_cell_boundary_slider_timer")
+        if timer is not None:
+            timer.stop()
+        self._preview_cell_boundary_from_slider()
+        self._commit_cell_boundary_sensitivity()
+
+    def _commit_cell_boundary_sensitivity(self) -> None:
+        """Persist slider result. Does not run metrics. Marks metrics stale."""
+        nucleus = self.__dict__.get("_nucleus_reference")
+        timing = self.__dict__.get("_timing")
+        cutoff = self.__dict__.get("_cutoff_boundary")
+        regenerate_cutoff = cutoff is None or (
+            getattr(cutoff, "source", None) == CUTOFF_SOURCE_AUTO
+        )
+        self._ensure_cell_first_setup(
+            persist=True,
+            regenerate_cell=True,
+            regenerate_auto_cutoff=regenerate_cutoff,
+        )
+        self._nucleus_reference = nucleus
+        self.__dict__["_timing"] = timing
+        if not regenerate_cutoff:
+            self._cutoff_boundary = cutoff
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if sid:
+            self._mark_draft_metrics_stale(sid)
+        self._sync_scientific_overlay()
+        if (
+            isinstance(self.__dict__.get("_project_root"), Path)
+            and self.__dict__.get("_current_sample") is not None
+        ):
             self._autosave_roi(quiet=True)
         self._update_metric_freshness_label()
-        self._status("Crop confirmed — cell boundary identified.")
+        self._status("Cell boundary updated.")
 
     def _on_clear_roi(self) -> None:
         self._exit_cropped_preview_mode()
@@ -3145,30 +3220,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_auto_suggest_roi(self) -> None:
-        oriented = self._oriented_frame()
-        if oriented is None:
-            return
-        try:
-            crop = detect_tracking_crop(oriented)
-            suggested_roi = tracking_crop_to_rect(crop)
-            self.canvas.set_rect_roi(suggested_roi)
-            self._loaded_annotation_source = "auto_suggested"
-            self._roi_user_adjusted = False
-            if self._cutoff_boundary is None:
-                self._cutoff_boundary = CutoffBoundary(y=float(crop.cutoff_y))
-            if self._cell_region is None:
-                self._cell_region = suggest_conservative_cell_region(
-                    oriented, fallback_rect=suggested_roi
-                )
-            self._sync_scientific_overlay()
-            self._autosave_roi(quiet=True)
-        except ValueError as e:
-            if self._cell_region is None:
-                self._cell_region = suggest_conservative_cell_region(
-                    oriented, fallback_rect=self.canvas.rect_roi()
-                )
-                self._sync_scientific_overlay()
-            QMessageBox.warning(self, "ROI Suggestion", str(e))
+        self._ensure_cell_first_setup(persist=True, regenerate_cell=False)
 
     def _validate_current_roi(self) -> RoiValidationResult:
         if self._base_frame is None:
@@ -3274,6 +3326,12 @@ class MainWindow(QMainWindow):
             cell_region=self._cell_region,
             timing=self.__dict__.get("_timing"),
             crop_confirmed=bool(self.__dict__.get("_crop_confirmed", False)),
+            cell_boundary_sensitivity=clamp_cell_boundary_sensitivity(
+                self.__dict__.get("_cell_boundary_sensitivity")
+            ),
+            cell_detection_parameters=detection_parameters_payload(
+                self.__dict__.get("_cell_boundary_sensitivity")
+            ),
         )
 
     def _on_save_annotation(self) -> None:
@@ -4670,6 +4728,10 @@ class MainWindow(QMainWindow):
         self._cell_region = cell_region_from_sample_annotation(ann)
         self.__dict__["_timing"] = timing_from_annotation(ann)
         self.__dict__["_crop_confirmed"] = crop_confirmed_from_annotation(ann)
+        saved_sensitivity = cell_boundary_sensitivity_from_annotation(ann)
+        self.__dict__["_cell_boundary_sensitivity"] = clamp_cell_boundary_sensitivity(
+            saved_sensitivity
+        )
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
         if render_canvas:
@@ -4677,31 +4739,40 @@ class MainWindow(QMainWindow):
             if roi is not None:
                 oriented = self._oriented_frame()
                 if oriented is not None:
-                    self.canvas.set_rect_roi(
+                    self._set_computational_crop(
                         roi.clamp(oriented.shape[1], oriented.shape[0])
                     )
         elif roi is not None:
             oriented = self._oriented_frame()
             if oriented is not None:
-                self.canvas.set_rect_roi(
+                self._set_computational_crop(
                     roi.clamp(oriented.shape[1], oriented.shape[0])
                 )
             else:
-                self.canvas.set_rect_roi(roi)
+                self._set_computational_crop(roi)
         else:
-            self.canvas.set_rect_roi(None)
+            self._set_computational_crop(None)
         self._loaded_annotation_source = str(ann.get("annotation_source", "manual"))
         self._roi_user_adjusted = False
         self._roi_autosave_pending = False
         self._update_orientation_label()
         self._refresh_roi_save_status_from_context()
         self._refresh_roi_preview_panel()
-        if self.__dict__.get("_crop_confirmed", False):
-            self._ensure_missing_cell_region(persist=True)
+        # Saved CellRegion is authoritative; generate only when missing (legacy).
+        had_saved_cell = self._cell_region is not None
+        self._ensure_cell_first_setup(
+            persist=True,
+            regenerate_cell=False,
+            regenerate_auto_cutoff=False,
+        )
+        self._sync_cell_boundary_slider()
+        if had_saved_cell:
+            # Do not recompute a persisted CellRegion on reopen.
+            pass
         if self.__dict__.get("canvas") is not None and hasattr(
             self.canvas, "set_crop_confirmed"
         ):
-            self.canvas.set_crop_confirmed(bool(self.__dict__.get("_crop_confirmed")))
+            self.canvas.set_crop_confirmed(True)
         self._sync_scientific_overlay()
         self._update_metric_freshness_label()
         if self.__dict__.get("lbl_timing_detected") is not None:
@@ -4877,58 +4948,72 @@ class MainWindow(QMainWindow):
             self._autosave_roi(quiet=True)
 
     def _ensure_missing_cell_region(self, *, persist: bool = True) -> None:
-        """Generate CellRegion when a legacy annotation has crop ROI but no cell.
+        """Generate CellRegion once when a sample has none persisted."""
+        self._ensure_cell_first_setup(persist=persist, regenerate_cell=False)
 
-        Existing persisted CellRegion is never overwritten. When generation
-        succeeds and a rectangular crop is present, autosave so reopen stays
-        stable.
+    def _ensure_cell_first_setup(
+        self,
+        *,
+        persist: bool = True,
+        regenerate_cell: bool = False,
+        regenerate_auto_cutoff: bool = True,
+    ) -> None:
+        """Identify CellRegion, derive computational crop, and default cutoff.
+
+        Existing persisted CellRegion is never overwritten unless
+        ``regenerate_cell`` is True (researcher moved the sensitivity slider).
+        Nucleus and timing are not modified.
         """
-        if self._cell_region is not None:
-            return
         oriented_fn = getattr(self, "_oriented_frame", None)
         oriented = oriented_fn() if callable(oriented_fn) else None
         if oriented is None:
             return
         canvas = getattr(self, "canvas", None)
         fallback = canvas.rect_roi() if canvas is not None else None
-        self._cell_region = suggest_conservative_cell_region(
-            oriented, fallback_rect=fallback
+        sensitivity = clamp_cell_boundary_sensitivity(
+            self.__dict__.get("_cell_boundary_sensitivity")
         )
+        generated_cell = False
+        derived_crop = False
+        generated_cutoff = False
+        if regenerate_cell or self.__dict__.get("_cell_region") is None:
+            self._cell_region = suggest_conservative_cell_region(
+                oriented,
+                fallback_rect=fallback,
+                sensitivity=sensitivity,
+            )
+            generated_cell = True
+        if self._cell_region is not None and (
+            generated_cell or fallback is None
+        ):
+            self._derive_computational_crop_from_cell()
+            derived_crop = True
+        cutoff = self.__dict__.get("_cutoff_boundary")
+        cutoff_is_auto = cutoff is not None and getattr(cutoff, "source", None) == CUTOFF_SOURCE_AUTO
+        if cutoff is None or (regenerate_auto_cutoff and cutoff_is_auto):
+            suggested = suggest_default_cutoff_boundary(
+                oriented, cell_region=self._cell_region
+            )
+            if suggested is not None:
+                self._cutoff_boundary = suggested
+                generated_cutoff = True
+        self.__dict__["_crop_confirmed"] = self._cell_region is not None
+        if generated_cell:
+            self._loaded_annotation_source = "auto_suggested"
+            self._roi_user_adjusted = False
+        self._sync_scientific_overlay()
+        self._sync_cell_boundary_slider()
         if (
             persist
-            and canvas is not None
-            and canvas.rect_roi() is not None
-            and getattr(self, "_project_root", None) is not None
-            and getattr(self, "_current_sample", None) is not None
+            and (generated_cell or derived_crop or generated_cutoff)
+            and isinstance(self.__dict__.get("_project_root"), Path)
+            and self.__dict__.get("_current_sample") is not None
         ):
             self._autosave_roi(quiet=True)
 
     def _apply_auto_suggested_roi(self, *, render_canvas: bool) -> None:
-        oriented = self._oriented_frame()
-        if oriented is None:
-            return
-        crop = None
-        try:
-            crop = detect_tracking_crop(oriented)
-        except ValueError:
-            crop = None
-        suggested_roi = None
-        if crop is not None and crop.confidence >= AUTO_APPLY_ROI_CONFIDENCE:
-            suggested_roi = tracking_crop_to_rect(crop)
-            self.canvas.set_rect_roi(suggested_roi)
-            self._loaded_annotation_source = "auto_suggested"
-            self._roi_user_adjusted = False
-        if self._cutoff_boundary is None and crop is not None:
-            self._cutoff_boundary = CutoffBoundary(y=float(crop.cutoff_y))
-        if self._cell_region is None:
-            self._cell_region = suggest_conservative_cell_region(
-                oriented, fallback_rect=suggested_roi
-            )
-        self._sync_scientific_overlay()
-        # Persist the first-load suggestion so a later reopen does not silently
-        # regenerate CellRegion/cutoff if detection code changes.
-        if self.canvas.rect_roi() is not None:
-            self._autosave_roi(quiet=True)
+        """First-load cell-first initialization (no researcher crop step)."""
+        self._ensure_cell_first_setup(persist=True, regenerate_cell=False)
 
     def _update_current_sample_panel_fields(
         self, sid: str, frame: np.ndarray, idx: int, total: int
@@ -4978,6 +5063,7 @@ class MainWindow(QMainWindow):
         self._scientific_placement_mode = None
         self.__dict__["_timing"] = None
         self.__dict__["_crop_confirmed"] = False
+        self.__dict__["_cell_boundary_sensitivity"] = CELL_BOUNDARY_SENSITIVITY_DEFAULT
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
         if ann:
@@ -5115,12 +5201,6 @@ class MainWindow(QMainWindow):
         self, menu: QMenu, *, inside_roi: bool = True
     ) -> None:
         menu.clear()
-        suggest = menu.addAction("Suggest ROI from F-actin Signal")
-        suggest.setToolTip(
-            "Suggest a rectangular region with strong visible F-actin signal. "
-            "Review and adjust before export."
-        )
-        suggest.triggered.connect(self._on_auto_suggest_roi)
         set_nucleus = menu.addAction("Set Nucleus")
         set_nucleus.setToolTip("Click the nucleus center on the preview.")
         set_nucleus.triggered.connect(self._on_set_nucleus_mode)
@@ -5128,9 +5208,6 @@ class MainWindow(QMainWindow):
         set_cutoff.setToolTip("Click to place a horizontal biological cutoff.")
         set_cutoff.triggered.connect(self._on_set_cutoff_mode)
         if inside_roi:
-            clear = menu.addAction("Clear ROI")
-            clear.setToolTip("Remove the current ROI rectangle from the preview.")
-            clear.triggered.connect(self._on_clear_roi)
             export_roi = menu.addAction("Export ROI")
             export_roi.setToolTip(
                 "Crop and export processed outputs to the processed/ folder "
@@ -5175,10 +5252,21 @@ class MainWindow(QMainWindow):
         return chk.isChecked()
 
     def _confirm_delete_sample(self) -> bool:
+        return self._confirm_delete_samples(count=1)
+
+    def _confirm_delete_samples(
+        self,
+        count: int,
+        *,
+        group_name: str | None = None,
+    ) -> bool:
+        title, text = format_delete_samples_confirmation(
+            count=count, group_name=group_name
+        )
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.NoIcon)
-        box.setWindowTitle("Delete Sample")
-        box.setText("Delete this Sample?")
+        box.setWindowTitle(title)
+        box.setText(text)
         delete_btn = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         cancel_btn = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel_btn)
@@ -5307,10 +5395,23 @@ class MainWindow(QMainWindow):
                 "Rename Sample",
                 lambda g=group, b=batch_name: self._ctx_rename_batch(g, b),
             )
-            menu.addAction(
-                "Delete Sample",
-                lambda g=group, b=batch_name: self._ctx_delete_batch(g, b),
-            )
+            if is_clicked_selected and len(selected_ids) > 1:
+                group_label = group
+                if self._project_root is not None:
+                    group_label = get_condition_group_name(
+                        self._project_root, group
+                    ) or group
+                menu.addAction(
+                    f"Delete {len(selected_ids)} Samples",
+                    lambda ids=tuple(selected_ids), gname=group_label: (
+                        self._ctx_delete_selected_samples(list(ids), group_name=gname)
+                    ),
+                )
+            else:
+                menu.addAction(
+                    "Delete Sample",
+                    lambda g=group, b=batch_name: self._ctx_delete_batch(g, b),
+                )
             self._add_explorer_refresh_action(menu)
         elif item_type == ITEM_TYPE_EMPTY_SAMPLE:
             group = str(meta.get("group", self._ensure_filter_group_valid()))
@@ -5601,33 +5702,90 @@ class MainWindow(QMainWindow):
                 placeholder=self._SELECT_SAMPLE_HINT,
             )
 
+    def _delete_one_sample_canonical(
+        self, group: str, batch_name: str
+    ) -> dict[str, Any]:
+        """Canonical single-sample deletion without confirmation or UI refresh."""
+        sample_name = sanitize_batch_name(batch_name)
+        has_files = batch_has_samples(self._project_root, group, batch_name)
+        if has_files:
+            stats = delete_sample_and_artifacts(
+                self._project_root,
+                group,
+                batch_name,
+                remove_workspace_raw=True,
+            )
+        else:
+            delete_empty_batch(self._project_root, group, batch_name)
+            stats = {"batch_name": sample_name, "empty": True}
+        self._clear_preview_before_sample_delete(group, batch_name)
+        return stats
+
+    def _ctx_delete_selected_samples(
+        self,
+        sample_ids: list[str],
+        *,
+        group_name: str | None = None,
+    ) -> None:
+        if self._project_root is None or not sample_ids:
+            return
+        targets: list[tuple[str, str, str]] = []
+        for sid in sample_ids:
+            row = self._persisted_sample_row_for_id(sid)
+            if not row:
+                item = self._find_sample_tree_item(sid)
+                meta = self._tree_item_meta(item) if item is not None else None
+                if not meta:
+                    continue
+                row = meta
+            group = str(row.get("group", "")).strip()
+            batch_name = str(row.get("batch_name", "")).strip()
+            if group and batch_name:
+                targets.append((sid, group, batch_name))
+        if not targets:
+            return
+        if not self._confirm_delete_samples(
+            len(targets), group_name=group_name
+        ):
+            return
+        failures: list[str] = []
+        deleted = 0
+        current_id = str(self.__dict__.get("_current_sample_id") or "")
+        for sid, group, batch_name in targets:
+            try:
+                self._delete_one_sample_canonical(group, batch_name)
+                deleted += 1
+                self._invalidate_tracking_result_for_sample(sid)
+            except (ValueError, OSError) as exc:
+                label = self._sample_display_label_for_id(sid)
+                failures.append(f"{label}: {exc}")
+        if current_id and any(sid == current_id for sid, _g, _b in targets):
+            self._set_active_sample(None)
+        self._after_purge_refresh()
+        self._refresh_analysis_if_visible()
+        if failures:
+            failed_text = "\n".join(f"  • {item}" for item in failures)
+            gui_dialogs.warning(
+                self,
+                "Delete Samples",
+                f"Deleted {deleted} of {len(targets)} sample(s).\n\n"
+                f"Failed:\n{failed_text}",
+            )
+        elif deleted:
+            self._status(f"Deleted {deleted} sample{'s' if deleted != 1 else ''}.")
+
     def _ctx_delete_batch(self, group: str, batch_name: str) -> None:
         if self._project_root is None:
             return
         sample_name = sanitize_batch_name(batch_name)
-        has_files = batch_has_samples(self._project_root, group, batch_name)
-        if not self._confirm_delete_sample():
+        if not self._confirm_delete_samples(count=1):
             return
         try:
-            if has_files:
-                stats = delete_sample_and_artifacts(
-                    self._project_root,
-                    group,
-                    batch_name,
-                    remove_workspace_raw=True,
-                )
-                self._clear_preview_before_sample_delete(group, batch_name)
-                self._set_active_sample(None)
-                self._after_purge_refresh()
-                self._refresh_analysis_if_visible()
-                self._show_purge_summary("Sample Deleted", stats)
-            else:
-                delete_empty_batch(self._project_root, group, batch_name)
-                self._clear_preview_before_sample_delete(group, batch_name)
-                self._set_active_sample(None)
-                self._after_purge_refresh()
-                self._refresh_analysis_if_visible()
-                self._status(f'Deleted Sample "{sample_name}"')
+            self._delete_one_sample_canonical(group, batch_name)
+            self._set_active_sample(None)
+            self._after_purge_refresh()
+            self._refresh_analysis_if_visible()
+            self._status(f'Deleted Sample "{sample_name}"')
         except (ValueError, OSError) as e:
             gui_dialogs.warning(self, "Delete Sample", str(e))
 
@@ -5695,8 +5853,9 @@ class MainWindow(QMainWindow):
             "Typical workflow:\n\n"
             "1. Create or open a workspace (File menu).\n"
             "2. Add a Condition Group and import AVI/MP4 samples.\n"
-            "3. Orient each video, mark an ROI, and export processed output.\n"
-            "4. Review metrics and open Analysis for condition-group comparisons.\n"
+            "3. Review the automatic Cell Boundary, select the nucleus, "
+            "and confirm analysis timing.\n"
+            "4. Run Metrics, then open Analysis for condition-group comparisons.\n"
         )
         if readme.is_file():
             text += f"\nFor installation and setup, see:\n{readme}"
@@ -5708,11 +5867,11 @@ class MainWindow(QMainWindow):
             "About ActinTrackCV",
             f"ActinTrackCV {__version__}\n\n"
             "ActinTrackCV — Arabidopsis reproductive-cell F-actin fluorescence microscopy: "
-            "2D time-lapse preprocessing, orientation, ROI selection, template tracking, "
+            "2D time-lapse preprocessing, orientation, cell-boundary detection, template tracking, "
             "optical-flow motion index, and cropped export for actin cable velocity analysis.\n\n"
-            "Suggest ROI from F-actin Signal proposes a rectangular region where "
-            "bright F-actin signal is strongest. Review, adjust, approve, or clear "
-            "the ROI before export.",
+            "The Cell Boundary is detected automatically. Use Tighter/Broader to exclude "
+            "obvious background or retain dim cell signal, then select the nucleus and "
+            "confirm analysis timing before Run Metrics.",
         )
 
     def _confirm_project_root_if_source_folder(self, root: Path) -> Optional[Path]:

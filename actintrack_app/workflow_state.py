@@ -1,7 +1,10 @@
 """Derive Workbench setup readiness from canonical persisted fields.
 
-No second redundant workflow enum is stored. Callers compose crop confirmation,
-CellRegion, nucleus, timing, and metric freshness into UI gating.
+No second redundant workflow enum is stored. Callers compose CellRegion,
+derived computational crop, nucleus, timing, and metric freshness into UI gating.
+
+Legacy ``crop_confirmed`` remains readable for old projects but no longer
+drives researcher-facing readiness.
 """
 
 from __future__ import annotations
@@ -28,12 +31,19 @@ class WorkflowSnapshot:
     metrics_running: bool = False
 
     @property
+    def cell_region_ready(self) -> bool:
+        return self.has_sample and self.has_cell_region
+
+    @property
+    def nucleus_set(self) -> bool:
+        return self.cell_region_ready and self.has_nucleus
+
+    @property
     def ready_to_run(self) -> bool:
         return (
             self.has_sample
-            and self.has_crop
-            and self.crop_confirmed
             and self.has_cell_region
+            and self.has_crop
             and self.has_nucleus
             and self.timing_confirmed
             and not self.metrics_running
@@ -53,12 +63,10 @@ class WorkflowSnapshot:
             return "Select a sample first"
         if self.metrics_running:
             return "Metrics are running"
-        if not self.has_crop:
-            return "Select a crop first"
-        if not self.crop_confirmed:
-            return "Confirm the crop"
         if not self.has_cell_region:
-            return "Confirm the crop to identify the cell"
+            return "Wait for the cell boundary to be identified"
+        if not self.has_crop:
+            return "Cell boundary is not ready"
         if not self.has_nucleus:
             return "Select the nucleus"
         if not self.timing_confirmed:
@@ -79,12 +87,8 @@ class WorkflowSnapshot:
     def next_action_hint(self) -> str:
         if not self.has_sample:
             return "Select a sample to begin."
-        if not self.has_crop:
-            return "Draw the computational crop around the cell."
-        if not self.crop_confirmed:
-            return "Confirm the crop to identify the cell boundary."
         if not self.has_cell_region:
-            return "Confirm the crop to identify the cell boundary."
+            return "Identifying the cell boundary…"
         if not self.has_nucleus:
             return "Select the nucleus center."
         if not self.timing_confirmed:
@@ -99,11 +103,11 @@ class WorkflowSnapshot:
 
 
 def crop_confirmed_from_annotation(ann: dict[str, Any] | None) -> bool:
-    """Load crop confirmation; infer True for legacy annotations with a saved crop.
+    """Load crop confirmation for legacy documents only.
 
-    Rule: explicit ``crop_confirmed`` wins. When the field is missing and a
+    Explicit ``crop_confirmed`` wins. When the field is missing and a
     rectangular crop is persisted, treat the crop as confirmed so existing
-    projects are not forced through the new Confirm step.
+    projects are not forced through a removed Confirm step.
     """
     if not ann:
         return False
@@ -117,7 +121,7 @@ def build_workflow_snapshot(
     *,
     has_sample: bool,
     has_crop: bool,
-    crop_confirmed: bool,
+    crop_confirmed: bool = False,
     has_cell_region: bool,
     has_nucleus: bool,
     timing_confirmed: bool,
@@ -208,3 +212,23 @@ def format_sample_results_summary(
     lines.append("Timing")
     lines.append(timing_label or "—")
     return "\n".join(lines)
+
+
+def format_delete_samples_confirmation(
+    *,
+    count: int,
+    group_name: str | None = None,
+) -> tuple[str, str]:
+    """Title and body for sample-deletion confirmation.
+
+    One confirmation covers the whole selection. Count 1 keeps the existing
+    single-sample wording.
+    """
+    n = max(0, int(count))
+    group = str(group_name or "").strip()
+    if n <= 1:
+        return "Delete Sample", "Delete this Sample?"
+    title = f"Delete {n} Samples"
+    if group:
+        return title, f"Delete {n} Samples from {group}?"
+    return title, f"Delete {n} Samples?"
