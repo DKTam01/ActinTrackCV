@@ -47,14 +47,6 @@ def load_latest_tracking_result_view(
     cached_preview: CroppedPreviewAnalysis | None,
 ) -> SampleTrackingResultView | None:
     if project_root is not None:
-        if sample_row is not None:
-            summary_path = motion_index_summary_path_for_sample(project_root, sample_row)
-            if summary_path is not None:
-                try:
-                    data = json.loads(summary_path.read_text(encoding="utf-8"))
-                    return tracking_result_view_from_dict(data)
-                except (OSError, json.JSONDecodeError):
-                    pass
         from actintrack_app.schema_compat import resolve_draft_tracking_path
 
         draft_path = resolve_draft_tracking_path(project_root, sample_id)
@@ -64,6 +56,14 @@ def load_latest_tracking_result_view(
                 return tracking_result_view_from_dict(data)
             except (OSError, json.JSONDecodeError):
                 pass
+        if sample_row is not None:
+            summary_path = motion_index_summary_path_for_sample(project_root, sample_row)
+            if summary_path is not None:
+                try:
+                    data = json.loads(summary_path.read_text(encoding="utf-8"))
+                    return tracking_result_view_from_dict(data)
+                except (OSError, json.JSONDecodeError):
+                    pass
     if cached_preview is not None:
         return tracking_result_view_from_preview(cached_preview)
     if sample_row is not None:

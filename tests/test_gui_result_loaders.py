@@ -143,7 +143,7 @@ class TrackingLoaderPriorityTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(_tracking_payload(general_movement=general_movement)), encoding="utf-8")
 
-    def test_processed_wins_over_draft_and_cache(self) -> None:
+    def test_draft_wins_over_processed_and_cache(self) -> None:
         self._write_processed_summary(1.0)
         self._write_draft_tracking(2.0)
         view = load_latest_tracking_result_view(
@@ -153,7 +153,7 @@ class TrackingLoaderPriorityTests(unittest.TestCase):
             cached_preview=_preview_analysis(general_movement=3.0),
         )
         self.assertEqual(view.status, "success")
-        self.assertEqual(view.general_movement, 1.0)
+        self.assertEqual(view.general_movement, 2.0)
 
     def test_draft_wins_over_cache(self) -> None:
         self._write_draft_tracking(2.0)

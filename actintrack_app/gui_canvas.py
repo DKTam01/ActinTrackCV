@@ -77,6 +77,7 @@ class ImageCanvas(QLabel):
         self._validity_mask: Optional[np.ndarray] = None
         self._cutoff_y: Optional[float] = None
         self._nucleus_xy: Optional[tuple[float, float]] = None
+        self._show_domain_caption = True
         self._crop_confirmed: bool = False
         self._confirm_hit_rect: Optional[tuple[int, int, int, int]] = None
         self._interactive = True
@@ -93,6 +94,7 @@ class ImageCanvas(QLabel):
         self._validity_mask = None
         self._cutoff_y = None
         self._nucleus_xy = None
+        self._show_domain_caption = True
         self._confirm_hit_rect = None
         self.clear()
 
@@ -112,11 +114,18 @@ class ImageCanvas(QLabel):
         self._show_computational_crop = flagged
         self._redraw()
 
-    def set_preview_frame(self, frame: np.ndarray) -> None:
+    def set_preview_frame(
+        self,
+        frame: np.ndarray,
+        *,
+        keep_scientific_overlay: bool = False,
+    ) -> None:
         """Display a read-only preview frame without ROI handles."""
         self._frame = frame
         self._draw_roi = False
         self._confirm_hit_rect = None
+        if not keep_scientific_overlay:
+            self.clear_scientific_overlay(redraw=False)
         self._update_pixmap()
 
     def set_frame(self, frame: np.ndarray, *, keep_roi: bool = False) -> None:
@@ -129,17 +138,28 @@ class ImageCanvas(QLabel):
             self._roi = self._roi.clamp(frame.shape[1], frame.shape[0])
         self._update_pixmap()
 
+    def clear_scientific_overlay(self, *, redraw: bool = True) -> None:
+        """Drop nucleus/cutoff/domain canvas overlays. Display state only."""
+        self._validity_mask = None
+        self._cutoff_y = None
+        self._nucleus_xy = None
+        self._show_domain_caption = False
+        if redraw and (self._pixmap is not None or self._frame is not None):
+            self._update_pixmap()
+
     def set_scientific_overlay(
         self,
         *,
         validity_mask: Optional[np.ndarray] = None,
         cutoff_y: Optional[float] = None,
         nucleus_xy: Optional[tuple[float, float]] = None,
+        show_domain_caption: bool = True,
     ) -> None:
         """Update scientific visualization. Mask is oriented-frame bool, or None."""
         self._validity_mask = validity_mask
         self._cutoff_y = None if cutoff_y is None else float(cutoff_y)
         self._nucleus_xy = None if nucleus_xy is None else (float(nucleus_xy[0]), float(nucleus_xy[1]))
+        self._show_domain_caption = bool(show_domain_caption)
         if self._pixmap is not None or self._frame is not None:
             self._update_pixmap()
 
@@ -292,7 +312,7 @@ class ImageCanvas(QLabel):
 
         # Scientific overlays must not depend on Metric Analysis / ROI-draw mode.
         if self._frame is not None:
-            if self._validity_mask is not None:
+            if self._show_domain_caption and self._validity_mask is not None:
                 painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
                 painter.setPen(QColor(90, 210, 230))
                 painter.drawText(

@@ -279,18 +279,22 @@ class GuiScientificWorkflowTests(unittest.TestCase):
     def test_place_replace_and_clear_nucleus(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._nucleus_reference = None
-        window._cutoff_boundary = None
+        window._cutoff_boundary = CutoffBoundary(y=20.0)
         window._cell_region = None
         window._scientific_placement_mode = "nucleus"
         window._current_sample_id = "S1"
+        window._nucleus_cutoff_alignment_review = False
         window._sync_scientific_overlay = MagicMock()
         window._autosave_roi = MagicMock(return_value=True)
         window._mark_draft_metrics_stale = MagicMock()
         window._update_metric_freshness_label = MagicMock()
         window._status = MagicMock()
+        window.btn_select_nucleus = MagicMock()
+        window.canvas = MagicMock()
 
         MainWindow.on_nucleus_placed(window, 8.25, 14.5)
         self.assertEqual(window._nucleus_reference.x, 8.25)
+        self.assertEqual(window._nucleus_reference.y, 20.0)
         self.assertEqual(window._nucleus_reference.source, "manual")
         self.assertIsNone(window._scientific_placement_mode)
         window._mark_draft_metrics_stale.assert_called_with("S1")
@@ -298,6 +302,7 @@ class GuiScientificWorkflowTests(unittest.TestCase):
 
         MainWindow.on_nucleus_placed(window, 9.0, 10.0)
         self.assertEqual(window._nucleus_reference.x, 9.0)
+        self.assertEqual(window._nucleus_reference.y, 20.0)
 
         MainWindow._on_clear_nucleus(window)
         self.assertIsNone(window._nucleus_reference)
@@ -589,15 +594,17 @@ class AnnotationDecoupledFromRoiTests(unittest.TestCase):
         self.assertEqual(ann["cell_region"]["rectangle"]["width"], 8)
 
     def test_set_nucleus_without_roi_persists(self) -> None:
-        window = _annotation_window(roi=None)
+        window = _annotation_window(roi=None, cutoff=CutoffBoundary(y=11.0))
         window._scientific_placement_mode = "nucleus"
         window._sync_scientific_overlay = MagicMock()
         window._autosave_roi = MagicMock(return_value=True)
         window._mark_draft_metrics_stale = MagicMock()
         window._update_metric_freshness_label = MagicMock()
         window._status = MagicMock()
+        window.btn_select_nucleus = MagicMock()
         MainWindow.on_nucleus_placed(window, 5.5, 6.25)
         self.assertEqual(window._nucleus_reference.x, 5.5)
+        self.assertEqual(window._nucleus_reference.y, 11.0)
         window._autosave_roi.assert_called()
 
     def test_set_cutoff_without_roi_persists(self) -> None:

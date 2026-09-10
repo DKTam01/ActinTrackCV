@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -45,10 +45,27 @@ class CroppedPreviewAnalysis:
     mean_step_toward_nucleus_velocity_um_per_s: float | None = None
     toward_nucleus_velocity_um_per_s: float | None = None
     toward_nucleus_motion_contribution_um_per_s: float | None = None
+    analysis_run_id: str = ""
+    cutoff_y_crop_px: float | None = None
+    valid_mask: np.ndarray | None = field(default=None, compare=False, repr=False)
 
     @property
     def num_tracks_started(self) -> int:
         return len(self.tracks)
+
+
+@dataclass
+class MetricAnalysisInspectionSession:
+    """Inspection-only binding of Metric Analysis to one persisted run."""
+
+    sample_id: str
+    run_id: str
+    analysis: CroppedPreviewAnalysis
+    nucleus_xy_crop: tuple[float, float] | None
+    cutoff_y_crop: float | None
+    valid_mask: np.ndarray | None
+    orientation_run_id: str | None = None
+    view_bounds: tuple[int, int, int, int] | None = None
 
 
 def load_cropped_frames_from_video(
@@ -255,6 +272,16 @@ def cropped_preview_analysis_from_draft(
             )
         except (KeyError, TypeError, ValueError):
             nucleus_xy_px = None
+    cutoff_y_crop_px: float | None = None
+    cutoff_payload = draft.get("cutoff_boundary")
+    if isinstance(cutoff_payload, dict) and cutoff_payload.get("y_px") is not None:
+        try:
+            cutoff_y_crop_px = float(cutoff_payload["y_px"])
+        except (TypeError, ValueError):
+            cutoff_y_crop_px = None
+    run_id = str(
+        draft.get("analysis_run_id") or draft.get("analysis_timestamp_utc") or ""
+    )
     return CroppedPreviewAnalysis(
         frames=frames,
         tracks=tracks,
@@ -299,6 +326,8 @@ def cropped_preview_analysis_from_draft(
             if draft.get("toward_nucleus_motion_contribution_um_per_s") is not None
             else None
         ),
+        analysis_run_id=run_id,
+        cutoff_y_crop_px=cutoff_y_crop_px,
     )
 
 
@@ -328,6 +357,56 @@ def render_cropped_tracking_frame(
     if not analysis.tracks:
         return frame.copy()
     return render_track_preview_frame(frame, analysis.tracks, index)
+
+
+def draw_metric_analysis_guides(
+    frame: np.ndarray,
+    *,
+    nucleus_xy: tuple[float, float] | None = None,
+    cutoff_y: float | None = None,
+    valid_mask: np.ndarray | None = None,
+    draw_nucleus: bool = True,
+    draw_domain_contour: bool = True,
+) -> np.ndarray:
+    """Bake crop-local inspection guides into a Metric Analysis frame.
+
+    Display-only. Does not alter persisted coordinates or metric values.
+    """
+    if frame.ndim == 2:
+        output = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    else:
+        output = np.array(frame, copy=True)
+    height, width = output.shape[:2]
+    if (
+        draw_domain_contour
+        and valid_mask is not None
+        and tuple(valid_mask.shape[:2]) == (height, width)
+    ):
+        contours, _ = cv2.findContours(
+            np.asarray(valid_mask, dtype=np.uint8),
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        if contours:
+            cv2.drawContours(output, contours, -1, (220, 200, 60), 1)
+    if cutoff_y is not None:
+        y = int(round(float(cutoff_y)))
+        if 0 <= y < height:
+            cv2.line(output, (0, y), (width - 1, y), (70, 150, 230), 2, cv2.LINE_AA)
+    if draw_nucleus and nucleus_xy is not None:
+        nx, ny = (int(round(value)) for value in nucleus_xy)
+        if 0 <= nx < width and 0 <= ny < height:
+            cv2.drawMarker(
+                output,
+                (nx, ny),
+                (255, 90, 160),
+                cv2.MARKER_CROSS,
+                12,
+                2,
+                cv2.LINE_AA,
+            )
+            cv2.circle(output, (nx, ny), 5, (255, 90, 160), 1, cv2.LINE_AA)
+    return output
 
 
 def is_supported_video_path(path: Path) -> bool:

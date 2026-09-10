@@ -380,6 +380,53 @@ def valid_mask_crop_local(
     return mask & row_valid[:, None]
 
 
+METRIC_ANALYSIS_FRAMING_MARGIN_PX = 12
+
+
+def analyzed_region_view_bounds(
+    valid_mask: np.ndarray,
+    *,
+    margin_px: int = METRIC_ANALYSIS_FRAMING_MARGIN_PX,
+) -> tuple[int, int, int, int]:
+    """Display-only slice ``(x0, y0, x1, y1)`` around the analyzed domain.
+
+    Coordinates are crop-local pixels of ``valid_mask``. This does not change
+    persisted geometry, tracking crops, or metric calculations.
+    """
+    mask = np.asarray(valid_mask, dtype=bool)
+    height, width = mask.shape[:2]
+    if height <= 0 or width <= 0 or not np.any(mask):
+        return (0, 0, int(width), int(height))
+    rows = np.any(mask, axis=1)
+    cols = np.any(mask, axis=0)
+    y0 = int(np.argmax(rows))
+    y1 = int(height - np.argmax(rows[::-1]))
+    x0 = int(np.argmax(cols))
+    x1 = int(width - np.argmax(cols[::-1]))
+    margin = max(0, int(margin_px))
+    x0 = max(0, x0 - margin)
+    y0 = max(0, y0 - margin)
+    x1 = min(int(width), x1 + margin)
+    y1 = min(int(height), y1 + margin)
+    if x1 <= x0 or y1 <= y0:
+        return (0, 0, int(width), int(height))
+    return (x0, y0, x1, y1)
+
+
+def crop_frame_to_view_bounds(
+    frame: np.ndarray,
+    bounds: tuple[int, int, int, int],
+) -> np.ndarray:
+    """Slice a preview frame to display bounds. Display-only; no resampling."""
+    x0, y0, x1, y1 = (int(value) for value in bounds)
+    height, width = frame.shape[:2]
+    x0 = max(0, min(x0, width))
+    x1 = max(x0, min(x1, width))
+    y0 = max(0, min(y0, height))
+    y1 = max(y0, min(y1, height))
+    return np.array(frame[y0:y1, x0:x1], copy=True)
+
+
 def apply_scientific_domain_to_preview(
     frame: np.ndarray,
     valid_mask: np.ndarray,

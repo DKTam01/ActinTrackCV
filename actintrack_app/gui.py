@@ -219,11 +219,13 @@ from actintrack_app.scientific_annotations import (
     CUTOFF_SOURCE_MANUAL,
     CutoffBoundary,
     NucleusReference,
+    analyzed_region_view_bounds,
     nucleus_reference_from_annotation,
     reorient_cell_region,
     reorient_cutoff_boundary,
     reorient_nucleus_reference,
     apply_scientific_domain_to_preview,
+    crop_frame_to_view_bounds,
     scientific_valid_mask_for_tracking,
     valid_mask_crop_local,
 )
@@ -261,9 +263,11 @@ from actintrack_app.structural_orientation import (
 )
 from actintrack_app.preview_workflow import (
     CroppedPreviewAnalysis,
+    MetricAnalysisInspectionSession,
     analyze_cropped_preview,
     cropped_preview_analysis_from_draft,
     cropped_preview_analysis_from_frames,
+    draw_metric_analysis_guides,
     is_supported_video_path,
     load_cropped_frames_from_video,
     render_cropped_tracking_frame,
@@ -552,6 +556,8 @@ class MainWindow(QMainWindow):
         self._tracking_result_stale_by_sample: dict[str, bool] = {}
         self._cropped_metric_mode = "template"
         self._metric_analysis_view_active = False
+        self._metric_analysis_session: MetricAnalysisInspectionSession | None = None
+        self._nucleus_cutoff_alignment_review = False
         self._optical_flow_results_by_sample: dict[str, OpticalFlowResult] = {}
         self._optical_flow_stale_by_sample: dict[str, bool] = {}
         self._of_flow_caches: dict[str, OpticalFlowFlowCache] = {}
@@ -720,6 +726,8 @@ class MainWindow(QMainWindow):
         self._clear_of_flow_cache()
         self._preview_frame_index = 0
         self._cropped_preview = None
+        self.__dict__["_metric_analysis_session"] = None
+        self.__dict__["_metric_analysis_orientation"] = None
         self._preview_playing = False
         self.canvas.set_interactive(True)
         self._set_preview_controls_visible(False)
@@ -1252,15 +1260,27 @@ class MainWindow(QMainWindow):
     def _resolve_metric_preview_analysis_for_sample(
         self, sample_id: str
     ) -> Optional[CroppedPreviewAnalysis]:
-        """Return in-memory or persisted draft preview data without recomputing."""
+        """Return the current persisted run for inspection without recomputing."""
         if self._tracking_result_stale_by_sample.get(sample_id) or (
             self._optical_flow_stale_by_sample.get(sample_id)
         ):
             return None
+        draft = self._read_draft_tracking_payload(sample_id)
+        draft_run_id = ""
+        if isinstance(draft, dict):
+            draft_run_id = str(
+                draft.get("analysis_run_id")
+                or draft.get("analysis_timestamp_utc")
+                or ""
+            )
         cached = self._tracking_results_by_sample.get(sample_id)
         if cached is not None:
-            return cached
-        if not self._sample_has_persisted_metric_drafts(sample_id):
+            cached_run_id = str(getattr(cached, "analysis_run_id", "") or "")
+            if not draft_run_id or cached_run_id == draft_run_id:
+                return cached
+        if draft is None and not self._sample_has_persisted_metric_drafts(sample_id):
+            return None
+        if draft is None:
             return None
 
         check = self._validate_current_roi()
@@ -1278,17 +1298,93 @@ class MainWindow(QMainWindow):
         except Exception:
             return None
 
-        draft = self._read_draft_tracking_payload(sample_id)
-        if draft is not None:
-            return cropped_preview_analysis_from_draft(frames, draft)
-        return cropped_preview_analysis_from_frames(frames)
+        analysis = cropped_preview_analysis_from_draft(frames, draft)
+        analysis.valid_mask = self._saved_scientific_valid_mask_for_sample(
+            sample_id,
+            check.roi_oriented,
+        )
+        if analysis.cutoff_y_crop_px is None:
+            cutoff = self.__dict__.get("_cutoff_boundary")
+            if cutoff is None and self._project_root is not None:
+                ann = get_sample_annotation(self._project_root, sample_id)
+                _nucleus, cutoff = scientific_annotations_from_annotation(ann)
+            if cutoff is not None:
+                analysis.cutoff_y_crop_px = cutoff.to_crop_local(check.roi_oriented)
+        return analysis
+
+    def _discard_metric_analysis_inspection_state(self) -> None:
+        """Destroy leftover Metric Analysis canvas/session state from a prior run."""
+        self.__dict__["_metric_analysis_session"] = None
+        self.__dict__["_cropped_preview"] = None
+        sid = self.__dict__.get("_current_sample_id")
+        clear_of = getattr(self, "_clear_of_flow_cache", None)
+        if callable(clear_of) and sid:
+            try:
+                clear_of(sid)
+            except Exception:
+                pass
+        canvas = self.__dict__.get("canvas")
+        if canvas is None:
+            return
+        clearer = getattr(canvas, "clear_scientific_overlay", None)
+        if callable(clearer):
+            clearer()
+
+    def _bind_metric_analysis_inspection(
+        self, analysis: CroppedPreviewAnalysis
+    ) -> MetricAnalysisInspectionSession:
+        """Bind inspection overlays to one persisted run. No science recompute."""
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        mask = getattr(analysis, "valid_mask", None)
+        if mask is None and sid:
+            check = (
+                self._validate_current_roi()
+                if hasattr(self, "_validate_current_roi")
+                else None
+            )
+            crop = getattr(check, "roi_oriented", None) if check is not None else None
+            if crop is not None:
+                try:
+                    mask = self._saved_scientific_valid_mask_for_sample(sid, crop)
+                except Exception:
+                    mask = None
+        orientation = None
+        if sid:
+            orientation = load_latest_structural_orientation_result(
+                sid, project_root=self.__dict__.get("_project_root")
+            )
+        if (
+            analysis.nucleus_reference_xy_px is None
+            and orientation is not None
+            and orientation.nucleus_reference_xy_px is not None
+        ):
+            analysis.nucleus_reference_xy_px = orientation.nucleus_reference_xy_px
+        view_bounds = None
+        if mask is not None:
+            view_bounds = analyzed_region_view_bounds(mask)
+        session = MetricAnalysisInspectionSession(
+            sample_id=sid,
+            run_id=str(getattr(analysis, "analysis_run_id", "") or ""),
+            analysis=analysis,
+            nucleus_xy_crop=analysis.nucleus_reference_xy_px,
+            cutoff_y_crop=analysis.cutoff_y_crop_px,
+            valid_mask=mask,
+            orientation_run_id=(
+                orientation.analysis_timestamp_utc if orientation is not None else None
+            ),
+            view_bounds=view_bounds,
+        )
+        self._metric_analysis_session = session
+        self.__dict__["_metric_analysis_orientation"] = orientation
+        return session
 
     def _display_metric_analysis_view_for_current_sample(
         self,
         *,
         resume_playback: bool = False,
     ) -> None:
-        """Show Metric Analysis shell and any cached/draft results without recomputing."""
+        """Show Metric Analysis shell bound to the current persisted run."""
+        self._discard_metric_analysis_inspection_state()
         self._ensure_metric_view_shell_visible()
         self.update_tracking_result_panel()
         self._update_optical_flow_qc_readout()
@@ -1798,7 +1894,11 @@ class MainWindow(QMainWindow):
             "num_tracks_requested": params.num_starting_points,
             "total_valid_steps": analysis.total_valid_steps,
             "tracking_warning": analysis.tracking_warning,
-            "analysis_timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "analysis_timestamp_utc": (
+                analysis.analysis_run_id or datetime.now(timezone.utc).isoformat()
+            ),
+            "analysis_run_id": analysis.analysis_run_id
+            or datetime.now(timezone.utc).isoformat(),
             "parameters": asdict(params),
             "tracking_result": serialize_video_tracking_result(
                 analysis.tracks,
@@ -1825,6 +1925,11 @@ class MainWindow(QMainWindow):
                     ),
                 }
             )
+        if analysis.cutoff_y_crop_px is not None:
+            payload["cutoff_boundary"] = {
+                "y_px": float(analysis.cutoff_y_crop_px),
+                "coordinate_space": "crop_local_pixels",
+            }
         if self.__dict__.get("_timing") is not None:
             payload["timing_provenance"] = self.__dict__["_timing"].result_provenance_dict()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
@@ -2042,6 +2147,9 @@ class MainWindow(QMainWindow):
         of_cache = self.__dict__.get("_optical_flow_results_by_sample")
         if isinstance(of_cache, dict):
             of_cache.pop(sample_id, None)
+        if sample_id == self.__dict__.get("_current_sample_id"):
+            self.__dict__["_metric_analysis_session"] = None
+            self.__dict__["_metric_analysis_orientation"] = None
         clear_of = self.__dict__.get("_clear_of_flow_cache")
         if callable(clear_of):
             clear_of(sample_id)
@@ -2098,6 +2206,12 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
         had_error = False
         ok_any = False
+        self._tracking_results_by_sample.pop(sample_id, None)
+        self._optical_flow_results_by_sample.pop(sample_id, None)
+        self._clear_of_flow_cache(sample_id)
+        if sample_id == self.__dict__.get("_current_sample_id"):
+            self.__dict__["_metric_analysis_session"] = None
+            self.__dict__["_metric_analysis_orientation"] = None
         try:
             frames = load_cropped_frames_from_video(path, orientation, roi)
             valid_mask = self._saved_scientific_valid_mask_for_sample(sample_id, roi)
@@ -2113,6 +2227,16 @@ class MainWindow(QMainWindow):
                     valid_mask=valid_mask,
                     nucleus_xy_px=nucleus_xy_px,
                 )
+                run_id = datetime.now(timezone.utc).isoformat()
+                analysis.analysis_run_id = run_id
+                analysis.valid_mask = (
+                    None if valid_mask is None else np.array(valid_mask, copy=True)
+                )
+                if self._project_root is not None:
+                    ann = get_sample_annotation(self._project_root, sample_id)
+                    _nucleus, cutoff = scientific_annotations_from_annotation(ann)
+                    if cutoff is not None:
+                        analysis.cutoff_y_crop_px = cutoff.to_crop_local(roi)
                 self._commit_tracking_result_for_sid(sample_id, analysis, params)
                 if analysis.num_tracks_with_valid_steps == 0:
                     had_error = True
@@ -2170,6 +2294,8 @@ class MainWindow(QMainWindow):
         self._metric_error_by_sample[sample_id] = had_error and not ok_any
         if sample_id == self._current_sample_id:
             self.update_tracking_result_panel(sample_id)
+            if bool(self.__dict__.get("_metric_analysis_view_active")):
+                self._display_metric_analysis_view_for_current_sample()
         self._update_metric_freshness_label()
         self._refresh_analysis_if_visible()
         if had_error and not ok_any:
@@ -2321,12 +2447,12 @@ class MainWindow(QMainWindow):
             return None
         from actintrack_app.schema_compat import resolve_draft_tracking_path
 
-        path = resolve_draft_tracking_path(self._project_root, sid)
-        if path is None:
-            return None
         try:
+            path = resolve_draft_tracking_path(self._project_root, sid)
+            if path is None:
+                return None
             return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return None
 
     def _read_draft_optical_flow_payload(self, sid: str) -> Optional[dict[str, Any]]:
@@ -2339,7 +2465,7 @@ class MainWindow(QMainWindow):
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             return None
 
     def _metric_state_for_sample(self, sid: Optional[str]) -> str:
@@ -2451,8 +2577,11 @@ class MainWindow(QMainWindow):
         snap = self._workflow_snapshot_for_current()
         if self.__dict__.get("lbl_workflow_next") is not None:
             self.lbl_workflow_next.setText(snap.next_action_hint())
+        self._refresh_nucleus_cutoff_alignment_hint()
         if self.__dict__.get("btn_select_nucleus") is not None:
-            self.btn_select_nucleus.setEnabled(snap.cell_region_ready)
+            self.btn_select_nucleus.setEnabled(
+                snap.cell_region_ready and snap.has_cutoff
+            )
         if self.__dict__.get("btn_clear_nucleus") is not None:
             self.btn_clear_nucleus.setEnabled(
                 snap.has_sample and self.__dict__.get("_nucleus_reference") is not None
@@ -2779,7 +2908,12 @@ class MainWindow(QMainWindow):
         if oriented is None or metric_view or preview_mode == "cropped_tracking":
             setter = getattr(canvas, "set_scientific_overlay", None)
             if callable(setter):
-                setter(validity_mask=None, cutoff_y=None, nucleus_xy=None)
+                setter(
+                    validity_mask=None,
+                    cutoff_y=None,
+                    nucleus_xy=None,
+                    show_domain_caption=False,
+                )
             return
         if not isinstance(oriented, np.ndarray):
             return
@@ -2804,32 +2938,87 @@ class MainWindow(QMainWindow):
                 validity_mask=mask,
                 cutoff_y=cutoff_y,
                 nucleus_xy=nucleus_xy,
+                show_domain_caption=True,
             )
 
     def _set_scientific_placement_mode(self, mode: str | None) -> None:
         self._scientific_placement_mode = mode
+        btn = self.__dict__.get("btn_select_nucleus")
+        if btn is not None and hasattr(btn, "setChecked"):
+            btn.blockSignals(True)
+            btn.setChecked(mode == "nucleus")
+            btn.blockSignals(False)
+        canvas = self.__dict__.get("canvas")
+        if canvas is not None and hasattr(canvas, "setCursor"):
+            if mode in ("nucleus", "cutoff"):
+                canvas.setCursor(Qt.CursorShape.CrossCursor)
+            elif hasattr(canvas, "unsetCursor"):
+                canvas.unsetCursor()
         if mode == "nucleus":
-            self._status("Click the nucleus center.")
+            self._status(
+                "Click the nucleus center. Horizontal position is yours; "
+                "vertical position snaps to the Measurement Cutoff."
+            )
         elif mode == "cutoff":
             self._status("Click to place the horizontal cutoff.")
         else:
             self._status("")
 
+    def _refresh_nucleus_cutoff_alignment_hint(self) -> None:
+        label = self.__dict__.get("lbl_nucleus_cutoff_hint")
+        if label is None or not hasattr(label, "setText"):
+            return
+        if bool(self.__dict__.get("_nucleus_cutoff_alignment_review")):
+            label.setText(
+                "Cutoff moved — review nucleus alignment. The nucleus was not changed."
+            )
+            return
+        label.setText(
+            "Place the Measurement Cutoff through the nucleus, "
+            "then select the nucleus center."
+        )
+
+    def _mark_nucleus_cutoff_alignment_review(self) -> None:
+        nucleus = self.__dict__.get("_nucleus_reference")
+        cutoff = self.__dict__.get("_cutoff_boundary")
+        if nucleus is None or cutoff is None:
+            self.__dict__["_nucleus_cutoff_alignment_review"] = False
+        else:
+            self.__dict__["_nucleus_cutoff_alignment_review"] = (
+                abs(float(nucleus.y) - float(cutoff.y)) > 0.5
+            )
+        self._refresh_nucleus_cutoff_alignment_hint()
+
     def on_nucleus_placed(self, x: float, y: float) -> None:
-        self._nucleus_reference = NucleusReference(x=x, y=y, source="manual")
-        self._scientific_placement_mode = None
+        cutoff = self.__dict__.get("_cutoff_boundary")
+        if cutoff is None:
+            self._scientific_placement_mode = None
+            gui_dialogs.information(
+                self if isinstance(self, QWidget) else None,
+                "Select Nucleus",
+                "Set the Measurement Cutoff first, then select the nucleus center.",
+            )
+            self._set_scientific_placement_mode(None)
+            return
+        self._nucleus_reference = NucleusReference(
+            x=x, y=float(cutoff.y), source="manual"
+        )
+        self.__dict__["_nucleus_cutoff_alignment_review"] = False
+        self._set_scientific_placement_mode(None)
         self._sync_scientific_overlay()
+        self._refresh_nucleus_cutoff_alignment_hint()
         self._autosave_roi(quiet=True)
         sid = str(self._current_sample_id or "")
         if sid:
             self._mark_draft_metrics_stale(sid)
         self._update_metric_freshness_label()
-        self._status("Nucleus center set.")
+        self._status("Nucleus center set on the Measurement Cutoff.")
 
     def on_cutoff_placed(self, y: float) -> None:
         self._cutoff_boundary = CutoffBoundary(y=y, source=CUTOFF_SOURCE_MANUAL)
         self.__dict__["_cutoff_intentionally_cleared"] = False
-        self._scientific_placement_mode = None
+        self._set_scientific_placement_mode(None)
+        self._mark_nucleus_cutoff_alignment_review()
         self._sync_scientific_overlay()
         self._autosave_roi(quiet=True)
         sid = str(self._current_sample_id or "")
@@ -2848,6 +3037,7 @@ class MainWindow(QMainWindow):
 
     def on_cutoff_edit_finished(self) -> None:
         self._sync_scientific_overlay()
+        self._mark_nucleus_cutoff_alignment_review()
         self._autosave_roi(quiet=True)
         sid = str(self._current_sample_id or "")
         if sid:
@@ -2855,6 +3045,17 @@ class MainWindow(QMainWindow):
         self._update_metric_freshness_label()
 
     def _on_set_nucleus_mode(self) -> None:
+        if self.__dict__.get("_cutoff_boundary") is None:
+            self._set_scientific_placement_mode(None)
+            gui_dialogs.information(
+                self if isinstance(self, QWidget) else None,
+                "Select Nucleus",
+                "Set the Measurement Cutoff first, then select the nucleus center.",
+            )
+            return
+        if self.__dict__.get("_scientific_placement_mode") == "nucleus":
+            self._set_scientific_placement_mode(None)
+            return
         self._exit_cropped_preview_mode()
         self._set_scientific_placement_mode("nucleus")
 
@@ -2864,8 +3065,10 @@ class MainWindow(QMainWindow):
 
     def _on_clear_nucleus(self) -> None:
         self._nucleus_reference = None
-        self._scientific_placement_mode = None
+        self.__dict__["_nucleus_cutoff_alignment_review"] = False
+        self._set_scientific_placement_mode(None)
         self._sync_scientific_overlay()
+        self._refresh_nucleus_cutoff_alignment_hint()
         self._autosave_roi(quiet=True)
         sid = str(self._current_sample_id or "")
         if sid:
@@ -2876,7 +3079,8 @@ class MainWindow(QMainWindow):
     def _on_clear_cutoff(self) -> None:
         self._cutoff_boundary = None
         self.__dict__["_cutoff_intentionally_cleared"] = True
-        self._scientific_placement_mode = None
+        self._mark_nucleus_cutoff_alignment_review()
+        self._set_scientific_placement_mode(None)
         self._sync_scientific_overlay()
         self._autosave_roi(quiet=True)
         sid = str(self._current_sample_id or "")
@@ -3181,6 +3385,8 @@ class MainWindow(QMainWindow):
         self._metric_analysis_view_active = True
         self._preview_pause()
         self._cropped_preview = None
+        self.__dict__["_metric_analysis_session"] = None
+        self.__dict__["_metric_analysis_orientation"] = None
         self._preview_frame_index = 0
         self._center_stack.setCurrentIndex(0)
         self._preview_mode = "cropped_tracking"
@@ -3208,9 +3414,11 @@ class MainWindow(QMainWindow):
         analysis: CroppedPreviewAnalysis,
     ) -> None:
         self._preview_pause()
+        self._discard_metric_analysis_inspection_state()
         self._center_stack.setCurrentIndex(0)
         self._metric_analysis_view_active = True
         self._preview_mode = "cropped_tracking"
+        self._bind_metric_analysis_inspection(analysis)
         self._cropped_preview = analysis
         self._preview_frame_index = 0
         self.canvas.set_interactive(False)
@@ -3287,8 +3495,13 @@ class MainWindow(QMainWindow):
         self._on_sample_frame_slider(value)
 
     def _metric_analysis_valid_mask(self) -> np.ndarray | None:
-        """Crop-local CellRegion ∩ cutoff mask matching Metric Analysis frames."""
+        """Crop-local CellRegion ∩ cutoff mask matching the current inspection run."""
+        session = self.__dict__.get("_metric_analysis_session")
+        if session is not None and getattr(session, "valid_mask", None) is not None:
+            return session.valid_mask
         analysis = self.__dict__.get("_cropped_preview")
+        if analysis is not None and getattr(analysis, "valid_mask", None) is not None:
+            return analysis.valid_mask
         if analysis is None or not getattr(analysis, "frames", None):
             return None
         h, w = analysis.frames[0].shape[:2]
@@ -3306,17 +3519,19 @@ class MainWindow(QMainWindow):
                 crop = check.roi_oriented
         if crop is None or int(crop.width) != w or int(crop.height) != h:
             return None
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if sid:
+            try:
+                saved = self._saved_scientific_valid_mask_for_sample(sid, crop)
+                if saved is not None:
+                    return saved
+            except Exception:
+                pass
         cell = self.__dict__.get("_cell_region")
         cutoff = self.__dict__.get("_cutoff_boundary")
         if cell is not None or cutoff is not None:
             try:
                 return valid_mask_crop_local(crop, cell_region=cell, cutoff=cutoff)
-            except Exception:
-                pass
-        sid = str(self.__dict__.get("_current_sample_id") or "")
-        if sid:
-            try:
-                return self._saved_scientific_valid_mask_for_sample(sid, crop)
             except Exception:
                 return None
         return None
@@ -3327,6 +3542,7 @@ class MainWindow(QMainWindow):
         count = len(self._cropped_preview.frames)
         index = max(0, min(index, count - 1))
         mode = str(self._cropped_metric_mode or "template")
+        session = self.__dict__.get("_metric_analysis_session")
         if mode == "optical_flow":
             frame = self._cropped_preview.frames[index].copy()
             # Optical Flow inspection always shows the OF overlay.
@@ -3341,16 +3557,51 @@ class MainWindow(QMainWindow):
             frame = self._cropped_preview.frames[index].copy()
         else:
             frame = render_cropped_tracking_frame(self._cropped_preview, index)
-        mask = self._metric_analysis_valid_mask()
+        mask = None
+        if session is not None:
+            mask = session.valid_mask
+        if mask is None:
+            mask = self._metric_analysis_valid_mask()
         if mask is not None and mask.shape == frame.shape[:2]:
             frame = apply_scientific_domain_to_preview(frame, mask)
+        orientation = self.__dict__.get("_metric_analysis_orientation")
         if mode == "orientation":
-            sid = str(self.__dict__.get("_current_sample_id") or "")
-            orientation = load_latest_structural_orientation_result(
-                sid, project_root=self.__dict__.get("_project_root")
-            )
+            if orientation is None:
+                sid = str(self.__dict__.get("_current_sample_id") or "")
+                orientation = load_latest_structural_orientation_result(
+                    sid, project_root=self.__dict__.get("_project_root")
+                )
             if orientation is not None and orientation.has_valid_result:
                 frame = render_structural_orientation_overlay(frame, orientation)
+        nucleus_xy = None
+        cutoff_y = None
+        if session is not None:
+            nucleus_xy = session.nucleus_xy_crop
+            cutoff_y = session.cutoff_y_crop
+        else:
+            nucleus_xy = getattr(self._cropped_preview, "nucleus_reference_xy_px", None)
+            cutoff_y = getattr(self._cropped_preview, "cutoff_y_crop_px", None)
+        frame = draw_metric_analysis_guides(
+            frame,
+            nucleus_xy=nucleus_xy,
+            cutoff_y=cutoff_y,
+            valid_mask=mask,
+            draw_nucleus=mode != "orientation",
+        )
+        bounds = None
+        if session is not None:
+            bounds = session.view_bounds
+        if bounds is None and mask is not None:
+            bounds = analyzed_region_view_bounds(mask)
+        if bounds is not None:
+            x0, y0, x1, y1 = bounds
+            if x1 > x0 and y1 > y0 and (x0, y0, x1, y1) != (
+                0,
+                0,
+                frame.shape[1],
+                frame.shape[0],
+            ):
+                frame = crop_frame_to_view_bounds(frame, bounds)
         self._preview_frame_index = index
         self.canvas.set_preview_frame(frame)
         self.slider_frame.blockSignals(True)
@@ -4878,6 +5129,7 @@ class MainWindow(QMainWindow):
         self._nucleus_reference, self._cutoff_boundary = (
             scientific_annotations_from_annotation(ann)
         )
+        self._mark_nucleus_cutoff_alignment_review()
         self.__dict__["_cutoff_intentionally_cleared"] = (
             self._cutoff_boundary is None
             and bool(ann.get("cutoff_cleared"))
