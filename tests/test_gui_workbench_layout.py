@@ -203,10 +203,8 @@ class RoiContextMenuTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "Suggest ROI from F-actin Signal",
                 "Set Nucleus",
                 "Set Cutoff",
-                "Clear ROI",
                 "Export ROI",
             ],
         )
@@ -216,7 +214,6 @@ class RoiContextMenuTests(unittest.TestCase):
         self.assertEqual(
             labels,
             [
-                "Suggest ROI from F-actin Signal",
                 "Set Nucleus",
                 "Set Cutoff",
             ],

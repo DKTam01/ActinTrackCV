@@ -302,6 +302,7 @@ class ExplorerSelectionBehaviorTests(unittest.TestCase):
         window._set_roi_save_status = MagicMock()
         window._refresh_roi_preview_panel = MagicMock()
         window._update_metric_freshness_label = MagicMock()
+        window._sync_workflow_controls = MagicMock()
 
         MainWindow.on_roi_changed(window, RectROI(1, 2, 10, 12))
 

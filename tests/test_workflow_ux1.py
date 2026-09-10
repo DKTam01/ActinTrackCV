@@ -30,21 +30,22 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
         )
         self.assertFalse(snap.ready_to_run)
         self.assertFalse(snap.metric_analysis_allowed)
-        self.assertEqual(snap.run_metrics_block_reason(), "Select a crop first")
+        self.assertEqual(snap.run_metrics_block_reason(), "Wait for the cell boundary to be identified")
         self.assertEqual(snap.metric_analysis_block_reason(), "Run Metrics first")
 
-    def test_unconfirmed_crop_blocks_run(self) -> None:
+    def test_unconfirmed_crop_does_not_block_run(self) -> None:
         snap = build_workflow_snapshot(
             has_sample=True,
             has_crop=True,
             crop_confirmed=False,
-            has_cell_region=False,
-            has_nucleus=False,
-            timing_confirmed=False,
+            has_cell_region=True,
+            has_nucleus=True,
+            timing_confirmed=True,
             metrics_present=False,
             metrics_stale=False,
         )
-        self.assertEqual(snap.run_metrics_block_reason(), "Confirm the crop")
+        self.assertTrue(snap.ready_to_run)
+        self.assertIsNone(snap.run_metrics_block_reason())
 
     def test_cell_without_nucleus_blocks_run(self) -> None:
         snap = build_workflow_snapshot(
@@ -191,6 +192,7 @@ class GuiWorkflowIntegrationTests(unittest.TestCase):
         window._cell_region = None
         window._nucleus_reference = None
         window._timing = None
+        window._cell_boundary_sensitivity = 0.5
         window._tracking_result_stale_by_sample = {}
         window._optical_flow_stale_by_sample = {}
         window._metrics_inflight = set()
@@ -199,9 +201,10 @@ class GuiWorkflowIntegrationTests(unittest.TestCase):
         window._sample_has_measurable_draft_results = MagicMock(return_value=False)
         return window
 
-    def test_confirm_crop_generates_cell_once(self) -> None:
+    def test_crop_confirmed_generates_cell_once(self) -> None:
         from actintrack_app.gui import MainWindow
         from actintrack_app.orientation import RectROI
+        from actintrack_app.scientific_annotations import CellRegion
 
         window = self._stub()
         window._project_root = Path("/tmp")
@@ -210,35 +213,42 @@ class GuiWorkflowIntegrationTests(unittest.TestCase):
         oriented = MagicMock()
         oriented.shape = (100, 100, 3)
         window._oriented_frame = MagicMock(return_value=oriented)
-        fake_cell = object()
+        fake_cell = CellRegion.from_rect(RectROI(12, 12, 30, 30))
         window._sync_scientific_overlay = MagicMock()
         window._autosave_roi = MagicMock(return_value=True)
         window._update_metric_freshness_label = MagicMock()
         window._status = MagicMock()
+        window._sync_cell_boundary_slider = MagicMock()
+        window._set_computational_crop = MagicMock()
+        window._derive_computational_crop_from_cell = MagicMock()
 
         with mock.patch(
             "actintrack_app.gui.suggest_conservative_cell_region",
             return_value=fake_cell,
         ) as suggest:
-            MainWindow.on_crop_confirmed(window)
-            suggest.assert_called_once()
-        self.assertTrue(window._crop_confirmed)
+            with mock.patch(
+                "actintrack_app.gui.suggest_default_cutoff_boundary",
+                return_value=None,
+            ):
+                MainWindow.on_crop_confirmed(window)
+                suggest.assert_called_once()
         self.assertIs(window._cell_region, fake_cell)
 
-    def test_roi_edit_unconfirms_crop(self) -> None:
+    def test_roi_edit_does_not_clear_cell_region(self) -> None:
         from actintrack_app.gui import MainWindow
         from actintrack_app.orientation import RectROI
 
         window = self._stub()
         window._crop_confirmed = True
+        window._cell_region = object()
         window._mark_draft_metrics_stale = MagicMock()
         window._set_roi_save_status = MagicMock()
         window._loaded_annotation_source = "manual"
         window._refresh_roi_preview_panel = MagicMock()
         window._sync_workflow_controls = MagicMock()
         MainWindow.on_roi_changed(window, RectROI(1, 1, 20, 20))
-        self.assertFalse(window._crop_confirmed)
-        window._mark_draft_metrics_stale.assert_called_once_with("S1")
+        self.assertIsNotNone(window._cell_region)
+        window._mark_draft_metrics_stale.assert_not_called()
 
 
 if __name__ == "__main__":

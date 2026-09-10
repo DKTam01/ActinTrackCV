@@ -159,10 +159,11 @@ class AnalysisWithoutNucleusTests(unittest.TestCase):
 
 
 class CanvasScientificLabelTests(unittest.TestCase):
-    def test_crop_label_is_secondary_not_scientific_roi(self) -> None:
+    def test_canvas_emphasizes_scientific_overlays_not_computational_crop(self) -> None:
         src = inspect.getsource(ImageCanvas._redraw)
-        self.assertIn('"Crop"', src)
+        self.assertNotIn('"Crop"', src)
         self.assertNotIn("F-actin analysis ROI", src)
+        self.assertIn("_show_computational_crop", src)
         self.assertIn("Cell Boundary", src)
         self.assertIn("Measurement Cutoff", src)
         self.assertIn("Nucleus", src)

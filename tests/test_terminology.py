@@ -28,7 +28,7 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertNotIn("this Breed?", src)
         self.assertIn("Condition Group", src)
         self.assertIn("Delete this empty Condition Group?", src)
-        self.assertIn("Delete this Sample?", src)
+        self.assertIn("Delete this Sample?", _read("actintrack_app/workflow_state.py"))
         self.assertIn("Condition Group Not Empty", src)
         self.assertIn("tree_samples", combined)
         self.assertNotIn("Full Sample Preview — orient the data", src)
@@ -235,8 +235,8 @@ class UserFacingTerminologyTests(unittest.TestCase):
         self.assertIn("_populate_roi_actions_menu", src)
 
         gui = _read("actintrack_app/gui.py")
-        self.assertIn("Suggest ROI from F-actin Signal", gui)
-        self.assertIn("Clear ROI", gui)
+        self.assertNotIn("Suggest ROI from F-actin Signal", gui)
+        self.assertNotIn("Clear ROI", gui)
         self.assertIn("Export ROI", gui)
         self.assertIn("inside_roi", gui)
 

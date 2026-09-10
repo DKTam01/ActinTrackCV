@@ -50,24 +50,23 @@ class RoiMetricStatusSeparationTests(unittest.TestCase):
             MainWindow._refresh_roi_save_status_from_context(window)
 
         window.lbl_roi_save_status.setText.assert_called_once_with(
-            "Crop drawn — confirm to continue"
+            "Identifying cell boundary…"
         )
         apply_style.assert_called_once()
         self.assertFalse(apply_style.call_args.kwargs.get("saved"))
 
-    def test_refresh_roi_save_status_reflects_unsaved_edit(self) -> None:
+    def test_refresh_roi_save_status_reflects_saved_cell(self) -> None:
         window = MainWindow.__new__(MainWindow)
         window._current_sample = {"sample_id": "S1"}
-        window._roi_user_adjusted = True
-        window._roi_autosave_pending = False
-        window.canvas = MagicMock()
-        window.canvas.rect_roi.return_value = RectROI(1, 2, 10, 12)
+        window._cell_region = object()
         window.lbl_roi_save_status = MagicMock()
 
-        with patch("actintrack_app.gui.apply_status_style"):
+        with patch("actintrack_app.gui.apply_status_style") as apply_style:
             MainWindow._refresh_roi_save_status_from_context(window)
 
-        window.lbl_roi_save_status.setText.assert_called_once_with("Unsaved changes")
+        window.lbl_roi_save_status.setText.assert_called_once_with("Cell boundary saved")
+        apply_style.assert_called_once()
+        self.assertTrue(apply_style.call_args.kwargs.get("saved"))
 
     def test_on_roi_changed_does_not_schedule_metrics(self) -> None:
         window = MainWindow.__new__(MainWindow)
@@ -86,7 +85,7 @@ class RoiMetricStatusSeparationTests(unittest.TestCase):
         MainWindow.on_roi_changed(window, RectROI(1, 2, 10, 12))
 
         window._set_roi_save_status.assert_called_once_with(
-            "Unsaved changes", saved=False
+            "Cell boundary saved", saved=True
         )
         window._update_metric_freshness_label.assert_not_called()
 

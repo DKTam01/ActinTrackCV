@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -412,6 +413,8 @@ class GuiScientificWorkflowTests(unittest.TestCase):
         )
         window._sync_scientific_overlay = MagicMock()
         window._autosave_roi = MagicMock(return_value=True)
+        window._project_root = Path("/tmp")
+        window._current_sample = {"sample_id": "S1"}
         fake_crop = TrackingCrop(
             x0=2,
             y0=1,
@@ -427,7 +430,10 @@ class GuiScientificWorkflowTests(unittest.TestCase):
         suggested_cell = CellRegion.from_rect(
             RectROI(0, 0, 30, 20), source=CELL_REGION_SOURCE_FALLBACK_FRAME
         )
-        with patch("actintrack_app.gui.detect_tracking_crop", return_value=fake_crop):
+        with patch(
+            "actintrack_app.cell_detection.detect_tracking_crop",
+            return_value=fake_crop,
+        ):
             with patch(
                 "actintrack_app.gui.suggest_conservative_cell_region",
                 return_value=suggested_cell,
@@ -479,7 +485,7 @@ class GuiScientificWorkflowTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("Set Nucleus", gui_src)
         self.assertIn("Set Cutoff", gui_src)
-        self.assertIn("Clear ROI", gui_src)
+        self.assertNotIn("Clear ROI", gui_src)
         self.assertNotIn("Draw Polygon", gui_src)
         self.assertNotIn("polygon authoring", canvas_src.lower())
         self.assertNotIn("DragMode.POLYGON", canvas_src)
@@ -673,7 +679,6 @@ class AnnotationDecoupledFromRoiTests(unittest.TestCase):
             "cell_region": cell.to_dict(),
         }
         MainWindow._apply_annotation_from_dict(window, ann, render_canvas=False)
-        self.assertIsNone(window.canvas.set_rect_roi.call_args[0][0])
         self.assertEqual(window._nucleus_reference.x, 8.25)
         self.assertEqual(window._cutoff_boundary.y, 22.0)
         self.assertEqual(window._cell_region.bounding_box(), RectROI(2, 3, 8, 9))
@@ -759,8 +764,8 @@ class AnnotationDecoupledFromRoiTests(unittest.TestCase):
             mock_suggest.assert_called_once()
         window.canvas.set_rect_roi.assert_called()
         self.assertIsNone(window._nucleus_reference)
-        self.assertIsNone(window._cutoff_boundary)
         self.assertIsNotNone(window._cell_region)
+        self.assertIsNotNone(window._cutoff_boundary)
 
     def test_missing_cell_region_is_generated_on_load(self) -> None:
         window = _annotation_window(roi=RectROI(1, 2, 10, 12))
