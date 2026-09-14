@@ -1,6 +1,6 @@
 # ActinTrackCV
 
-Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy: 2D time-lapse movies of elongated ovule / embryo-sac cells expressing **Lifeact** (F-actin) and **H2B** (nucleus) reporters. Organize **Data** by **Condition Group** and **Sample**, orient frames, draw a rectangular **ROI**, review motion metrics in **Metric Analysis View** (template tracking and optical flow), and aggregate saved results in **Analysis**. The **R Shiny** app (`shiny_app/`) provides the lab-facing review workflow; Python remains the analysis backend.
+Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy: 2D time-lapse movies of elongated ovule / embryo-sac cells expressing **Lifeact** (F-actin) and **H2B** (nucleus) reporters. Organize **Data** by **Condition Group** and **Sample**, confirm the automatic **Cell Boundary**, set the **Measurement Cutoff**, optionally mark the **Nucleus**, run **Metrics**, inspect overlays in **Metric Analysis**, and aggregate saved results in **Analysis**. The **R Shiny** app (`shiny_app/`) provides the lab-facing review workflow; Python remains the analysis backend.
 
 **Experimental design (current dataset):** WT lines **218** and **550** (`FWApro::Lifeact-Venus` with H2B reporters) versus mutants **515** (`scar2` on #218) and **175** (`xig` on #218).
 
@@ -27,7 +27,7 @@ Local workspace data under `raw/` (gitignored) currently holds **21 media files*
 
 **Naming:** `{WT\|MUT}{id}_{0001..}.{ext}` inside `{ordinal}_{WT\|Mutant}_{id}/` (e.g. `2_WT_550/WT550_0003.avi`).
 
-**Time-lapse exports:** 15 videos, each **15 frames** at **6.0 fps playback** (export timing — lab notes say **30 sec/frame** for biological interval).
+**Time-lapse exports:** 15 videos, each **15 frames**. Encoded playback is typically **6.0 fps**. The Workbench uses that **detected video timing** for µm/s (`timing_source=video_header`). Encoded FPS is not independently proven microscope acquisition cadence; px/frame remains visible. Lab slide notes historically mentioned 30 s/frame — that is not the current product default and is not hard-coded.
 
 **Higher-fidelity microscopy (`1_WT_218` only):** 16-bit ImageJ TIFF hyperstacks and Olympus **FV3000** OIR Z-stacks (60× water objective, EYFP/Lifeact channel).
 

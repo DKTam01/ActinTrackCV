@@ -2,14 +2,14 @@
 
 ## User Documentation
 
-ActinTrackCV is a desktop application for organizing and analyzing 2D Arabidopsis F-actin fluorescence microscopy time-lapse data. The current workflow supports AVI and MP4 time-lapse data. It helps researchers select an actin-rich region of interest, preview the cropped region, run draft motion tracking, and compare results across biological groups.
+ActinTrackCV is a desktop application for organizing and analyzing 2D Arabidopsis F-actin fluorescence microscopy time-lapse data. The current workflow supports AVI and MP4 time-lapse data. It helps researchers confirm the automatic cell boundary, set a measurement cutoff, optionally mark the nucleus, run metrics, inspect overlays, and compare results across biological groups.
 
 This guide is written for biological researchers. It avoids software implementation details unless they help explain how to use the app safely.
 
 Current workflow:
 
 ```text
-Condition Group -> Add Sample / Select Data -> Orient and ROI -> Preview Cropped ROI -> Draft tracking/index -> Analysis
+Condition Group -> Add Sample -> Cell Boundary -> Measurement Cutoff -> optional Nucleus -> Run Metrics -> Metric Analysis -> Analysis
 ```
 
 Current supported data type: 2D AVI/MP4 time-lapse data.
@@ -25,10 +25,10 @@ Use this short path when starting a new analysis session.
 1. Open ActinTrackCV and open or create a workspace.
 2. Select a Condition Group in the left panel.
 3. Choose Sample -> Add Sample, then select one or more AVI or MP4 data files. Each file becomes one Sample in the selected Condition Group.
-4. Orient the image and draw a rectangular ROI around the actin-rich region.
-5. Click Preview Cropped ROI to inspect the crop and run draft tracking.
-6. Review the Tracking Result panel.
-7. Open Analysis to compare Samples and Condition Groups.
+4. Confirm the automatic Cell Boundary. Adjust sensitivity if needed.
+5. Set the Measurement Cutoff. Optionally mark the Nucleus (required only for Toward Nucleus and F-actin Orientation).
+6. Click Run Metrics. Review Sample Results, then open Metric Analysis to inspect overlays.
+7. Open Analysis to compare Samples and Condition Groups. The Workbench uses detected video timing for µm/s.
 
 Run command from the project folder:
 
@@ -45,14 +45,15 @@ On macOS or Linux, `./run_app.sh` is also available. On Windows, use `run_app.ba
 | Term | Meaning |
 |------|---------|
 | Condition Group | A researcher-defined experimental grouping such as a genotype, chemical treatment, control, mutant, environmental condition, or other experimental setup (e.g. `Control` or `LatB Treatment`). You create custom names per workspace. |
-| Sample | One imported AVI/MP4 data file plus its project state: ROI, orientation, notes, tracking result, and analysis status. |
+| Sample | One imported AVI/MP4 data file plus its project state: cell boundary, cutoff, optional nucleus, notes, metrics, and analysis status. |
 | Data | The AVI/MP4 file selected by the user for a Sample. The app stores a project-managed internal copy so the workspace can be reopened later. |
-| ROI | Region of interest. A rectangle drawn around the actin-rich area to analyze. |
-| Cropped ROI Preview | A looping preview of only the ROI area, with draft tracking overlay. |
-| Tracking Result | Draft measurements from the current Sample's cropped ROI preview, including downward velocity and general movement. |
-| Motion Index | A draft comparison metric based on tracked motion in the ROI. It should be interpreted alongside visual inspection. |
-| Analysis | Read-only tables that summarize tracking/index results by Sample and Condition Group. |
-| Workspace/project files | The folders and metadata files ActinTrackCV uses to remember Samples, ROIs, tracking results, and outputs. |
+| Cell Boundary | Automatically detected cell outline. This is the scientific analysis region. Sensitivity can be adjusted. |
+| Measurement Cutoff | Required horizontal line. Tracking uses the cell on the side of the cutoff with smaller image y. |
+| Nucleus | Optional center mark on the cutoff. Needed for Toward Nucleus and F-actin Orientation. Not required for General Movement or Optical Flow. |
+| Metric Analysis | Inspection of a persisted metrics run (Template Tracking, Optical Flow, or F-actin Orientation). It does not recompute science. |
+| Sample Results | Concise current metrics beside the video: General Movement, Optical Flow, Toward Nucleus, Orientation, tracks, and timing. |
+| Analysis | Read-only tables that summarize tracking/index results by Sample and Condition Group. Some columns are still labeled Legacy; those metrics remain calculated. |
+| Workspace/project files | The folders and metadata files ActinTrackCV uses to remember Samples, scientific annotations, tracking results, and outputs. |
 
 ---
 
@@ -63,10 +64,11 @@ The recommended workflow is Sample-driven. A Sample represents one AVI/MP4 data 
 ```text
 Select Condition Group
   -> Add Sample by choosing AVI/MP4 Data
-  -> Orient frame
-  -> Draw ROI
-  -> Preview Cropped ROI
-  -> Review Tracking Result
+  -> Confirm Cell Boundary
+  -> Set Measurement Cutoff
+  -> Optionally mark Nucleus
+  -> Run Metrics
+  -> Inspect Metric Analysis
   -> Open Analysis
 ```
 
@@ -74,9 +76,11 @@ Select Condition Group
 |------|-------------|--------------------------------|
 | Select Condition Group | Choose the experimental group in the left panel. | The Sample list filters to that Condition Group. |
 | Add Sample | Select one or more AVI or MP4 files. | One Sample per file: a Sample record, project-managed internal data copy, and metadata row. |
-| Orient and ROI | Rotate/flip as needed and draw the rectangle around the intended actin-rich region. | ROI and orientation metadata. ROI changes autosave. |
-| Preview Cropped ROI | Start the cropped ROI/tracking preview. | Draft tracking/index result for the current Sample. |
-| Review Tracking Result | Compare the displayed values with visual motion in the preview. | No extra action is needed for the draft result to appear in Analysis. |
+| Cell Boundary | Confirm the automatic outline; adjust sensitivity if needed. | CellRegion metadata and an internal computational crop. |
+| Measurement Cutoff | Place or drag the horizontal cutoff. | CutoffBoundary metadata. Moving it does not silently move a saved nucleus. |
+| Nucleus (optional) | Click the nucleus center; it snaps to the cutoff. | NucleusReference metadata. Needed for Toward Nucleus and Orientation. |
+| Run Metrics | Compute tracking and optical flow for the current Sample. | Persisted run with an analysis_run_id. |
+| Metric Analysis | Inspect overlays for the current non-stale run. | No recompute. Missing modes show a message in the preview area. |
 | Analysis | Open the Analysis tab/menu item. | Analysis reads saved results and aggregates by Condition Group and Sample. |
 
 ### Condition Groups
@@ -113,13 +117,12 @@ Deleting a Sample removes the Sample from the project, including ROI, tracking r
 |----------|----------------|-------|
 | Condition Group/Sample list | Select the Condition Group and current Sample. | Right-click a Sample header or data row to rename, delete, or replace the Sample. |
 | Add Sample flow | Choose one or more AVI/MP4 files to create Samples. | Canceling the file picker creates nothing. Partial failures show a summary; successful imports are kept. |
-| Orientation/ROI preview | View the full frame, rotate/flip if needed, and draw the ROI. | ROI autosaves; there is no Save ROI button. |
-| Cropped ROI preview | Loop the cropped ROI and inspect draft tracking overlay. | Includes Play/Pause, frame slider, speed control, and Return to Full Preview. |
-| Advanced Tracking Settings | Adjust draft tracking parameters. | Editable only during cropped ROI preview. |
-| Tracking Result | Shows the current Sample's draft tracking/index result. | If settings changed, rerun Preview Cropped ROI to update. |
+| Video / setup preview | View the full frame with Cell Boundary, Measurement Cutoff, and optional Nucleus. | Cell Boundary is automatic. Researchers no longer draw a rectangle. |
+| Sample Results | Current General Movement, Optical Flow, Toward Nucleus, and Orientation values. | Toward Nucleus and Orientation require a nucleus. |
+| Metric Analysis | Inspect a persisted run: Template Tracking, Optical Flow, or F-actin Orientation. | Does not recompute science. Missing modes show a message in the preview area. |
 | Analysis | Read-only tables grouped by Condition Group and Sample. | Opening Analysis does not rerun tracking. |
 | Purge/Cleanup | Advanced project cleanup tools. | Use carefully. These actions are for maintenance and troubleshooting. |
-| Export ROI | Exports cropped ROI outputs to the `processed/` folder. | Useful when sharing processed data or keeping output files, but not required just to view draft Analysis. |
+| Export ROI | Exports the internal computational crop to the `processed/` folder. | Optional sharing/export step, not required to run metrics. |
 
 ---
 
@@ -158,7 +161,7 @@ An ActinTrackCV workspace is a project folder managed by the app. The app create
 | `previews/` | Optional generated preview files. | No. | Usually safe if you only want to remove cached previews, but app cleanup tools are preferred. | The app may regenerate some previews. |
 | `metadata/data_files.csv` | Main data index for Samples. | No. | No. | App-managed record of Sample data paths and statuses. |
 | `metadata/sample_registry.json` | Sample registry grouped by Condition Group. | No. | No. | App-managed list of Samples. |
-| `metadata/crop_metadata.json` | ROI and orientation metadata. | No. | No. | Deleting this removes ROI/orientation state. |
+| `metadata/crop_metadata.json` | Cell boundary, cutoff, nucleus, orientation, and internal crop metadata. | No. | No. | Deleting this removes scientific setup state. |
 | `metadata/draft_tracking/` | Draft tracking/index JSON files for Samples. | No. | Only through app cleanup or if intentionally clearing draft results. | Analysis can read these results. |
 | `metadata/f_actin_motion_index_summary.csv` | Workspace-level summary of finalized motion-index outputs, when present. | No. | Only if you understand it is generated summary data. | Draft Analysis can also read per-Sample draft tracking JSON. |
 | `metadata/workspace.json` | Workspace schema/version information. | No. | No. | Needed for current workspace compatibility. |
@@ -203,66 +206,70 @@ Right-click the Sample header or the indented data row to access:
 - Delete Sample
 - Replace Data
 
-Replace Data should be used carefully. It can invalidate previous ROI and tracking/index results because those results were measured from the previous data file.
+Replace Data should be used carefully. It can invalidate previous cell-boundary, cutoff, nucleus, and metrics results because those results were measured from the previous data file.
 
 Delete Sample removes project state and derived results. It does not delete the original external file on your computer. If the project has an internal copy, the app may ask whether to remove that internal project copy.
 
 ---
 
-## 7. ROI and Orientation
+## 7. Cell Boundary, Cutoff, and Nucleus
 
-The ROI is the rectangular region that the app uses for tracking/index measurement. For this project, the ROI should enclose the intended actin-rich region near the egg apparatus / nucleus-adjacent region, while excluding irrelevant areas when possible.
+Researchers do not draw a rectangle. The app detects a Cell Boundary automatically. A Measurement Cutoff is required. A Nucleus mark is optional.
+
+The internal computational crop (RectROI) is derived from the Cell Boundary for processing. It is not a researcher drawing tool.
 
 ### Why orientation matters
 
-Orientation affects how the frame is displayed and how the ROI is applied. Rotate or flip the full preview until the region is visually consistent with the analysis goal. Downward motion is interpreted internally as increasing y-coordinate in the image; this direction is fixed and is not shown as a GUI control.
+Orientation affects how the frame is displayed and how scientific annotations are applied. Rotate or flip the full preview until the region is visually consistent with the analysis goal. Downward motion is interpreted internally as increasing y-coordinate in the image; this direction is fixed and is not shown as a GUI control. Current product timing uses detected video FPS, not a global 30 s/frame default.
 
-### ROI autosave
+### Autosave
 
-ROI changes autosave. There is no Save ROI button. When you draw, move, or resize the ROI, the app stores the current ROI and orientation in project metadata.
+Cell Boundary, cutoff, and nucleus changes autosave. There is no Save ROI button.
 
-### How to verify the ROI
+### How to verify setup
 
-Before running Preview Cropped ROI:
+Before Run Metrics:
 
 - Confirm the data loaded correctly.
-- Confirm the ROI encloses the intended actin-rich region.
-- Avoid including too much background or unrelated structures.
-- Avoid making the ROI so small that tracking points cannot move.
-- Use the full preview to check orientation before relying on the crop.
+- Confirm the Cell Boundary follows the cell, including concavities.
+- Set the Measurement Cutoff through the intended analysis limit.
+- If you mark a nucleus, place it on the cutoff. If you later move the cutoff, the nucleus stays put and is shown as needing review until you re-select it.
+- General Movement and Optical Flow do not require a nucleus. Toward Nucleus and F-actin Orientation do.
 
-The Suggest ROI from F-actin Signal button is a helper. It can suggest a region with strong F-actin signal, but the researcher should visually verify the result.
+There is no Suggest ROI or Clear ROI researcher action.
 
 ---
 
-## 8. Cropped ROI Preview
+## 8. Metric Analysis
 
-Preview Cropped ROI switches from full-frame view into cropped ROI/tracking preview mode.
+Metric Analysis inspects the current persisted metrics run. It does not recompute tracking, optical flow, or orientation.
 
 In this mode, the app:
 
-- loads the current AVI/MP4 data
-- applies the current orientation
-- crops every frame to the ROI
-- runs draft tracking/index analysis
-- shows the cropped ROI preview
-- saves a draft tracking result for the current Sample
+- keeps Explorer, Sample Results, inspection controls, playback, Return to Full Preview, and Run Metrics
+- shows Template Tracking, Optical Flow, or F-actin Orientation overlays from the saved run
+- shows a centered message in the preview area when that mode has not been generated
+
+If setup changes after a run, results become outdated. Run Metrics again to create a new run.
+
+F-actin Orientation is a structural 0–90° nucleus-relative angle (0° radial, 90° tangential), not a motion direction. The compact legend stays a fixed UI size and does not scale with the cutoff crop.
 
 ### Controls
 
 | Control | Purpose |
 |---------|---------|
-| Play | Start looping the cropped ROI preview. |
+| Inspection mode | Choose Template Tracking, Optical Flow, or F-actin Orientation. |
+| Play | Start looping the analysis preview. |
 | Pause | Pause playback. |
-| Frame slider | Manually scrub through cropped ROI frames. |
+| Frame slider | Manually scrub through frames. |
 | Speed | Change playback speed. Supported options include 0.25x, 0.5x, 1x, 1.5x, and 2x. |
-| Return to Full Preview | Exit cropped preview mode and return to the full Sample preview. |
+| Return to Full Preview | Exit Metric Analysis and return to the full Sample preview. |
 
 Changing speed takes effect immediately when playback is active. Manual scrubbing remains available.
 
 ### Advanced Tracking Settings
 
-Advanced Tracking Settings appear in the right panel only during cropped ROI preview. They are not editable outside cropped ROI preview. If you change settings while previewing, rerun Preview Cropped ROI to update the result when prompted.
+Advanced Tracking Settings appear beside Metric Analysis. Changing scientific settings marks results outdated; click Run Metrics to compute a new run.
 
 ---
 
@@ -339,14 +346,14 @@ Missing results should be treated as missing data, not as zero movement. Analysi
 Use visual inspection and metadata checks together.
 
 - Confirm that the AVI/MP4 data loads correctly.
-- Confirm the ROI encloses the intended actin-rich region.
-- Confirm the cropped ROI preview visually matches the intended ROI.
-- Watch the looping preview and compare it to the Tracking Result values.
+- Confirm the Cell Boundary and Measurement Cutoff match the intended analysis region.
+- Confirm Metric Analysis overlays match visible F-actin.
+- Watch the looping preview and compare it to Sample Results values.
 - Check whether tracked movement aligns with visible F-actin movement.
 - Watch for low contrast, photobleaching, sample drift, out-of-plane movement, tangled cables, and overlapping filaments.
 - Compare multiple Samples per Condition Group.
 - Avoid drawing conclusions from one Sample alone.
-- Confirm time calibration before interpreting values as biological velocities.
+- Confirm video timing in Sample Results before interpreting µm/s as biological velocity. Encoded FPS is detected from the file; it is not a global 6 FPS or 30 s/frame default.
 
 ---
 
@@ -356,12 +363,12 @@ Use visual inspection and metadata checks together.
 |---------|--------------|---------------|
 | Data will not load | File is not AVI/MP4, the file is unreadable, or the path is missing. | Re-export as AVI/MP4 or choose a readable file. Confirm it opens outside the app. |
 | Add Sample creates nothing | The file picker was canceled or every selected file failed validation. | Select one or more valid AVI/MP4 files. Check the import summary for per-file errors. |
-| ROI appears wrong | Orientation changed, ROI was drawn on the wrong area, or the crop is too large/small. | Return to full preview, adjust orientation, redraw ROI, and visually verify. |
-| Cropped preview is blank | ROI may be outside the visible signal, too small, or on a low-signal region. | Redraw ROI around visible F-actin signal. |
-| Tracking result looks unrealistic | Low contrast, overlapping filaments, sample drift, or unsuitable tracking settings. | Visually inspect the preview, adjust tracking settings, and rerun Preview Cropped ROI. |
-| Analysis shows missing result | Preview Cropped ROI has not been run for that Sample, or the result was cleared. | Select the Sample and run Preview Cropped ROI. |
-| Sample was replaced and old analysis disappeared | Replace Data cleared derived state because the old results no longer matched the new file. | Redraw/verify ROI and rerun Preview Cropped ROI. |
-| Playback speed seems wrong | Speed selection may not match expectations or playback was paused. | Select the desired speed during cropped preview and press Play if paused. |
+| ROI appears wrong | Cell Boundary sensitivity or cutoff is misplaced. | Adjust Cell Boundary sensitivity and the Measurement Cutoff, then Run Metrics again. |
+| Cropped preview is blank | That inspection mode has no persisted result, or results are outdated. | Run Metrics. If Orientation is blank, set a nucleus first. |
+| Tracking result looks unrealistic | Low contrast, overlapping filaments, sample drift, or unsuitable tracking settings. | Visually inspect Metric Analysis, adjust tracking settings, and Run Metrics again. |
+| Analysis shows missing result | Run Metrics has not been completed for that Sample, or the result was cleared. | Select the Sample and click Run Metrics. |
+| Sample was replaced and old analysis disappeared | Replace Data cleared derived state because the old results no longer matched the new file. | Reconfirm Cell Boundary/cutoff and Run Metrics. |
+| Playback speed seems wrong | Speed selection may not match expectations or playback was paused. | Select the desired speed during Metric Analysis and press Play if paused. |
 | Return to Full Preview does not show the expected frame | The app returned to full preview using the current Sample state. | Select the Sample again or adjust the full-frame slider. |
 
 ---
@@ -375,15 +382,16 @@ Current limitations:
 - Image sequence import is postponed.
 - 3D/raw microscopy formats are postponed.
 - TIFF stacks and raw microscope formats should not be documented as active workflows.
-- The current motion index is a draft/comparison metric.
+- The current motion index / General Movement is a comparison metric.
 - Metrics should be interpreted with visual inspection and experimental context.
+- Analysis still shows some columns labeled Legacy; those values are still calculated. See `docs/science/LEGACY_METRICS_AUDIT.md`.
 
 Possible future work:
 
 - Image-sequence workflow.
 - 3D/raw microscopy support.
-- Additional or alternative motion metrics, such as optical flow, if implemented later.
-- More explicit calibration support for acquisition timing and microns-per-pixel.
+- Multi-frame structural orientation.
+- Researcher override UI for analysis timing (the provenance model already supports it).
 
 ---
 

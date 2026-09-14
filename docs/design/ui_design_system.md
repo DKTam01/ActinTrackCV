@@ -12,7 +12,7 @@ ActinTrackCV is a **digital scientific instrument** for F-actin fluorescence mic
 
 It should not feel like a generic desktop form application.
 
-Researchers spend most of their attention judging microscopy previews, ROI placement, and analysis readiness. The interface should serve that work quietly.
+Researchers spend most of their attention judging microscopy previews, Cell Boundary / cutoff placement, and analysis readiness. The interface should serve that work quietly.
 
 The microscope image is the visual hero.
 
@@ -108,31 +108,34 @@ Do not add a new permanent right inspector unless explicitly requested.
 
 ---
 
-### 6. ROI is a first-class canvas object
+### 6. Cell Boundary is the researcher region; RectROI is internal
 
-The ROI should increasingly behave like an object on the microscope image.
-
-Initial direction:
-
-- user interacts with ROI on the canvas
-- ROI preview remains visible near the image
-- ROI context menu exposes focused actions
-
-Initial ROI context menu:
+Researchers do not draw or confirm a rectangle. Setup is:
 
 ```text
-Clear ROI
-Suggest ROI
-Export ROI
+automatic Cell Boundary
+→ optional sensitivity
+→ required Measurement Cutoff
+→ optional Nucleus
+→ detected video timing
+→ Run Metrics
 ```
 
-Avoid speculative ROI actions such as duplicate, copy, paste, center, or templates unless explicitly requested.
+RectROI remains an internal computational crop derived from the Cell Boundary.
 
-Future direction:
+Canvas context menu (full preview):
 
-- rotated ROI on the image
-- downstream analysis still receives upright rectangular crops
-- whole-image rotation becomes deemphasized
+```text
+Set Nucleus
+Set Cutoff
+Export ROI
+Clear Nucleus
+Clear Cutoff
+```
+
+“Export ROI” still exports the internal computational crop to `processed/`. It is not a Draw/Confirm Crop step.
+
+Do not restore Draw Crop, Confirm Crop, Clear ROI, or Suggest ROI as researcher actions.
 
 ---
 
@@ -140,7 +143,7 @@ Future direction:
 
 The researcher should primarily think:
 
-> I am defining the ROI.
+> I am setting the Cell Boundary and Measurement Cutoff.
 
 not:
 

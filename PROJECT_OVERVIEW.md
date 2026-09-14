@@ -21,6 +21,24 @@ Meeting update, 2026-06-11:
 
 For a plain-language record of direction changes, see `PROJECT_CHANGES_NATURAL_LANGUAGE.md`.
 
+## Current Workbench product workflow (2026-09)
+
+This section describes the **current researcher-facing Workbench**. Historical notes below about drawn ROIs, Confirm Crop, and 30 s/frame as an unquestioned default are retained as project history; they are not the current UI.
+
+1. Import AVI/MP4 into a Condition Group / Sample.
+2. Automatic **Cell Boundary** (optional sensitivity).
+3. Required **Measurement Cutoff**.
+4. Optional **Nucleus** (required only for Toward Nucleus and F-actin Orientation).
+5. **Detected video timing** (`1 / observed FPS`, `timing_source=video_header`). Encoded FPS is not hard-coded to 6; 6 FPS is read from files when present.
+6. **Run Metrics** (template tracking + optical flow; orientation when a nucleus exists).
+7. **Metric Analysis** inspects that persisted run only (no recompute). Missing modes show an empty-state message in the preview area.
+
+RectROI remains an **internal** computational crop derived from the Cell Boundary. Researchers no longer draw, confirm, clear, or suggest a rectangle.
+
+Timing provenance still stores `video_header` / `lab_default` / `custom` / `legacy_default` so a manual override UI can return later. The product UI currently uses detected video timing only.
+
+Legacy Analysis columns labeled “Legacy …” are documented in `docs/science/LEGACY_METRICS_AUDIT.md` and were not redesigned in CLEAN1.
+
 The current data are a mixture of lossy `.avi`/`.mp4` exports, a small number of higher-value `.tif` stacks, and newly received Olympus `.oir` z-stack files. Until the tracking method is validated and calibration metadata are confirmed, the practical plan is:
 
 1. Establish the **2D velocity-tracking pipeline first** using the currently available `.avi`, `.mp4`, and usable 2D views/projections from `.tif` files.
