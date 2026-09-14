@@ -59,6 +59,27 @@ class PathHelpersTest(unittest.TestCase):
                 self.assertEqual(root, home / paths.WORKSPACE_DIR_NAME)
                 self.assertTrue(root.is_dir())
 
+    def test_require_filesystem_path_accepts_path_and_str(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(paths.require_filesystem_path(root), root)
+            self.assertEqual(
+                paths.require_filesystem_path(str(root)),
+                root,
+            )
+
+    def test_require_filesystem_path_rejects_magicmock(self) -> None:
+        from unittest.mock import MagicMock
+
+        mock_root = MagicMock()
+        with self.assertRaises(TypeError):
+            paths.require_filesystem_path(mock_root, label="workspace root")
+        polluted = Path("MagicMock") / "mock" / "5123189328"
+        with self.assertRaises(TypeError):
+            paths.require_filesystem_path(polluted, label="workspace root")
+
     def test_default_workspace_is_not_app_install_dir(self) -> None:
         import tempfile
 

@@ -74,5 +74,9 @@ outputs/
 local_context/
 /actintrackcv_macos_exports/
 
+# Accidental workspace created when a test passes MagicMock as a Path
+# (unittest.mock MagicMock.__fspath__ → MagicMock/mock/<id>).
+/MagicMock/
+
 # Local editor and development-assistant configuration
 .cursor/

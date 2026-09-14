@@ -8,7 +8,10 @@ macOS ``.app`` bundle, PyInstaller's ``_internal`` / ``_MEIPASS``) when frozen.
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
+
+_MOCK_FSPATH_RE = re.compile(r"(^|/)MagicMock/mock/\d+")
 
 #: Folder name used for the default user-writable workspace.
 WORKSPACE_DIR_NAME = "ActinTrackCV"
@@ -84,6 +87,24 @@ def default_source_root() -> Path:
     """
     docs = _documents_dir()
     return docs if docs is not None else Path.home()
+
+
+def require_filesystem_path(path: Path | str, *, label: str = "path") -> Path:
+    """Return a real filesystem path.
+
+    ``pathlib.Path`` accepts ``os.PathLike`` objects, and ``unittest.mock.MagicMock``
+    implements ``__fspath__`` as ``MagicMock/mock/<id>``. That turns mocked
+    workspace roots into accidental directories in the repository. Callers that
+    create or migrate workspace files must pass an actual ``Path`` or ``str``.
+    """
+    if not isinstance(path, (Path, str)):
+        raise TypeError(
+            f"{label} must be a filesystem path, got {type(path).__name__}"
+        )
+    resolved = path if isinstance(path, Path) else Path(path)
+    if _MOCK_FSPATH_RE.search(resolved.as_posix()):
+        raise TypeError(f"{label} looks like a mocked path: {resolved}")
+    return resolved
 
 
 def icon_path() -> Path | None:

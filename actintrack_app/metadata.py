@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from actintrack_app.paths import require_filesystem_path
 from actintrack_app.utils import CROP_METADATA_JSON, METADATA_DIR, SAMPLES_CSV, SAMPLES_CSV_COLUMNS
 
 
@@ -17,6 +18,7 @@ def _utc_now_iso() -> str:
 
 
 def create_empty_samples_csv(path: Path) -> None:
+    path = require_filesystem_path(path, label="samples csv path")
     df = pd.DataFrame(columns=SAMPLES_CSV_COLUMNS)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
@@ -233,6 +235,7 @@ def load_samples_csv(path: Path) -> pd.DataFrame:
     """Load data-file table; returns legacy v1 column names for compatibility."""
     from actintrack_app.schema_compat import load_data_files_as_v1_df
 
+    path = require_filesystem_path(path, label="samples csv path")
     root = path.parent.parent if path.parent.name == METADATA_DIR else path.parent
     if not path.exists() and not (root / METADATA_DIR / "data_files.csv").exists():
         create_empty_samples_csv(path)
@@ -243,7 +246,7 @@ def save_samples_csv(path_or_root: Path, df: pd.DataFrame) -> None:
     """Persist data-file table (v1 or v2 on disk per workspace schema)."""
     from actintrack_app.schema_compat import save_data_files
 
-    p = Path(path_or_root)
+    p = require_filesystem_path(path_or_root, label="workspace path")
     if p.suffix.lower() == ".csv":
         root = p.parent.parent if p.parent.name == METADATA_DIR else p.parent
     else:

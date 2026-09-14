@@ -19,7 +19,9 @@ from actintrack_app.utils import (
 
 def create_project_structure(root_dir: Path) -> None:
     """Create ActinTrackCV project folders under root_dir."""
-    root = Path(root_dir).resolve()
+    from actintrack_app.paths import require_filesystem_path
+
+    root = require_filesystem_path(root_dir, label="workspace root").resolve()
     root.mkdir(parents=True, exist_ok=True)
 
     for sub in (RAW_DIR, PROCESSED_DIR, METADATA_DIR, PREVIEWS_DIR):

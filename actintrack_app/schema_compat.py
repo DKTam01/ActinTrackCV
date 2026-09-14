@@ -407,8 +407,9 @@ def migrate_workspace_schema(root: Path) -> None:
     """Run legacy v1 repairs then upgrade to v2 when needed."""
     from actintrack_app.condition_group_manager import ensure_condition_groups_initialized
     from actintrack_app.metadata import _migrate_workspace_schema_v1
+    from actintrack_app.paths import require_filesystem_path
 
-    root = Path(root).resolve()
+    root = require_filesystem_path(root, label="workspace root").resolve()
     _migrate_workspace_schema_v1(root)
     migrate_workspace_to_v2(root)
     ensure_condition_groups_initialized(root)

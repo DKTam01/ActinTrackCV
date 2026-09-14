@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from actintrack_app.paths import require_filesystem_path
 from actintrack_app.utils import (
     CONDITION_GROUPS_JSON,
     METADATA_DIR,
@@ -64,7 +65,8 @@ class ConditionGroupRecord:
 
 
 def _condition_groups_path(root: Path) -> Path:
-    return Path(root).resolve() / METADATA_DIR / CONDITION_GROUPS_JSON
+    root = require_filesystem_path(root, label="workspace root").resolve()
+    return root / METADATA_DIR / CONDITION_GROUPS_JSON
 
 
 def new_condition_group_id() -> str:
@@ -539,7 +541,7 @@ def migrate_workspace_condition_groups_to_ids(root: Path) -> bool:
 
 def ensure_condition_groups_initialized(root: Path) -> list[ConditionGroupRecord]:
     """Ensure condition_groups.json exists and workspace uses stable IDs."""
-    root = Path(root).resolve()
+    root = require_filesystem_path(root, label="workspace root").resolve()
     path = _condition_groups_path(root)
     if not path.is_file():
         legacy_keys = discover_legacy_group_keys(root)
