@@ -1,4 +1,8 @@
-"""Preview canvas with draggable rectangular ROI."""
+"""Preview canvas with Cell Boundary, Measurement Cutoff, and Nucleus overlays.
+
+RectROI remains an internal computational crop. Researchers no longer draw or
+confirm a rectangle on this canvas.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +11,11 @@ from typing import TYPE_CHECKING, Optional
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import QLabel, QMenu
 
+from actintrack_app.metric_analysis_ui import ORIENTATION_LEGEND_TEXT
 from actintrack_app.orientation import RectROI
 
 if TYPE_CHECKING:
@@ -33,9 +38,6 @@ def numpy_bgr_to_qimage(frame: np.ndarray) -> QImage:
 
 class DragMode(Enum):
     NONE = auto()
-    DRAW = auto()
-    MOVE = auto()
-    RESIZE = auto()
     CUTOFF = auto()
 
 
@@ -53,9 +55,7 @@ def _roi_geometry_equal(
 
 
 class ImageCanvas(QLabel):
-    """Displays oriented frame with adjustable rectangular analysis ROI."""
-
-    HANDLE_RADIUS = 8
+    """Displays an oriented frame with scientific overlays in display coordinates."""
 
     def __init__(self, main_window: MainWindow, parent=None):
         super().__init__(parent)
@@ -70,19 +70,18 @@ class ImageCanvas(QLabel):
         self._offset_x = 0
         self._offset_y = 0
         self._drag_mode = DragMode.NONE
-        self._resize_handle: Optional[str] = None
         self._drag_start_img: Optional[tuple[int, int]] = None
-        self._roi_at_drag_start: Optional[RectROI] = None
         self._cell_mask_overlay: Optional[np.ndarray] = None
         self._validity_mask: Optional[np.ndarray] = None
         self._cutoff_y: Optional[float] = None
         self._nucleus_xy: Optional[tuple[float, float]] = None
+        self._nucleus_needs_review: bool = False
         self._show_domain_caption = True
-        self._crop_confirmed: bool = False
-        self._confirm_hit_rect: Optional[tuple[int, int, int, int]] = None
         self._interactive = True
         self._draw_roi = True
         self._show_computational_crop = False
+        self._empty_state_message: Optional[str] = None
+        self._orientation_legend_visible = False
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
 
@@ -94,17 +93,31 @@ class ImageCanvas(QLabel):
         self._validity_mask = None
         self._cutoff_y = None
         self._nucleus_xy = None
+        self._nucleus_needs_review = False
         self._show_domain_caption = True
-        self._confirm_hit_rect = None
+        self._empty_state_message = None
+        self._orientation_legend_visible = False
         self.clear()
 
     def set_interactive(self, enabled: bool) -> None:
         self._interactive = enabled
 
-    def set_crop_confirmed(self, confirmed: bool) -> None:
-        """Legacy no-op: Confirm Crop is no longer part of the researcher canvas."""
-        self._crop_confirmed = bool(confirmed)
-        self._confirm_hit_rect = None
+    def set_empty_state(self, message: str | None) -> None:
+        """Show a centered message in the preview area, or clear it."""
+        text = str(message or "").strip() or None
+        self._empty_state_message = text
+        if text:
+            self._frame = None
+            self._pixmap = None
+            self._orientation_legend_visible = False
+        self._redraw()
+
+    def set_orientation_legend_visible(self, visible: bool) -> None:
+        flagged = bool(visible)
+        if self._orientation_legend_visible == flagged:
+            return
+        self._orientation_legend_visible = flagged
+        self._redraw()
 
     def set_show_computational_crop(self, visible: bool) -> None:
         """Developer/debug overlay for the internal RectROI crop."""
@@ -121,19 +134,19 @@ class ImageCanvas(QLabel):
         keep_scientific_overlay: bool = False,
     ) -> None:
         """Display a read-only preview frame without ROI handles."""
+        self._empty_state_message = None
         self._frame = frame
         self._draw_roi = False
-        self._confirm_hit_rect = None
         if not keep_scientific_overlay:
             self.clear_scientific_overlay(redraw=False)
         self._update_pixmap()
 
     def set_frame(self, frame: np.ndarray, *, keep_roi: bool = False) -> None:
+        self._empty_state_message = None
         self._draw_roi = True
         self._frame = frame
         if not keep_roi:
             self._roi = None
-            self._confirm_hit_rect = None
         elif self._roi is not None:
             self._roi = self._roi.clamp(frame.shape[1], frame.shape[0])
         self._update_pixmap()
@@ -143,6 +156,7 @@ class ImageCanvas(QLabel):
         self._validity_mask = None
         self._cutoff_y = None
         self._nucleus_xy = None
+        self._nucleus_needs_review = False
         self._show_domain_caption = False
         if redraw and (self._pixmap is not None or self._frame is not None):
             self._update_pixmap()
@@ -154,11 +168,13 @@ class ImageCanvas(QLabel):
         cutoff_y: Optional[float] = None,
         nucleus_xy: Optional[tuple[float, float]] = None,
         show_domain_caption: bool = True,
+        nucleus_needs_review: bool = False,
     ) -> None:
         """Update scientific visualization. Mask is oriented-frame bool, or None."""
         self._validity_mask = validity_mask
         self._cutoff_y = None if cutoff_y is None else float(cutoff_y)
         self._nucleus_xy = None if nucleus_xy is None else (float(nucleus_xy[0]), float(nucleus_xy[1]))
+        self._nucleus_needs_review = bool(nucleus_needs_review and self._nucleus_xy is not None)
         self._show_domain_caption = bool(show_domain_caption)
         if self._pixmap is not None or self._frame is not None:
             self._update_pixmap()
@@ -188,6 +204,9 @@ class ImageCanvas(QLabel):
     def _update_pixmap(self) -> None:
         if self._frame is None:
             self._pixmap = None
+            if self._empty_state_message:
+                self._redraw()
+                return
             self.clear()
             return
         display = self._frame.copy()
@@ -266,22 +285,71 @@ class ImageCanvas(QLabel):
             "tr": (r.x1, r.y),
             "bl": (r.x, r.y1),
             "br": (r.x1, r.y1),
-            "tm": (r.x + r.width // 2, r.y),
-            "bm": (r.x + r.width // 2, r.y1),
-            "lm": (r.x, r.y + r.height // 2),
-            "rm": (r.x1, r.y + r.height // 2),
         }
-        hr = self.HANDLE_RADIUS
+        hr = 8
         for name, (ix, iy) in points.items():
             sx, sy = self._image_to_widget(ix, iy)
             if abs(wx - sx) <= hr and abs(wy - sy) <= hr:
                 return name
         return None
 
+    def _context_menu_targets_roi(self, pos) -> bool:
+        """True when the click is inside the internal computational crop."""
+        wx, wy = int(pos.x()), int(pos.y())
+        if self._handle_at(wx, wy):
+            return True
+        img_pt = self._widget_to_image(wx, wy)
+        if img_pt is None or self._roi is None:
+            return False
+        ix, iy = img_pt
+        r = self._roi
+        return bool(r.x <= ix < r.x1 and r.y <= iy < r.y1)
+
+    def _paint_empty_state(self, painter: QPainter, target) -> None:
+        message = self._empty_state_message or ""
+        painter.setPen(QColor(176, 182, 190))
+        painter.setFont(QFont("Helvetica", 13))
+        area = QRect(24, 24, max(1, target.width() - 48), max(1, target.height() - 48))
+        painter.drawText(
+            area,
+            int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+            message,
+        )
+
+    def _paint_orientation_legend(self, painter: QPainter, target) -> None:
+        """Fixed-size UI legend in widget coordinates; does not scale with crop."""
+        font = QFont("Helvetica", 10)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        text = ORIENTATION_LEGEND_TEXT
+        pad_x, pad_y = 8, 5
+        tw = metrics.horizontalAdvance(text)
+        th = metrics.height()
+        x = 10
+        y = max(8, target.height() - th - 2 * pad_y - 10)
+        bg = QRect(x, y, tw + 2 * pad_x, th + 2 * pad_y)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(18, 20, 24, 210)))
+        painter.drawRoundedRect(bg, 4, 4)
+        painter.setPen(QColor(214, 218, 224))
+        painter.drawText(
+            bg.adjusted(pad_x, 0, -pad_x, 0),
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            text,
+        )
+
     def _redraw(self) -> None:
+        target = self.size()
+        if self._empty_state_message:
+            composite = QPixmap(target)
+            composite.fill(QColor("#1e1e1e"))
+            painter = QPainter(composite)
+            self._paint_empty_state(painter, target)
+            painter.end()
+            self.setPixmap(composite)
+            return
         if self._pixmap is None:
             return
-        target = self.size()
         scaled = self._pixmap.scaled(
             target,
             Qt.AspectRatioMode.KeepAspectRatio,
@@ -296,7 +364,6 @@ class ImageCanvas(QLabel):
         painter = QPainter(composite)
         painter.drawPixmap(self._offset_x, self._offset_y, scaled)
 
-        self._confirm_hit_rect = None
         if (
             self._show_computational_crop
             and self._draw_roi
@@ -336,45 +403,31 @@ class ImageCanvas(QLabel):
             if self._nucleus_xy is not None:
                 nx, ny = self._nucleus_xy
                 sx, sy = self._image_to_widget(nx, ny)
-                painter.setPen(QPen(QColor(255, 90, 160), 2))
-                painter.setBrush(QBrush(QColor(255, 90, 160)))
-                painter.drawEllipse(sx - 5, sy - 5, 10, 10)
-                painter.drawLine(sx - 9, sy, sx + 9, sy)
-                painter.drawLine(sx, sy - 9, sx, sy + 9)
-                painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
-                painter.setPen(QColor(255, 120, 170))
-                painter.drawText(sx + 10, sy - 6, "Nucleus")
+                if self._nucleus_needs_review:
+                    painter.setPen(QPen(QColor(230, 180, 70), 2))
+                    painter.setBrush(QBrush(QColor(255, 90, 160, 70)))
+                    painter.drawEllipse(sx - 6, sy - 6, 12, 12)
+                    painter.setPen(QPen(QColor(230, 180, 70, 160), 1))
+                    painter.drawLine(sx - 9, sy, sx + 9, sy)
+                    painter.drawLine(sx, sy - 9, sx, sy + 9)
+                    painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                    painter.setPen(QColor(230, 190, 90))
+                    painter.drawText(sx + 10, sy - 6, "Nucleus — needs review")
+                else:
+                    painter.setPen(QPen(QColor(255, 90, 160), 2))
+                    painter.setBrush(QBrush(QColor(255, 90, 160)))
+                    painter.drawEllipse(sx - 5, sy - 5, 10, 10)
+                    painter.drawLine(sx - 9, sy, sx + 9, sy)
+                    painter.drawLine(sx, sy - 9, sx, sy + 9)
+                    painter.setFont(QFont("Helvetica", 9, QFont.Weight.Bold))
+                    painter.setPen(QColor(255, 120, 170))
+                    painter.drawText(sx + 10, sy - 6, "Nucleus")
+
+        if self._orientation_legend_visible:
+            self._paint_orientation_legend(painter, target)
 
         painter.end()
         self.setPixmap(composite)
-
-    def _confirm_hit(self, wx: int, wy: int) -> bool:
-        hit = self._confirm_hit_rect
-        if hit is None:
-            return False
-        bx, by, tw, th = hit
-        return bx <= wx <= bx + tw and by <= wy <= by + th
-
-    def _context_menu_targets_roi(self, pos) -> bool:
-        """True when the click is inside the ROI or on its outline/handles."""
-        wx, wy = int(pos.x()), int(pos.y())
-        if self._handle_at(wx, wy):
-            return True
-        img_pt = self._widget_to_image(wx, wy)
-        if img_pt is None or self._roi is None:
-            return False
-        ix, iy = img_pt
-        r = self._roi
-        if r.x <= ix < r.x1 and r.y <= iy < r.y1:
-            return True
-        x0, y0 = self._image_to_widget(r.x, r.y)
-        x1, y1 = self._image_to_widget(r.x1, r.y1)
-        margin = self.HANDLE_RADIUS
-        outer = (
-            x0 - margin <= wx <= x1 + margin and y0 - margin <= wy <= y1 + margin
-        )
-        inner = x0 + margin < wx < x1 - margin and y0 + margin < wy < y1 - margin
-        return bool(outer and not inner)
 
     def _on_context_menu(self, pos) -> None:
         mw = self._main_window
@@ -428,7 +481,7 @@ class ImageCanvas(QLabel):
         if img_pt is None:
             return
         ix, iy = img_pt
-        w_img, h_img = self._frame.shape[1], self._frame.shape[0]
+        h_img = self._frame.shape[0]
 
         if self._drag_mode == DragMode.CUTOFF:
             y = max(0, min(int(iy), h_img - 1))
@@ -440,6 +493,5 @@ class ImageCanvas(QLabel):
     def mouseReleaseEvent(self, event):
         cutoff_drag = self._drag_mode == DragMode.CUTOFF
         self._drag_mode = DragMode.NONE
-        self._resize_handle = None
         if cutoff_drag:
             self._main_window.on_cutoff_edit_finished()

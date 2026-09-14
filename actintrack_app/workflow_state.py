@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 
 ANNOTATION_FIELD_CROP_CONFIRMED = "crop_confirmed"
+NUCLEUS_CUTOFF_ALIGNMENT_TOLERANCE_PX = 0.5
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,21 @@ class WorkflowSnapshot:
                 return "Ready — click Run Metrics."
             return "Ready — click Run Metrics (nucleus optional for Toward Nucleus / Orientation)."
         return "Metrics current. Open Metric Analysis for detail, or switch samples."
+
+
+def nucleus_requires_alignment_review(
+    nucleus: Any,
+    cutoff: Any,
+    *,
+    tolerance_px: float = NUCLEUS_CUTOFF_ALIGNMENT_TOLERANCE_PX,
+) -> bool:
+    """True when a persisted nucleus is off the current cutoff (UI status only)."""
+    if nucleus is None or cutoff is None:
+        return False
+    try:
+        return abs(float(nucleus.y) - float(cutoff.y)) > float(tolerance_px)
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def crop_confirmed_from_annotation(ann: dict[str, Any] | None) -> bool:

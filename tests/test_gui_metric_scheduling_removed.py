@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from actintrack_app.gui import MainWindow
@@ -142,7 +143,7 @@ class ExplicitRunMetricsStillWorksTests(unittest.TestCase):
 
     def test_autosave_does_not_schedule_metrics(self) -> None:
         window = MainWindow.__new__(MainWindow)
-        window._project_root = MagicMock()
+        window._project_root = Path("/tmp/actintrackcv-test-ws")
         window._current_sample = {"sample_id": "S1", "processing_status": "roi_marked"}
         window.canvas = MagicMock()
         window.canvas.rect_roi.return_value = RectROI(5, 6, 20, 24)

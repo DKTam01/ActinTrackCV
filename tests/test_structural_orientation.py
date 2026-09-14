@@ -160,6 +160,12 @@ class StructuralOrientationScientificTests(unittest.TestCase):
         self.assertFalse(
             np.array_equal(overlay, cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR))
         )
+        # Legend text is a fixed-size UI overlay, not baked into the scientific image.
+        src = Path(__file__).resolve().parents[1].joinpath(
+            "actintrack_app/structural_orientation.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("F-actin orientation 0-90 deg", src)
+        self.assertNotIn("0 radial   90 tangential", src)
 
 
 class StructuralOrientationPathTests(unittest.TestCase):

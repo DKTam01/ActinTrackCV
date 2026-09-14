@@ -290,26 +290,6 @@ def render_structural_orientation_overlay(
                 int(round(value)) for value in result.nucleus_reference_xy_px
             )
             cv2.line(output, nucleus, center, (120, 80, 120), 1, cv2.LINE_AA)
-    cv2.putText(
-        output,
-        "F-actin orientation 0-90 deg (not motion)",
-        (8, 18),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (220, 220, 220),
-        1,
-        cv2.LINE_AA,
-    )
-    cv2.putText(
-        output,
-        "0 radial   90 tangential",
-        (8, 36),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (180, 200, 220),
-        1,
-        cv2.LINE_AA,
-    )
     return output
 
 

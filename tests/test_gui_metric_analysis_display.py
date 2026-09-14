@@ -162,7 +162,7 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
         analyze.assert_not_called()
         window._enter_cropped_preview_mode.assert_not_called()
         window._show_metric_analysis_placeholder.assert_called_once_with(
-            "Run Metrics to generate the analysis preview."
+            "Tracking results have not been generated for this sample.",
         )
 
     def test_display_without_metrics_shows_placeholder(self) -> None:
@@ -179,7 +179,7 @@ class MetricAnalysisDisplayOnlyTests(unittest.TestCase):
 
         window._enter_cropped_preview_mode.assert_not_called()
         window._show_metric_analysis_placeholder.assert_called_once_with(
-            "Run Metrics to generate the analysis preview."
+            "Tracking results have not been generated for this sample.",
         )
 
     def test_enter_cropped_preview_mode_does_not_persist_results(self) -> None:

@@ -1,4 +1,9 @@
-"""PyQt6 GUI — Arabidopsis reproductive-cell F-actin preprocessing and ROI annotation."""
+"""PyQt6 Workbench — Arabidopsis reproductive-cell F-actin tracking.
+
+Researchers set Cell Boundary, Measurement Cutoff, and optional Nucleus, then
+Run Metrics. RectROI is an internal computational crop, not a product drawing
+tool.
+"""
 
 from __future__ import annotations
 
@@ -320,12 +325,15 @@ from actintrack_app.timing_provenance import (
     timing_from_annotation,
     timing_from_result_payload,
 )
+from actintrack_app.metric_analysis_ui import (
+    NUCLEUS_ALIGNMENT_REVIEW_HINT,
+    empty_state_message_for_mode,
+)
 from actintrack_app.workflow_state import (
-    ANNOTATION_FIELD_CROP_CONFIRMED,
     build_workflow_snapshot,
-    crop_confirmed_from_annotation,
     format_delete_samples_confirmation,
     format_sample_results_summary,
+    nucleus_requires_alignment_review,
 )
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
@@ -557,6 +565,7 @@ class MainWindow(QMainWindow):
         self._cropped_metric_mode = "template"
         self._metric_analysis_view_active = False
         self._metric_analysis_session: MetricAnalysisInspectionSession | None = None
+        self._metric_analysis_block_message: str | None = None
         self._nucleus_cutoff_alignment_review = False
         self._optical_flow_results_by_sample: dict[str, OpticalFlowResult] = {}
         self._optical_flow_stale_by_sample: dict[str, bool] = {}
@@ -696,8 +705,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(msg, 8000)
 
     def _require_project_root(self) -> Path | None:
-        if self._project_root is not None:
-            return self._project_root
+        root = self._project_root
+        if isinstance(root, Path):
+            return root
+        if root is not None:
+            return None
         gui_dialogs.warning(
             self,
             "Workspace Required",
@@ -1010,7 +1022,8 @@ class MainWindow(QMainWindow):
                 self._reload_metric_analysis_view_for_current_sample()
             elif snap.metrics_stale:
                 self._show_metric_analysis_placeholder(
-                    "Results are outdated — run Metrics again"
+                    "Results are outdated — run Metrics again",
+                    sticky=True,
                 )
 
     def _set_tracking_settings_editable(self, editable: bool) -> None:
@@ -1390,7 +1403,7 @@ class MainWindow(QMainWindow):
         self._update_optical_flow_qc_readout()
         sid = self._current_sample_id
         if sid is None:
-            self._show_metric_analysis_placeholder("Select a sample first.")
+            self._show_metric_analysis_placeholder("Select a sample first.", sticky=True)
             return
         check = self._validate_current_roi()
         if not check.ok or check.roi_oriented is None:
@@ -1398,7 +1411,7 @@ class MainWindow(QMainWindow):
                 "Metric Analysis is unavailable because this Sample "
                 "does not have a saved ROI."
             )
-            self._show_metric_analysis_placeholder(message)
+            self._show_metric_analysis_placeholder(message, sticky=True)
             return
         analysis = self._resolve_metric_preview_analysis_for_sample(sid)
         if analysis is not None:
@@ -1407,7 +1420,9 @@ class MainWindow(QMainWindow):
                 self._preview_play()
             return
         self._show_metric_analysis_placeholder(
-            "Run Metrics to generate the analysis preview."
+            empty_state_message_for_mode(
+                self.__dict__.get("_cropped_metric_mode") or "template"
+            ),
         )
 
     def _set_active_sample(self, sample: Optional[dict[str, Any]]) -> None:
@@ -2561,7 +2576,6 @@ class MainWindow(QMainWindow):
         return build_workflow_snapshot(
             has_sample=has_sample,
             has_crop=has_crop,
-            crop_confirmed=bool(self.__dict__.get("_crop_confirmed", False)),
             has_cell_region=self.__dict__.get("_cell_region") is not None,
             has_nucleus=self.__dict__.get("_nucleus_reference") is not None,
             has_cutoff=self.__dict__.get("_cutoff_boundary") is not None,
@@ -2594,10 +2608,6 @@ class MainWindow(QMainWindow):
             )
         if self.__dict__.get("slider_cell_boundary") is not None:
             self.slider_cell_boundary.setEnabled(snap.has_sample)
-        if self.__dict__.get("canvas") is not None and hasattr(
-            self.canvas, "set_crop_confirmed"
-        ):
-            self.canvas.set_crop_confirmed(snap.crop_confirmed and snap.has_crop)
         if self.__dict__.get("btn_run_metrics") is not None:
             reason = snap.run_metrics_block_reason()
             self.btn_run_metrics.setEnabled(snap.ready_to_run)
@@ -2731,7 +2741,7 @@ class MainWindow(QMainWindow):
 
     def _autosave_roi(self, *, quiet: bool = True) -> bool:
         """Persist the current annotation document, with or without RectROI."""
-        if self._project_root is None or self._current_sample is None:
+        if not isinstance(self._project_root, Path) or self._current_sample is None:
             return False
         has_roi = self.canvas.rect_roi() is not None
         status = STATUS_ROI_MARKED if has_roi else STATUS_UNANNOTATED
@@ -2939,6 +2949,9 @@ class MainWindow(QMainWindow):
                 cutoff_y=cutoff_y,
                 nucleus_xy=nucleus_xy,
                 show_domain_caption=True,
+                nucleus_needs_review=bool(
+                    self.__dict__.get("_nucleus_cutoff_alignment_review")
+                ),
             )
 
     def _set_scientific_placement_mode(self, mode: str | None) -> None:
@@ -2969,9 +2982,7 @@ class MainWindow(QMainWindow):
         if label is None or not hasattr(label, "setText"):
             return
         if bool(self.__dict__.get("_nucleus_cutoff_alignment_review")):
-            label.setText(
-                "Cutoff moved — review nucleus alignment. The nucleus was not changed."
-            )
+            label.setText(NUCLEUS_ALIGNMENT_REVIEW_HINT)
             return
         label.setText(
             "Place the Measurement Cutoff through the nucleus, "
@@ -2981,12 +2992,9 @@ class MainWindow(QMainWindow):
     def _mark_nucleus_cutoff_alignment_review(self) -> None:
         nucleus = self.__dict__.get("_nucleus_reference")
         cutoff = self.__dict__.get("_cutoff_boundary")
-        if nucleus is None or cutoff is None:
-            self.__dict__["_nucleus_cutoff_alignment_review"] = False
-        else:
-            self.__dict__["_nucleus_cutoff_alignment_review"] = (
-                abs(float(nucleus.y) - float(cutoff.y)) > 0.5
-            )
+        self.__dict__["_nucleus_cutoff_alignment_review"] = (
+            nucleus_requires_alignment_review(nucleus, cutoff)
+        )
         self._refresh_nucleus_cutoff_alignment_hint()
 
     def on_nucleus_placed(self, x: float, y: float) -> None:
@@ -3381,25 +3389,31 @@ class MainWindow(QMainWindow):
         )
         return True
 
-    def _show_metric_analysis_placeholder(self, message: str) -> None:
+    def _show_metric_analysis_placeholder(
+        self, message: str, *, sticky: bool = False
+    ) -> None:
         self._metric_analysis_view_active = True
         self._preview_pause()
         self._cropped_preview = None
         self.__dict__["_metric_analysis_session"] = None
         self.__dict__["_metric_analysis_orientation"] = None
+        self.__dict__["_metric_analysis_block_message"] = (
+            str(message) if sticky else None
+        )
         self._preview_frame_index = 0
         self._center_stack.setCurrentIndex(0)
         self._preview_mode = "cropped_tracking"
         self.canvas.set_interactive(False)
-        self.canvas.clear_preview()
-        self._set_preview_controls_visible(False)
+        self.canvas.set_empty_state(message)
+        self.canvas.set_orientation_legend_visible(False)
+        self._set_preview_controls_visible(True)
         self._set_metric_mode_widgets_visible(True)
         self._sync_metric_mode_combo()
         self._set_tracking_settings_editable(True)
         self._show_cropped_metric_settings_view()
         self._update_optical_flow_qc_readout()
         self.update_tracking_result_panel()
-        self._set_preview_mode_banner(f"{_METRIC_ANALYSIS_VIEW_LABEL} — {message}")
+        self._set_preview_mode_banner(_METRIC_ANALYSIS_VIEW_LABEL)
         if hasattr(self, "lbl_sample_frame"):
             self.lbl_sample_frame.setText("—")
         self.lbl_frame_info.setText("—")
@@ -3420,6 +3434,7 @@ class MainWindow(QMainWindow):
         self._preview_mode = "cropped_tracking"
         self._bind_metric_analysis_inspection(analysis)
         self._cropped_preview = analysis
+        self.__dict__["_metric_analysis_block_message"] = None
         self._preview_frame_index = 0
         self.canvas.set_interactive(False)
         self._set_preview_controls_visible(True)
@@ -3536,8 +3551,51 @@ class MainWindow(QMainWindow):
                 return None
         return None
 
+    def _inspection_mode_has_result(self, mode: str) -> bool:
+        """True when the selected Metric Analysis mode has a persisted current result."""
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if mode == "orientation":
+            orientation = self.__dict__.get("_metric_analysis_orientation")
+            if orientation is None and sid:
+                orientation = load_latest_structural_orientation_result(
+                    sid, project_root=self.__dict__.get("_project_root")
+                )
+                self.__dict__["_metric_analysis_orientation"] = orientation
+            return bool(
+                orientation is not None
+                and getattr(orientation, "has_valid_result", False)
+            )
+        if mode == "optical_flow":
+            if sid and self._optical_flow_stale_by_sample.get(sid):
+                return False
+            view = (
+                self.load_latest_optical_flow_result_for_sample(sid) if sid else None
+            )
+            return view is not None and str(getattr(view, "status", "")) == "success"
+        analysis = self.__dict__.get("_cropped_preview")
+        if analysis is None:
+            return False
+        return int(getattr(analysis, "num_tracks_with_valid_steps", 0) or 0) > 0
+
+    def _show_metric_analysis_mode_empty_state(self, mode: str) -> None:
+        block = self.__dict__.get("_metric_analysis_block_message")
+        message = str(block) if block else empty_state_message_for_mode(mode)
+        canvas = self.__dict__.get("canvas")
+        if canvas is not None and hasattr(canvas, "set_empty_state"):
+            canvas.set_empty_state(message)
+            setter = getattr(canvas, "set_orientation_legend_visible", None)
+            if callable(setter):
+                setter(False)
+
     def _show_cropped_preview_frame(self, index: int) -> None:
+        mode = str(self._cropped_metric_mode or "template")
+        if self.__dict__.get("_metric_analysis_block_message") or (
+            not self._inspection_mode_has_result(mode)
+        ):
+            self._show_metric_analysis_mode_empty_state(mode)
+            return
         if self._cropped_preview is None:
+            self._show_metric_analysis_mode_empty_state(mode)
             return
         count = len(self._cropped_preview.frames)
         index = max(0, min(index, count - 1))
@@ -3604,6 +3662,9 @@ class MainWindow(QMainWindow):
                 frame = crop_frame_to_view_bounds(frame, bounds)
         self._preview_frame_index = index
         self.canvas.set_preview_frame(frame)
+        legend = getattr(self.canvas, "set_orientation_legend_visible", None)
+        if callable(legend):
+            legend(mode == "orientation")
         self.slider_frame.blockSignals(True)
         self.spin_frame.blockSignals(True)
         self.slider_sample_frame.blockSignals(True)
@@ -3729,7 +3790,6 @@ class MainWindow(QMainWindow):
             and self._cutoff_boundary is None,
             cell_region=self._cell_region,
             timing=self.__dict__.get("_timing"),
-            crop_confirmed=bool(self.__dict__.get("_crop_confirmed", False)),
             cell_boundary_sensitivity=clamp_cell_boundary_sensitivity(
                 self.__dict__.get("_cell_boundary_sensitivity")
             ),
@@ -3737,16 +3797,6 @@ class MainWindow(QMainWindow):
                 self.__dict__.get("_cell_boundary_sensitivity")
             ),
         )
-
-    def _on_save_annotation(self) -> None:
-        if self._project_root is None or self._current_sample is None:
-            QMessageBox.warning(self, "Save ROI", "Select a sample first.")
-            return
-        if not self._autosave_roi(quiet=False):
-            return
-        sid = str(self._current_sample["sample_id"])
-        self._refresh_sample_list()
-        self._status(f"Saved ROI for {sid}")
 
     def _process_kwargs_from_sample(self) -> dict[str, Any]:
         assert self._current_sample is not None
@@ -5136,7 +5186,6 @@ class MainWindow(QMainWindow):
         )
         self._cell_region = cell_region_from_sample_annotation(ann)
         self.__dict__["_timing"] = timing_from_annotation(ann)
-        self.__dict__["_crop_confirmed"] = crop_confirmed_from_annotation(ann)
         saved_sensitivity = cell_boundary_sensitivity_from_annotation(ann)
         self.__dict__["_cell_boundary_sensitivity"] = clamp_cell_boundary_sensitivity(
             saved_sensitivity
@@ -5178,10 +5227,6 @@ class MainWindow(QMainWindow):
         if had_saved_cell:
             # Do not recompute a persisted CellRegion on reopen.
             pass
-        if self.__dict__.get("canvas") is not None and hasattr(
-            self.canvas, "set_crop_confirmed"
-        ):
-            self.canvas.set_crop_confirmed(True)
         self._sync_scientific_overlay()
         self._update_metric_freshness_label()
         if self.__dict__.get("lbl_timing_detected") is not None:
@@ -5321,7 +5366,6 @@ class MainWindow(QMainWindow):
                 self._cutoff_boundary = suggested
                 self.__dict__["_cutoff_intentionally_cleared"] = False
                 generated_cutoff = True
-        self.__dict__["_crop_confirmed"] = self._cell_region is not None
         if generated_cell:
             self._loaded_annotation_source = "auto_suggested"
             self._roi_user_adjusted = False
@@ -5387,7 +5431,6 @@ class MainWindow(QMainWindow):
         self._cell_region = None
         self._scientific_placement_mode = None
         self.__dict__["_timing"] = None
-        self.__dict__["_crop_confirmed"] = False
         self.__dict__["_cell_boundary_sensitivity"] = CELL_BOUNDARY_SENSITIVITY_DEFAULT
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
@@ -5535,7 +5578,7 @@ class MainWindow(QMainWindow):
         if inside_roi:
             export_roi = menu.addAction("Export ROI")
             export_roi.setToolTip(
-                "Crop and export processed outputs to the processed/ folder "
+                "Export processed outputs to the processed/ folder "
                 "using the auto-generated export name."
             )
             export_roi.triggered.connect(self._on_process_sample)
@@ -5722,10 +5765,9 @@ class MainWindow(QMainWindow):
             )
             if is_clicked_selected and len(selected_ids) > 1:
                 group_label = group
-                if self._project_root is not None:
-                    group_label = get_condition_group_name(
-                        self._project_root, group
-                    ) or group
+                root = self._project_root
+                if isinstance(root, Path):
+                    group_label = get_condition_group_name(root, group) or group
                 menu.addAction(
                     f"Delete {len(selected_ids)} Samples",
                     lambda ids=tuple(selected_ids), gname=group_label: (
