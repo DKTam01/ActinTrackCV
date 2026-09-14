@@ -35,9 +35,16 @@ This section describes the **current researcher-facing Workbench**. Historical n
 
 RectROI remains an **internal** computational crop derived from the Cell Boundary. Researchers no longer draw, confirm, clear, or suggest a rectangle.
 
+Workbench coordination (CLEAN2):
+
+- `workflow_state.snapshot_from_live_inputs` is the canonical Run Metrics / Metric Analysis readiness path.
+- `sample_result_state` owns freshness flags, scientific-edit invalidation policy, and metric status classification.
+- Metric Analysis binds to one persisted `analysis_run_id` via `metric_analysis_ui.draft_analysis_run_id`; stale results cannot be inspected.
+- `crop_confirmed` is not used for product gating. Hidden OF/orientation overlay checkboxes were removed; inspection mode always shows the matching overlay.
+
 Timing provenance still stores `video_header` / `lab_default` / `custom` / `legacy_default` so a manual override UI can return later. The product UI currently uses detected video timing only.
 
-Legacy Analysis columns labeled “Legacy …” are documented in `docs/science/LEGACY_METRICS_AUDIT.md` and were not redesigned in CLEAN1.
+Primary Analysis columns are documented in `docs/science/LEGACY_METRICS_AUDIT.md` (ANALYSIS1). Historical image-direction metrics are optional.
 
 The current data are a mixture of lossy `.avi`/`.mp4` exports, a small number of higher-value `.tif` stacks, and newly received Olympus `.oir` z-stack files. Until the tracking method is validated and calibration metadata are confirmed, the practical plan is:
 
