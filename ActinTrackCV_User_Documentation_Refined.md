@@ -52,7 +52,7 @@ On macOS or Linux, `./run_app.sh` is also available. On Windows, use `run_app.ba
 | Nucleus | Optional center mark on the cutoff. Needed for Toward Nucleus and F-actin Orientation. Not required for General Movement or Optical Flow. |
 | Metric Analysis | Inspection of a persisted metrics run (Template Tracking, Optical Flow, or F-actin Orientation). It does not recompute science. |
 | Sample Results | Concise current metrics beside the video: General Movement, Optical Flow, Toward Nucleus, Orientation, tracks, and timing. |
-| Analysis | Read-only tables that summarize tracking/index results by Sample and Condition Group. Some columns are still labeled Legacy; those metrics remain calculated. |
+| Analysis | Read-only tables that summarize current measurements by Sample and Condition Group: General Movement, Optical Flow, Toward Nucleus, and F-actin Orientation. Historical image-direction metrics are optional. |
 | Workspace/project files | The folders and metadata files ActinTrackCV uses to remember Samples, scientific annotations, tracking results, and outputs. |
 
 ---
@@ -288,12 +288,11 @@ The current draft method uses bright-point/template tracking:
 
 | Output | General meaning |
 |--------|-----------------|
-| Downward Velocity | Average positive movement in the internal downward direction, measured in microns per second. |
+| Downward Velocity | Historical image-Y metric: average positive movement toward the bottom of the image (µm/s). Not the same as Toward Nucleus. Optional in Analysis. |
 | General Movement | Average overall displacement speed, regardless of direction. |
-| Motion Index | Current comparison metric; in the active Analysis code it is based on downward velocity. |
-| Valid Tracks | Number of starting points that produced usable tracking steps. |
-| Valid Steps | Total number of frame-to-frame movement steps used in the result. |
-| Confidence | Template matching confidence threshold used by the tracking settings. |
+| Motion Index | Internal stored alias of General Movement on current runs. Analysis does not show it as a separate column. |
+| Toward Nucleus | Signed movement toward the annotated nucleus (µm/s). Missing when no nucleus is set. |
+| F-actin Orientation | Structural angle relative to the nucleus (0° radial · 90° tangential). Not a motion direction. |
 
 Use these results as draft comparison metrics. They may not always match visual intuition, especially when contrast is low, cables overlap, the sample drifts, or structures move out of plane.
 
@@ -324,18 +323,23 @@ The Analysis view includes:
 
 | Table | What it shows |
 |-------|---------------|
-| Condition Group Summary | Number of Samples, Samples with results, average movement metrics, and standard deviations. |
-| Sample Details | Per-Sample status, tracking/index metrics, valid tracks, valid steps, confidence, and update time. |
-| Condition Group Comparison | Condition Group-level ranking/comparison using available Sample results. |
+| Condition Group Summary | Per-group means for General Movement, Optical Flow, Toward Nucleus, and F-actin Orientation. Each metric shows `n` = number of samples that have that value. |
+| Sample Details | Per-Sample current measurements. Missing nucleus-dependent values appear as `—`, not zero. |
+| Condition Group Comparison | Ranked group comparison using the same current metrics. |
+| Historical image-direction metrics | Optional. Image-Y downward / OF net-Y values. Hidden until you check **Show historical image-direction metrics**. |
+
+F-actin Orientation is structural (0° radial · 90° tangential), not a motion angle. Toward Nucleus and Orientation require a nucleus annotation. General Movement and Optical Flow do not.
+
+Group values are means of the samples that have that metric. A group can have `n=5` for General Movement and `n=4` for Toward Nucleus. Analysis does not invent missing values.
 
 Example organization:
 
-| Condition Group | Sample | Result status | Downward Velocity | General Movement |
-|-------|--------|---------------|-------------------|------------------|
+| Condition Group | Sample | Result status | General Movement | Toward Nucleus |
+|-------|--------|---------------|------------------|----------------|
 | `1_WT_218` | Sample 1 | Result available | numeric value | numeric value |
-| `1_WT_218` | Sample 2 | Missing result | - | - |
+| `1_WT_218` | Sample 2 | Result available, no nucleus | numeric value | — |
 | `3_Mutant_515` | Sample 1 | Result available | numeric value | numeric value |
-| `3_Mutant_515` | Sample 2 | Result available | numeric value | numeric value |
+| `3_Mutant_515` | Sample 2 | Missing result | — | — |
 
 Missing results should be treated as missing data, not as zero movement. Analysis helps compare trends, but it should not be interpreted as final biological proof by itself.
 
@@ -384,7 +388,7 @@ Current limitations:
 - TIFF stacks and raw microscope formats should not be documented as active workflows.
 - The current motion index / General Movement is a comparison metric.
 - Metrics should be interpreted with visual inspection and experimental context.
-- Analysis still shows some columns labeled Legacy; those values are still calculated. See `docs/science/LEGACY_METRICS_AUDIT.md`.
+- Analysis still calculates historical image-Y metrics; they are optional in the Analysis view, not primary columns. See `docs/science/LEGACY_METRICS_AUDIT.md`.
 
 Possible future work:
 

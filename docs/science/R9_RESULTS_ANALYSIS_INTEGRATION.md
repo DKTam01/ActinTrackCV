@@ -15,7 +15,8 @@ Displayed in this order when available:
 4. **Optical Flow General Movement** — dense Farnebäck magnitude over the
    scientific validity domain when a mask is present
 
-Legacy image-Y / downward metrics remain available and labeled **Legacy**.
+Legacy image-Y / downward metrics remain calculated. In the Workbench Analysis
+view they are optional historical columns, not primary comparison metrics.
 They do not dominate the primary panel or Analysis comparison columns.
 
 ## Hierarchy

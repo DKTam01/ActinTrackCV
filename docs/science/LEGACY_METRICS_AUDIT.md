@@ -88,3 +88,18 @@ All of the following are still computed by `optical_flow_motion_index.py` on eve
 - Did not change Shiny summaries.
 
 Recommended next phase (not CLEAN1): Analysis-screen redesign should present **General Movement** and **Toward Nucleus** as primary tracking numbers, keep downward/net-Y as explicitly named **image-Y** diagnostics if the lab still wants them, and drop or relabel the Motion Index alias after confirming no external reader depends on the “Legacy Motion Index” heading.
+
+## ANALYSIS1 UI decision (2026-09)
+
+The Workbench Analysis view no longer shows Legacy Motion Index as a column. The persisted field `primary_velocity_index_um_per_s` / `SampleMetrics.motion_index` is still loaded and aggregated. On current runs it remains an alias of General Movement.
+
+Legacy Downward and the related OF image-Y metrics remain calculated and persisted. They are not primary Analysis columns. Researchers can open **Show historical image-direction metrics** to see:
+
+- Tracking Downward (µm/s)
+- Tracking Downward Std Dev (µm/s)
+- OF Downward Motion (µm/s)
+- OF Net Y Velocity (µm/s)
+- OF Directionality Ratio
+
+Exports and Shiny were not changed in ANALYSIS1.
+
