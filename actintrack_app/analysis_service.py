@@ -88,6 +88,7 @@ class BreedSummaryRow:
     avg_toward_nucleus_velocity: Optional[float] = None
     avg_orientation_median_deg: Optional[float] = None
     samples_with_orientation_results: int = 0
+    samples_with_toward_nucleus_results: int = 0
 
 
 @dataclass(frozen=True)
@@ -513,6 +514,7 @@ def compute_breed_analysis(
         avg_toward_nucleus_velocity=_mean(toward_nucleus),
         avg_orientation_median_deg=_mean(orientation_medians),
         samples_with_orientation_results=len(orientation_valid),
+        samples_with_toward_nucleus_results=len(toward_nucleus),
     )
 
 

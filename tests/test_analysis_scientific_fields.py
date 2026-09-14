@@ -116,6 +116,83 @@ class AnalysisScientificFieldsTests(unittest.TestCase):
         self.assertEqual(merged.orientation_median_deg, 45.0)
         self.assertEqual(merged.orientation_measurement_count, 9)
 
+    def test_current_payload_motion_index_aliases_general_movement(self) -> None:
+        path = draft_tracking_path(self.root, "ALIAS_1")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "num_tracks_with_valid_steps": 1,
+                    "total_valid_steps": 2,
+                    "absolute_velocity_index_um_per_s": 0.44,
+                    "general_movement_index_um_per_s": 0.44,
+                    "primary_velocity_index_um_per_s": 0.44,
+                    "downward_velocity_index_um_per_s": 0.11,
+                }
+            ),
+            encoding="utf-8",
+        )
+        metrics = load_tracking_metrics_for_sample(self.root, "ALIAS_1")
+        self.assertEqual(metrics.general_movement, 0.44)
+        self.assertEqual(metrics.motion_index, 0.44)
+        self.assertEqual(metrics.downward_velocity, 0.11)
+
+    def test_group_means_use_available_values_only(self) -> None:
+        from actintrack_app.analysis_service import (
+            SampleAnalysisRow,
+            SampleMetrics,
+            compute_breed_analysis,
+        )
+
+        with_nucleus = SampleAnalysisRow(
+            breed="Control",
+            sample_label="Sample 1",
+            batch_name="a",
+            status="ok",
+            data_status="ok",
+            metrics=SampleMetrics(
+                general_movement=0.10,
+                downward_velocity=0.04,
+                motion_index=0.10,
+                of_general_movement=0.20,
+                toward_nucleus_velocity=0.30,
+                orientation_median_deg=40.0,
+                has_valid_result=True,
+                of_has_valid_result=True,
+                orientation_has_valid_result=True,
+            ),
+        )
+        without_nucleus = SampleAnalysisRow(
+            breed="Control",
+            sample_label="Sample 2",
+            batch_name="b",
+            status="ok",
+            data_status="ok",
+            metrics=SampleMetrics(
+                general_movement=0.20,
+                downward_velocity=0.06,
+                motion_index=0.20,
+                of_general_movement=0.40,
+                toward_nucleus_velocity=None,
+                orientation_median_deg=None,
+                has_valid_result=True,
+                of_has_valid_result=True,
+                orientation_has_valid_result=False,
+            ),
+        )
+        summary = compute_breed_analysis("Control", [with_nucleus, without_nucleus])
+        self.assertEqual(summary.sample_count, 2)
+        self.assertEqual(summary.samples_with_results, 2)
+        self.assertEqual(summary.samples_with_of_results, 2)
+        self.assertEqual(summary.samples_with_toward_nucleus_results, 1)
+        self.assertEqual(summary.samples_with_orientation_results, 1)
+        self.assertAlmostEqual(summary.avg_general_movement, 0.15)
+        self.assertAlmostEqual(summary.avg_of_general_movement, 0.30)
+        self.assertAlmostEqual(summary.avg_toward_nucleus_velocity, 0.30)
+        self.assertAlmostEqual(summary.avg_orientation_median_deg, 40.0)
+        self.assertAlmostEqual(summary.avg_downward_velocity, 0.05)
+        self.assertAlmostEqual(summary.avg_motion_index, 0.15)
+
 
 if __name__ == "__main__":
     unittest.main()
