@@ -441,13 +441,6 @@ def create_metric_mode_widgets(window: MainWindow) -> None:
     window.combo_metric_mode.currentIndexChanged.connect(
         window._on_cropped_metric_mode_changed
     )
-    # Internal overlay flags kept for tests/debugging; not researcher-facing.
-    window.chk_show_orientation_overlay = QCheckBox("Show F-actin Orientation")
-    window.chk_show_orientation_overlay.setChecked(True)
-    window.chk_show_orientation_overlay.hide()
-    window.chk_show_orientation_overlay.toggled.connect(
-        window._on_show_orientation_overlay_changed
-    )
     window._metric_mode_widgets = ()
 
 
@@ -1178,12 +1171,6 @@ def create_optical_flow_setting_widgets(window: MainWindow) -> None:
     window.spin_of_poly_sigma.setValue(defaults.poly_sigma)
 
     viz_defaults = OpticalFlowVisualizationSettings()
-    # Internal toggle retained for tests/debugging; OF inspection mode shows
-    # the overlay automatically for researchers.
-    window.chk_show_of_overlay = QCheckBox("Show Optical Flow Overlay")
-    window.chk_show_of_overlay.setChecked(True)
-    window.chk_show_of_overlay.hide()
-    window.chk_show_of_overlay.toggled.connect(window._on_show_of_overlay_changed)
 
     window.spin_of_arrow_spacing = NoWheelSpinBox()
     window.spin_of_arrow_spacing.setRange(8, 40)
@@ -1213,7 +1200,6 @@ def create_optical_flow_setting_widgets(window: MainWindow) -> None:
     )
     window._optical_flow_setting_widgets = (
         *window._optical_flow_metric_widgets,
-        window.chk_show_of_overlay,
         window.spin_of_arrow_spacing,
         window.spin_of_arrow_scale,
     )

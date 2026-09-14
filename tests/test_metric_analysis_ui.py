@@ -6,6 +6,8 @@ import unittest
 
 from actintrack_app.metric_analysis_ui import (
     ORIENTATION_LEGEND_TEXT,
+    cached_analysis_matches_draft_run,
+    draft_analysis_run_id,
     empty_state_message_for_mode,
 )
 from actintrack_app.workflow_state import nucleus_requires_alignment_review
@@ -39,6 +41,15 @@ class MetricAnalysisUiTests(unittest.TestCase):
         self.assertIn("0° radial", ORIENTATION_LEGEND_TEXT)
         self.assertIn("90° tangential", ORIENTATION_LEGEND_TEXT)
         self.assertNotIn("motion", ORIENTATION_LEGEND_TEXT.lower())
+
+    def test_cached_analysis_matches_current_draft_run_only(self) -> None:
+        self.assertEqual(
+            draft_analysis_run_id({"analysis_run_id": "run-2"}),
+            "run-2",
+        )
+        self.assertTrue(cached_analysis_matches_draft_run("run-2", "run-2"))
+        self.assertFalse(cached_analysis_matches_draft_run("run-1", "run-2"))
+        self.assertTrue(cached_analysis_matches_draft_run("run-1", ""))
 
 
 class NucleusAlignmentReviewTests(unittest.TestCase):

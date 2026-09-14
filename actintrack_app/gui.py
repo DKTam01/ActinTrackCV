@@ -327,13 +327,25 @@ from actintrack_app.timing_provenance import (
 )
 from actintrack_app.metric_analysis_ui import (
     NUCLEUS_ALIGNMENT_REVIEW_HINT,
+    cached_analysis_matches_draft_run,
+    draft_analysis_run_id,
     empty_state_message_for_mode,
 )
+from actintrack_app.sample_result_state import (
+    classify_metric_state,
+    draft_results_are_measurable,
+    inspection_is_blocked_by_staleness,
+    invalidation_for_scientific_edit,
+    sample_is_stale,
+    scientific_state_key_from_annotation,
+    set_sample_stale,
+)
 from actintrack_app.workflow_state import (
-    build_workflow_snapshot,
+    WorkbenchLiveInputs,
     format_delete_samples_confirmation,
     format_sample_results_summary,
     nucleus_requires_alignment_review,
+    snapshot_from_live_inputs,
 )
 from actintrack_app.__version__ import __version__
 from actintrack_app.paths import (
@@ -1274,22 +1286,18 @@ class MainWindow(QMainWindow):
         self, sample_id: str
     ) -> Optional[CroppedPreviewAnalysis]:
         """Return the current persisted run for inspection without recomputing."""
-        if self._tracking_result_stale_by_sample.get(sample_id) or (
-            self._optical_flow_stale_by_sample.get(sample_id)
+        if inspection_is_blocked_by_staleness(
+            self._tracking_result_stale_by_sample,
+            self._optical_flow_stale_by_sample,
+            sample_id,
         ):
             return None
         draft = self._read_draft_tracking_payload(sample_id)
-        draft_run_id = ""
-        if isinstance(draft, dict):
-            draft_run_id = str(
-                draft.get("analysis_run_id")
-                or draft.get("analysis_timestamp_utc")
-                or ""
-            )
+        draft_run_id = draft_analysis_run_id(draft)
         cached = self._tracking_results_by_sample.get(sample_id)
         if cached is not None:
             cached_run_id = str(getattr(cached, "analysis_run_id", "") or "")
-            if not draft_run_id or cached_run_id == draft_run_id:
+            if cached_analysis_matches_draft_run(cached_run_id, draft_run_id):
                 return cached
         if draft is None and not self._sample_has_persisted_metric_drafts(sample_id):
             return None
@@ -1437,8 +1445,11 @@ class MainWindow(QMainWindow):
 
     def _on_tracking_setting_changed(self, *_args: object) -> None:
         if self._current_sample_id:
-            self._tracking_result_stale_by_sample[self._current_sample_id] = True
-            self._optical_flow_stale_by_sample[self._current_sample_id] = True
+            set_sample_stale(
+                self._tracking_result_stale_by_sample,
+                self._optical_flow_stale_by_sample,
+                self._current_sample_id,
+            )
             self.update_tracking_result_panel()
         self._update_metric_freshness_label()
 
@@ -1684,14 +1695,6 @@ class MainWindow(QMainWindow):
             len(self._cropped_preview.frames),
             self._optical_flow_viz_settings_from_ui(),
         )
-
-    def _on_show_of_overlay_changed(self, _checked: bool) -> None:
-        if self._preview_mode == "cropped_tracking":
-            self._show_cropped_preview_frame(self._preview_frame_index)
-
-    def _on_show_orientation_overlay_changed(self, _checked: bool) -> None:
-        if self._preview_mode == "cropped_tracking":
-            self._show_cropped_preview_frame(self._preview_frame_index)
 
     def _on_of_viz_setting_changed(self, *_args: object) -> None:
         if self._preview_mode == "cropped_tracking":
@@ -2096,20 +2099,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _scientific_state_key_from_annotation(ann: dict[str, Any] | None) -> tuple[Any, ...]:
-        if not ann:
-            return ()
-        _orientation, roi = annotation_from_legacy(ann)
-        nucleus, cutoff = scientific_annotations_from_annotation(ann)
-        cell = cell_region_from_sample_annotation(ann)
-        return (
-            None if roi is None else (int(roi.x), int(roi.y), int(roi.width), int(roi.height)),
-            None if nucleus is None else (float(nucleus.x), float(nucleus.y)),
-            None if cutoff is None else float(cutoff.y),
-            None if cell is None else cell.region.geometry_key(),
-            float(ann.get("rotation_angle_degrees", 0.0) or 0.0),
-            bool(ann.get("mirror_y_axis")),
-            bool(ann.get("flipped_180")),
-        )
+        return scientific_state_key_from_annotation(ann)
 
     def _scientific_state_key_for_sample(self, sample_id: str) -> tuple[Any, ...] | None:
         if self._project_root is None:
@@ -2120,14 +2110,10 @@ class MainWindow(QMainWindow):
         return self._scientific_state_key_from_annotation(ann)
 
     def _sample_has_measurable_draft_results(self, sample_id: str) -> bool:
-        track = self._read_draft_tracking_payload(sample_id)
-        of_payload = self._read_draft_optical_flow_payload(sample_id)
-        track_ok = bool(
-            track
-            and int(track.get("num_tracks_with_valid_steps", 0) or 0) > 0
+        return draft_results_are_measurable(
+            self._read_draft_tracking_payload(sample_id),
+            self._read_draft_optical_flow_payload(sample_id),
         )
-        of_ok = bool(of_payload and of_payload.get("has_valid_result"))
-        return track_ok or of_ok
 
     def _mark_metrics_stale_if_saved_roi_changed(
         self,
@@ -2142,19 +2128,25 @@ class MainWindow(QMainWindow):
             return
         if not self._sample_has_measurable_draft_results(sample_id):
             return
-        self._tracking_result_stale_by_sample[sample_id] = True
-        self._optical_flow_stale_by_sample[sample_id] = True
+        set_sample_stale(
+            self._tracking_result_stale_by_sample,
+            self._optical_flow_stale_by_sample,
+            sample_id,
+        )
 
     def _mark_draft_metrics_stale(self, sample_id: str) -> None:
         """Mark existing draft metrics stale without deleting or recomputing."""
         if not sample_id:
             return
         had_results = self._sample_has_measurable_draft_results(sample_id)
-        if had_results:
+        effects = invalidation_for_scientific_edit(
+            had_measurable_results=had_results,
+            geometry_changed=True,
+        )
+        if effects.mark_stale:
             stale_track = self.__dict__.setdefault("_tracking_result_stale_by_sample", {})
             stale_of = self.__dict__.setdefault("_optical_flow_stale_by_sample", {})
-            stale_track[sample_id] = True
-            stale_of[sample_id] = True
+            set_sample_stale(stale_track, stale_of, sample_id)
         # Drop live preview caches so outdated overlays cannot masquerade as current.
         tracking_cache = self.__dict__.get("_tracking_results_by_sample")
         if isinstance(tracking_cache, dict):
@@ -2484,37 +2476,35 @@ class MainWindow(QMainWindow):
             return None
 
     def _metric_state_for_sample(self, sid: Optional[str]) -> str:
-        if not sid:
-            return "unavailable_no_roi"
-        if sid in self._metrics_inflight:
-            return "running"
-        if not self._sample_has_valid_data_and_roi(sid):
-            return "unavailable_no_roi"
-
+        inflight = self.__dict__.get("_metrics_inflight") or set()
+        running = bool(sid) and sid in inflight
+        if not sid or running:
+            return classify_metric_state(
+                sample_id=sid,
+                has_valid_data_and_roi=False,
+                running=running,
+                track=None,
+                optical_flow=None,
+                stale=False,
+                error_flag=False,
+            )
         track = self._read_draft_tracking_payload(sid)
-        of = self._read_draft_optical_flow_payload(sid)
-        track_present = track is not None
-        of_present = of is not None
-        if not track_present and not of_present:
-            return "not_analyzed"
-        track_ok = track_present and int(
-            track.get("num_tracks_with_valid_steps", 0) or 0
-        ) > 0
-        of_ok = of_present and bool(of.get("has_valid_result"))
-        stale_flag = bool(
-            self._tracking_result_stale_by_sample.get(sid)
-        ) or bool(self._optical_flow_stale_by_sample.get(sid))
-        error_flag = bool(self._metric_error_by_sample.get(sid)) or (
-            track_present and not track_ok
-        ) or (of_present and not of_ok)
-        if error_flag:
-            return "error"
-        if stale_flag:
-            return "stale"
-        if track_ok and of_ok:
-            return "analyzed"
-        # Only one metric present (e.g. legacy) — not fully analyzed.
-        return "stale"
+        of_payload = self._read_draft_optical_flow_payload(sid)
+        return classify_metric_state(
+            sample_id=sid,
+            has_valid_data_and_roi=bool(self._sample_has_valid_data_and_roi(sid)),
+            running=False,
+            track=track,
+            optical_flow=of_payload,
+            stale=sample_is_stale(
+                self.__dict__.get("_tracking_result_stale_by_sample") or {},
+                self.__dict__.get("_optical_flow_stale_by_sample") or {},
+                sid,
+            ),
+            error_flag=bool(
+                (self.__dict__.get("_metric_error_by_sample") or {}).get(sid)
+            ),
+        )
 
     def _last_analyzed_at_for_sample(self, sid: str) -> Optional[datetime]:
         stamps: list[datetime] = []
@@ -2546,13 +2536,10 @@ class MainWindow(QMainWindow):
 
     def _workflow_snapshot_for_current(self):
         sid = self.__dict__.get("_current_sample_id")
-        has_sample = bool(sid) and self.__dict__.get("_base_frame") is not None
         has_crop = False
         canvas = self.__dict__.get("canvas")
         if canvas is not None:
             has_crop = canvas.rect_roi() is not None
-        if not has_crop and self.__dict__.get("_cell_region") is not None:
-            has_crop = True
         timing = self.__dict__.get("_timing")
         timing_ready = bool(timing is not None and timing.is_calibrated_analysis_ready)
         metrics_present = False
@@ -2570,20 +2557,24 @@ class MainWindow(QMainWindow):
                     metrics_present = False
         stale_track = self.__dict__.get("_tracking_result_stale_by_sample") or {}
         stale_of = self.__dict__.get("_optical_flow_stale_by_sample") or {}
-        metrics_stale = bool(sid and (stale_track.get(sid) or stale_of.get(sid)))
         inflight = self.__dict__.get("_metrics_inflight") or set()
-        running = bool(sid) and sid in inflight
-        return build_workflow_snapshot(
-            has_sample=has_sample,
-            has_crop=has_crop,
-            has_cell_region=self.__dict__.get("_cell_region") is not None,
-            has_nucleus=self.__dict__.get("_nucleus_reference") is not None,
-            has_cutoff=self.__dict__.get("_cutoff_boundary") is not None,
-            timing_confirmed=timing_ready,
-            has_valid_video_timing=timing_ready,
-            metrics_present=metrics_present,
-            metrics_stale=metrics_stale,
-            metrics_running=running,
+        return snapshot_from_live_inputs(
+            WorkbenchLiveInputs(
+                sample_id=sid,
+                has_base_frame=self.__dict__.get("_base_frame") is not None,
+                has_crop=has_crop,
+                has_cell_region=self.__dict__.get("_cell_region") is not None,
+                has_nucleus=self.__dict__.get("_nucleus_reference") is not None,
+                has_cutoff=self.__dict__.get("_cutoff_boundary") is not None,
+                timing_ready=timing_ready,
+                metrics_present=metrics_present,
+                metrics_stale=sample_is_stale(stale_track, stale_of, sid),
+                metrics_running=bool(sid) and sid in inflight,
+                nucleus_alignment_needs_review=nucleus_requires_alignment_review(
+                    self.__dict__.get("_nucleus_reference"),
+                    self.__dict__.get("_cutoff_boundary"),
+                ),
+            )
         )
 
     def _sync_workflow_controls(self) -> None:
@@ -2796,7 +2787,15 @@ class MainWindow(QMainWindow):
         else:
             self._set_roi_save_status("Annotations saved", saved=True)
         new_key = self._scientific_state_key_from_annotation(ann)
-        if previous_key is not None and new_key != previous_key:
+        effects = invalidation_for_scientific_edit(
+            had_measurable_results=self._sample_has_measurable_draft_results(sid),
+            geometry_changed=previous_key is not None and new_key != previous_key,
+        )
+        if (
+            effects.mark_stale
+            or effects.clear_live_caches
+            or effects.discard_inspection_if_current
+        ):
             self._mark_draft_metrics_stale(sid)
         self._update_metric_freshness_label()
         return True
@@ -3604,13 +3603,9 @@ class MainWindow(QMainWindow):
         if mode == "optical_flow":
             frame = self._cropped_preview.frames[index].copy()
             # Optical Flow inspection always shows the OF overlay.
-            show_of = True
-            if hasattr(self, "chk_show_of_overlay"):
-                show_of = bool(self.chk_show_of_overlay.isChecked())
-            if show_of:
-                arrows = self._get_overlay_arrows_for_frame(index)
-                if arrows:
-                    frame = render_optical_flow_overlay(frame, arrows)
+            arrows = self._get_overlay_arrows_for_frame(index)
+            if arrows:
+                frame = render_optical_flow_overlay(frame, arrows)
         elif mode == "orientation":
             frame = self._cropped_preview.frames[index].copy()
         else:

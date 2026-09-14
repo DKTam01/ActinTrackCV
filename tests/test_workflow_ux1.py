@@ -61,6 +61,7 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             metrics_stale=False,
         )
         self.assertTrue(snap.ready_to_run)
+        self.assertFalse(snap.can_compute_nucleus_metrics)
         self.assertIsNone(snap.run_metrics_block_reason())
 
     def test_missing_cutoff_blocks_run(self) -> None:

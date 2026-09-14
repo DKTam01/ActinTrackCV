@@ -5,7 +5,8 @@ derived computational crop, optional nucleus, required cutoff, timing, and
 metric freshness into UI gating.
 
 Legacy ``crop_confirmed`` remains readable for old projects but no longer
-drives researcher-facing readiness.
+drives researcher-facing readiness. Product gating uses CellRegion, cutoff,
+and valid video timing only.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ class WorkflowSnapshot:
     metrics_present: bool = False
     metrics_stale: bool = False
     metrics_running: bool = False
+    nucleus_alignment_needs_review: bool = False
 
     @property
     def cell_region_ready(self) -> bool:
@@ -41,6 +43,10 @@ class WorkflowSnapshot:
     @property
     def nucleus_set(self) -> bool:
         return self.cell_region_ready and self.has_nucleus
+
+    @property
+    def can_compute_nucleus_metrics(self) -> bool:
+        return self.has_nucleus
 
     @property
     def ready_to_run(self) -> bool:
@@ -151,6 +157,7 @@ def build_workflow_snapshot(
     metrics_running: bool = False,
     has_valid_video_timing: bool | None = None,
     has_cutoff: bool = False,
+    nucleus_alignment_needs_review: bool = False,
 ) -> WorkflowSnapshot:
     video_timing_ready = (
         bool(timing_confirmed)
@@ -169,6 +176,45 @@ def build_workflow_snapshot(
         metrics_present=bool(metrics_present),
         metrics_stale=bool(metrics_stale),
         metrics_running=bool(metrics_running),
+        nucleus_alignment_needs_review=bool(nucleus_alignment_needs_review),
+    )
+
+
+@dataclass(frozen=True)
+class WorkbenchLiveInputs:
+    """Explicit live Workbench facts used to derive readiness.
+
+    MainWindow gathers these; it does not reconstruct ready_to_run itself.
+    """
+
+    sample_id: str | None
+    has_base_frame: bool
+    has_crop: bool
+    has_cell_region: bool
+    has_nucleus: bool
+    has_cutoff: bool
+    timing_ready: bool
+    metrics_present: bool
+    metrics_stale: bool
+    metrics_running: bool
+    nucleus_alignment_needs_review: bool = False
+
+
+def snapshot_from_live_inputs(inputs: WorkbenchLiveInputs) -> WorkflowSnapshot:
+    """Canonical readiness path for the current sample."""
+    has_sample = bool(inputs.sample_id) and bool(inputs.has_base_frame)
+    return build_workflow_snapshot(
+        has_sample=has_sample,
+        has_crop=bool(inputs.has_crop) or bool(inputs.has_cell_region),
+        has_cell_region=bool(inputs.has_cell_region),
+        has_nucleus=bool(inputs.has_nucleus),
+        has_cutoff=bool(inputs.has_cutoff),
+        timing_confirmed=bool(inputs.timing_ready),
+        has_valid_video_timing=bool(inputs.timing_ready),
+        metrics_present=bool(inputs.metrics_present),
+        metrics_stale=bool(inputs.metrics_stale),
+        metrics_running=bool(inputs.metrics_running),
+        nucleus_alignment_needs_review=bool(inputs.nucleus_alignment_needs_review),
     )
 
 
