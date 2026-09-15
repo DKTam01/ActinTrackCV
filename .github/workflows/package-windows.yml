@@ -1,0 +1,129 @@
+# Build the Windows one-folder zip on a real Windows runner.
+# Your Mac cannot produce a Windows .exe; this workflow is the lab's
+# "build Windows from here" path (GitHub Actions windows-latest).
+#
+# Trigger:
+#   - Manual: Actions → Package Windows → Run workflow
+#     Optional "release_tag" (e.g. v1.0.0) uploads the zip onto that release
+#   - Automatic: pushing a tag that starts with v (e.g. v1.0.1)
+
+name: Package Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the zip to (e.g. v1.0.0). Leave blank to only upload a workflow artifact."
+        required: false
+        default: ""
+      skip_tests:
+        description: "Skip unit tests during packaging (faster; use only if validation already passed)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: package-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Windows x64 one-folder zip
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      # Headless-friendly for any Qt-touching unit tests during packaging.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-build.txt
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python -c "from actintrack_app.__version__ import __version__; print(__version__)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "App version: $VERSION"
+
+      - name: Build Windows app (PyInstaller)
+        shell: pwsh
+        run: |
+          $args = @()
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.skip_tests }}" -eq "true") {
+            $args += "-SkipTests"
+          }
+          powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1 @args
+
+      - name: Zip one-folder app
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $zipName = "ActinTrackCV-$version-windows-x64-onefolder.zip"
+          if (-not (Test-Path "dist\ActinTrackCV\ActinTrackCV.exe")) {
+            throw "Expected dist\ActinTrackCV\ActinTrackCV.exe was not built."
+          }
+          if (Test-Path $zipName) { Remove-Item -Force $zipName }
+          Compress-Archive -Path "dist\ActinTrackCV" -DestinationPath $zipName -Force
+          Get-Item $zipName | Format-List Name, Length, FullName
+          echo "ZIP_NAME=$zipName" >> $env:GITHUB_ENV
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ActinTrackCV-${{ steps.version.outputs.version }}-windows-x64-onefolder
+          path: ActinTrackCV-${{ steps.version.outputs.version }}-windows-x64-onefolder.zip
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          TAG=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.release_tag }}"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ]; then
+            echo "Will attach zip to release tag: $TAG"
+          else
+            echo "No release tag set — artifact only."
+          fi
+
+      - name: Upload zip to GitHub Release
+        if: steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG does not exist yet. Create it first, then re-run with release_tag set."
+            exit 1
+          fi
+          # Replace any prior Windows zip of the same name on this release.
+          gh release upload "$TAG" "$ZIP_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Uploaded $ZIP_NAME to release $TAG"
