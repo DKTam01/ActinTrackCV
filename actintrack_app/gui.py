@@ -261,6 +261,13 @@ from actintrack_app.optical_flow_overlay import (
     render_optical_flow_overlay,
     resolve_qc_status,
 )
+from actintrack_app.media_capabilities import (
+    SampleMediaType,
+    capabilities_for,
+    is_product_media_path,
+    media_type_from_sample_row,
+)
+from actintrack_app.metrics_compute import dispatch_metrics_compute
 from actintrack_app.structural_orientation import (
     StructuralOrientationResult,
     compute_structural_orientation,
@@ -2049,7 +2056,8 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             return 0
 
-    def _sample_video_path(self, sample_id: str) -> Optional[Path]:
+    def _sample_media_path(self, sample_id: str) -> Optional[Path]:
+        """Filesystem path for a sample's imported VIDEO or IMAGE media."""
         row = self._persisted_sample_row_for_id(sample_id)
         project_root = self._workspace_project_root()
         if row is None or project_root is None:
@@ -2058,7 +2066,20 @@ class MainWindow(QMainWindow):
         if not stored:
             return None
         path = project_root / stored
-        if not path.is_file() or not is_supported_video_path(path):
+        if not path.is_file() or not is_product_media_path(path):
+            return None
+        return path
+
+    def _sample_media_type_for_id(self, sample_id: str | None) -> SampleMediaType:
+        if not sample_id:
+            return SampleMediaType.VIDEO
+        row = self._persisted_sample_row_for_id(sample_id)
+        path = self._sample_media_path(sample_id)
+        return media_type_from_sample_row(row, fallback_path=path)
+
+    def _sample_video_path(self, sample_id: str) -> Optional[Path]:
+        path = self._sample_media_path(sample_id)
+        if path is None or not is_supported_video_path(path):
             return None
         return path
 
@@ -2070,7 +2091,7 @@ class MainWindow(QMainWindow):
         return TimingMetadata.from_video_header(probe_video_playback_fps(path))
 
     def _sample_has_valid_data_and_roi(self, sample_id: str) -> bool:
-        if self._sample_video_path(sample_id) is None:
+        if self._sample_media_path(sample_id) is None:
             return False
         _orientation, roi = self._saved_orientation_roi_for_sample(sample_id)
         if roi is not None:
@@ -2079,6 +2100,27 @@ class MainWindow(QMainWindow):
             return False
         ann = get_sample_annotation(self._project_root, sample_id)
         return cell_region_from_sample_annotation(ann) is not None
+
+    def _read_draft_structural_orientation_payload(
+        self, sample_id: str
+    ) -> dict | None:
+        if self._project_root is None:
+            return None
+        path = self._draft_structural_orientation_json_path(sample_id)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _sample_has_measurable_draft_results(self, sample_id: str) -> bool:
+        return draft_results_are_measurable(
+            self._read_draft_tracking_payload(sample_id),
+            self._read_draft_optical_flow_payload(sample_id),
+            self._read_draft_structural_orientation_payload(sample_id),
+        )
 
     @staticmethod
     def _roi_key_from_rect(roi: Optional[RectROI]) -> tuple[int, int, int, int] | None:
@@ -2108,12 +2150,6 @@ class MainWindow(QMainWindow):
         if not ann:
             return None
         return self._scientific_state_key_from_annotation(ann)
-
-    def _sample_has_measurable_draft_results(self, sample_id: str) -> bool:
-        return draft_results_are_measurable(
-            self._read_draft_tracking_payload(sample_id),
-            self._read_draft_optical_flow_payload(sample_id),
-        )
 
     def _mark_metrics_stale_if_saved_roi_changed(
         self,
@@ -2173,8 +2209,10 @@ class MainWindow(QMainWindow):
                 show_placeholder("Results are outdated — run Metrics again")
 
     def _compute_metrics_for_sample(self, sample_id: str) -> str:
-        """Compute Template Tracking + Optical Flow for one Sample from its
-        saved orientation/ROI and current metric settings.
+        """Dispatch Run Metrics by media capability.
+
+        VIDEO: Template Tracking + Optical Flow (+ Toward Nucleus when nucleus).
+        IMAGE: structural F-actin Orientation only.
 
         Returns one of: 'unavailable', 'running', 'error', 'analyzed'.
         """
@@ -2182,115 +2220,122 @@ class MainWindow(QMainWindow):
             return "unavailable"
         if sample_id in self._metrics_inflight:
             return "running"
-        path = self._sample_video_path(sample_id)
+        path = self._sample_media_path(sample_id)
         if path is None:
             return "unavailable"
+        media_type = self._sample_media_type_for_id(sample_id)
         orientation, roi = self._saved_orientation_roi_for_sample(sample_id)
         if roi is None or orientation is None:
             return "unavailable"
-        video_timing = TimingMetadata.from_video_header(probe_video_playback_fps(path))
-        if video_timing is None:
-            return "unavailable"
+
         previous_timing = self.__dict__.get("_timing")
-        self.__dict__["_timing"] = video_timing
-        try:
-            params = self._tracking_params_from_ui()
-            of_settings = self._optical_flow_settings_from_ui()
-        except ValueError:
-            self.__dict__["_timing"] = previous_timing
-            self._metric_error_by_sample[sample_id] = True
-            return "error"
-        crop_w, crop_h = int(roi.width), int(roi.height)
-        min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
-        if min(crop_w, crop_h) < min_dim:
-            if sample_id != self._current_sample_id:
+        params = None
+        of_settings = None
+        if media_type is SampleMediaType.VIDEO:
+            video_timing = TimingMetadata.from_video_header(
+                probe_video_playback_fps(path)
+            )
+            if video_timing is None:
+                return "unavailable"
+            self.__dict__["_timing"] = video_timing
+            try:
+                params = self._tracking_params_from_ui()
+                of_settings = self._optical_flow_settings_from_ui()
+            except ValueError:
                 self.__dict__["_timing"] = previous_timing
-            self._metric_error_by_sample[sample_id] = True
-            return "error"
+                self._metric_error_by_sample[sample_id] = True
+                return "error"
+            crop_w, crop_h = int(roi.width), int(roi.height)
+            min_dim = params.template_patch_size_px + (2 * params.search_radius_px) + 2
+            if min(crop_w, crop_h) < min_dim:
+                if sample_id != self._current_sample_id:
+                    self.__dict__["_timing"] = previous_timing
+                self._metric_error_by_sample[sample_id] = True
+                return "error"
+        else:
+            # IMAGE: no fabricated timing; clear video timing for this sample.
+            if sample_id == self._current_sample_id:
+                self.__dict__["_timing"] = None
+            try:
+                params = self._tracking_params_from_ui()
+                of_settings = self._optical_flow_settings_from_ui()
+            except ValueError:
+                params = MotionIndexParams()
+                of_settings = OpticalFlowSettings()
 
         self._metrics_inflight.add(sample_id)
         self._update_metric_freshness_label()
         QApplication.processEvents()
-        had_error = False
-        ok_any = False
         self._tracking_results_by_sample.pop(sample_id, None)
         self._optical_flow_results_by_sample.pop(sample_id, None)
         self._clear_of_flow_cache(sample_id)
         if sample_id == self.__dict__.get("_current_sample_id"):
             self.__dict__["_metric_analysis_session"] = None
             self.__dict__["_metric_analysis_orientation"] = None
+        # Video runs must not leave a stale orientation draft implying video orientation.
+        if media_type is SampleMediaType.VIDEO:
+            self._invalidate_structural_orientation_for_sample(sample_id)
+        else:
+            # Image runs must not leave motion drafts.
+            draft = self._draft_tracking_json_path(sample_id)
+            if draft.is_file():
+                try:
+                    draft.unlink()
+                except OSError:
+                    pass
+            of_draft = self._draft_optical_flow_json_path(sample_id)
+            if of_draft.is_file():
+                try:
+                    of_draft.unlink()
+                except OSError:
+                    pass
+
+        had_error = False
+        ok_any = False
         try:
-            frames = load_cropped_frames_from_video(path, orientation, roi)
             valid_mask = self._saved_scientific_valid_mask_for_sample(sample_id, roi)
             nucleus_xy_px = self._saved_nucleus_xy_crop_local(sample_id, roi)
-            reference_frame_index = min(
-                self._saved_reference_frame_index_for_sample(sample_id),
-                len(frames) - 1,
+            cutoff_y_crop = None
+            if self._project_root is not None:
+                ann = get_sample_annotation(self._project_root, sample_id)
+                _nucleus, cutoff = scientific_annotations_from_annotation(ann)
+                if cutoff is not None:
+                    cutoff_y_crop = cutoff.to_crop_local(roi)
+            assert params is not None and of_settings is not None
+            compute = dispatch_metrics_compute(
+                media_type=media_type,
+                path=path,
+                orientation=orientation,
+                roi=roi,
+                params=params,
+                of_settings=of_settings,
+                valid_mask=valid_mask,
+                nucleus_xy_px=nucleus_xy_px,
+                sample_id=sample_id,
+                cutoff_y_crop_px=cutoff_y_crop,
             )
-            try:
-                analysis = analyze_cropped_preview(
-                    frames,
-                    params=params,
-                    valid_mask=valid_mask,
-                    nucleus_xy_px=nucleus_xy_px,
+            if compute.timing is not None and sample_id == self._current_sample_id:
+                self.__dict__["_timing"] = compute.timing
+            if compute.tracking is not None:
+                self._commit_tracking_result_for_sid(
+                    sample_id, compute.tracking, params
                 )
-                run_id = datetime.now(timezone.utc).isoformat()
-                analysis.analysis_run_id = run_id
-                analysis.valid_mask = (
-                    None if valid_mask is None else np.array(valid_mask, copy=True)
+            if compute.optical_flow is not None:
+                compute.optical_flow.analysis_run_id = compute.analysis_run_id
+                self._commit_optical_flow_result_for_sid(
+                    sample_id, compute.optical_flow
                 )
-                if self._project_root is not None:
-                    ann = get_sample_annotation(self._project_root, sample_id)
-                    _nucleus, cutoff = scientific_annotations_from_annotation(ann)
-                    if cutoff is not None:
-                        analysis.cutoff_y_crop_px = cutoff.to_crop_local(roi)
-                self._commit_tracking_result_for_sid(sample_id, analysis, params)
-                if analysis.num_tracks_with_valid_steps == 0:
-                    had_error = True
-                else:
-                    ok_any = True
-            except Exception:
-                had_error = True
-            try:
-                orientation_result = compute_structural_orientation(
-                    frames[reference_frame_index],
-                    nucleus_xy_px=nucleus_xy_px,
-                    valid_mask=valid_mask,
-                    sample_id=sample_id,
-                    reference_frame_index=reference_frame_index,
-                )
+            if compute.orientation is not None:
+                compute.orientation.analysis_run_id = compute.analysis_run_id
                 self._save_draft_structural_orientation_result(
                     sample_id,
-                    orientation_result,
+                    compute.orientation,
                 )
-            except Exception:
+            had_error = compute.had_error
+            ok_any = compute.ok_any
+            if compute.status == "unavailable":
                 had_error = True
-            roi_bounds = (int(roi.x), int(roi.y), int(roi.width), int(roi.height))
-            try:
-                fingerprint = build_optical_flow_fingerprint(
-                    sample_id=sample_id,
-                    roi_bounds=roi_bounds,
-                    settings=of_settings,
-                    data_identity=str(path.resolve()),
-                    frame_count=len(frames),
-                    valid_mask=valid_mask,
-                )
-                result = compute_optical_flow_motion_index(
-                    frames,
-                    of_settings,
-                    sample_id=sample_id,
-                    data_identity=str(path.resolve()),
-                    roi_bounds=roi_bounds,
-                    fingerprint=fingerprint,
-                    valid_mask=valid_mask,
-                )
-                self._commit_optical_flow_result_for_sid(sample_id, result)
-                if result.has_valid_result:
-                    ok_any = True
-                else:
-                    had_error = True
-            except Exception:
-                had_error = True
+                ok_any = False
         except Exception:
             had_error = True
         finally:
@@ -2324,10 +2369,17 @@ class MainWindow(QMainWindow):
                 self._update_metric_freshness_label()
             return "running"
         if not self._sample_has_valid_data_and_roi(sid):
-            message = (
-                "Run Metrics requires a Sample with valid Data, a cell boundary, "
-                "a Measurement Cutoff, and valid video timing."
-            )
+            media = self._sample_media_type_for_id(sid)
+            if media is SampleMediaType.IMAGE:
+                message = (
+                    "Run Metrics requires a Sample with valid Data, a cell boundary, "
+                    "a Measurement Cutoff, and a nucleus."
+                )
+            else:
+                message = (
+                    "Run Metrics requires a Sample with valid Data, a cell boundary, "
+                    "a Measurement Cutoff, and valid video timing."
+                )
             self._status(message)
             if show_dialog_on_block:
                 gui_dialogs.warning(self, "Run Metrics", message)
@@ -2344,17 +2396,20 @@ class MainWindow(QMainWindow):
                 self._sync_workflow_controls()
                 return "unavailable"
         else:
-            # Non-current samples: CellRegion + cutoff + valid video timing.
-            # Nucleus remains optional (Toward Nucleus / Orientation only).
+            # Non-current samples: CellRegion + cutoff + media-specific gates.
             project_root = self.__dict__.get("_project_root")
             if project_root is not None:
                 ann = get_sample_annotation(project_root, sid)
                 if cell_region_from_sample_annotation(ann) is None:
                     return "unavailable"
-                _nucleus, cutoff = scientific_annotations_from_annotation(ann)
+                nucleus, cutoff = scientific_annotations_from_annotation(ann)
                 if cutoff is None:
                     return "unavailable"
-                if self._timing_from_sample_video(sid) is None:
+                media = self._sample_media_type_for_id(sid)
+                caps = capabilities_for(media)
+                if caps.requires_video_timing and self._timing_from_sample_video(sid) is None:
+                    return "unavailable"
+                if caps.requires_nucleus_for_run and nucleus is None:
                     return "unavailable"
         return self._compute_metrics_for_sample(sid)
 
@@ -2490,6 +2545,8 @@ class MainWindow(QMainWindow):
             )
         track = self._read_draft_tracking_payload(sid)
         of_payload = self._read_draft_optical_flow_payload(sid)
+        orientation = self._read_draft_structural_orientation_payload(sid)
+        media = self._sample_media_type_for_id(sid)
         return classify_metric_state(
             sample_id=sid,
             has_valid_data_and_roi=bool(self._sample_has_valid_data_and_roi(sid)),
@@ -2504,6 +2561,8 @@ class MainWindow(QMainWindow):
             error_flag=bool(
                 (self.__dict__.get("_metric_error_by_sample") or {}).get(sid)
             ),
+            orientation=orientation,
+            media_is_image=media is SampleMediaType.IMAGE,
         )
 
     def _last_analyzed_at_for_sample(self, sid: str) -> Optional[datetime]:
@@ -2511,10 +2570,15 @@ class MainWindow(QMainWindow):
         for payload in (
             self._read_draft_tracking_payload(sid),
             self._read_draft_optical_flow_payload(sid),
+            self._read_draft_structural_orientation_payload(sid),
         ):
             if not payload:
                 continue
-            raw = str(payload.get("analysis_timestamp_utc", "")).strip()
+            raw = str(
+                payload.get("analysis_timestamp_utc")
+                or payload.get("analysis_run_id")
+                or ""
+            ).strip()
             if not raw:
                 continue
             try:
@@ -2540,8 +2604,15 @@ class MainWindow(QMainWindow):
         canvas = self.__dict__.get("canvas")
         if canvas is not None:
             has_crop = canvas.rect_roi() is not None
+        media_type = self._sample_media_type_for_id(sid)
+        caps = capabilities_for(media_type)
         timing = self.__dict__.get("_timing")
-        timing_ready = bool(timing is not None and timing.is_calibrated_analysis_ready)
+        if caps.requires_video_timing:
+            timing_ready = bool(
+                timing is not None and timing.is_calibrated_analysis_ready
+            )
+        else:
+            timing_ready = True
         metrics_present = False
         if sid:
             if "_sample_has_measurable_draft_results" in self.__dict__:
@@ -2574,6 +2645,7 @@ class MainWindow(QMainWindow):
                     self.__dict__.get("_nucleus_reference"),
                     self.__dict__.get("_cutoff_boundary"),
                 ),
+                media_type=media_type,
             )
         )
 
@@ -2603,7 +2675,11 @@ class MainWindow(QMainWindow):
             reason = snap.run_metrics_block_reason()
             self.btn_run_metrics.setEnabled(snap.ready_to_run)
             tip = (
-                "Compute Template Tracking and Optical Flow for this Sample."
+                (
+                    "Compute F-actin Orientation for this Sample."
+                    if snap.capabilities.is_image
+                    else "Compute Template Tracking and Optical Flow for this Sample."
+                )
                 if reason is None
                 else reason
             )
@@ -2612,12 +2688,46 @@ class MainWindow(QMainWindow):
             ma_reason = snap.metric_analysis_block_reason()
             self.btn_metric_analysis.setEnabled(snap.metric_analysis_allowed)
             tip = (
-                "Inspect persisted tracks, overlays, and playback for this Sample."
+                (
+                    "Inspect persisted F-actin Orientation for this Sample."
+                    if snap.capabilities.is_image
+                    else "Inspect persisted tracks, overlays, and playback for this Sample."
+                )
                 if ma_reason is None
                 else ma_reason
             )
             self.btn_metric_analysis.setToolTip(tip)
         self._update_sample_results_panel()
+        self._sync_media_workbench_visibility(snap)
+
+    def _sync_media_workbench_visibility(self, snap) -> None:
+        """Hide video-only controls for IMAGE samples; restore for VIDEO."""
+        caps = snap.capabilities
+        is_image = caps.is_image
+        if is_image:
+            self._set_sample_playback_visible(False)
+        timing_label = self.__dict__.get("lbl_timing_detected")
+        if timing_label is not None:
+            timing_label.setVisible(not is_image)
+        combo = self.__dict__.get("combo_metric_mode")
+        if combo is not None:
+            allowed = set(caps.metric_analysis_modes)
+            current = str(self.__dict__.get("_cropped_metric_mode") or "")
+            combo.blockSignals(True)
+            combo.clear()
+            labels = {
+                "template": "Template Tracking",
+                "optical_flow": "Optical Flow",
+                "orientation": "F-actin Orientation",
+            }
+            for mode in caps.metric_analysis_modes:
+                combo.addItem(labels.get(mode, mode), mode)
+            combo.blockSignals(False)
+            if current not in allowed and caps.metric_analysis_modes:
+                self._cropped_metric_mode = caps.metric_analysis_modes[0]
+            elif current in allowed:
+                self._cropped_metric_mode = current
+            self._sync_metric_mode_combo()
 
     def _update_sample_results_panel(self) -> None:
         if self.__dict__.get("lbl_sample_results") is None:
@@ -2672,6 +2782,7 @@ class MainWindow(QMainWindow):
             timing_confirmed=timing_confirmed,
             stale=snap.metrics_stale,
             has_nucleus=snap.has_nucleus,
+            media_type=snap.media_type,
         )
         self.lbl_sample_results.setText(text)
 

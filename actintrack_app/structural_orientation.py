@@ -68,6 +68,7 @@ class StructuralOrientationResult:
     valid_pixel_count: int = 0
     foreground_pixel_count: int = 0
     analysis_timestamp_utc: str = ""
+    analysis_run_id: str = ""
 
     def summary_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -87,6 +88,7 @@ class StructuralOrientationResult:
             "valid_pixel_count": self.valid_pixel_count,
             "foreground_pixel_count": self.foreground_pixel_count,
             "analysis_timestamp_utc": self.analysis_timestamp_utc,
+            "analysis_run_id": self.analysis_run_id or self.analysis_timestamp_utc,
             "angle_definition": {
                 "formula": "acos(abs(filament_unit dot radial_unit))",
                 "range_degrees": [0.0, 90.0],

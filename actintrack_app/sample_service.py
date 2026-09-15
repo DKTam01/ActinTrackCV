@@ -21,7 +21,6 @@ from actintrack_app.export_naming import (
     resolve_final_export_name,
 )
 from actintrack_app.file_importer import import_files
-from actintrack_app.import_classifier import ImportKind, classify_paths
 from actintrack_app.metadata import (
     get_sample_annotation,
     load_crop_metadata,
@@ -47,9 +46,11 @@ from actintrack_app.utils import (
     relative_to_root,
 )
 from actintrack_app.video_normalize import store_imported_video
-from actintrack_app.video_processing import MediaLoadError, assert_video_readable
+from actintrack_app.video_processing import MediaLoadError, assert_video_readable, load_image
 
-DATA_IMPORT_FILTER = "Data files (*.avi *.mp4);;All files (*)"
+DATA_IMPORT_FILTER = (
+    "Scientific media (*.avi *.mp4 *.jpg *.jpeg *.tif *.tiff);;All files (*)"
+)
 
 _DERIVED_STATUSES = frozenset(
     {
@@ -69,24 +70,46 @@ def default_sample_name_from_path(path: Path) -> str:
     return sanitize_batch_name(path.stem)
 
 
-def validate_av_mp4_data_file(path: Path) -> tuple[bool, str]:
-    """Return (ok, error_message). error_message empty when ok."""
+def validate_scientific_data_file(path: Path) -> tuple[bool, str]:
+    """Return (ok, error_message) for product VIDEO or IMAGE media."""
+    from actintrack_app.media_capabilities import (
+        SampleMediaType,
+        UNSUPPORTED_MEDIA_MESSAGE,
+        classify_media_path,
+    )
+    from actintrack_app.video_processing import load_image
+
     resolved = Path(path).resolve()
     breadcrumb("validate: start", path=str(resolved), suffix=resolved.suffix.lower())
     if not resolved.is_file():
         return False, f"File not found: {resolved}"
-    kind, _, msg = classify_paths([resolved])
-    breadcrumb("validate: classified", kind=str(kind))
-    if kind != ImportKind.VIDEO:
-        return False, msg or "Only AVI and MP4 data files are supported."
+    media = classify_media_path(resolved)
+    if media is None:
+        return False, UNSUPPORTED_MEDIA_MESSAGE
+    if media is SampleMediaType.VIDEO:
+        try:
+            breadcrumb("validate: probing source frame 0 (OpenCV decode)")
+            probe_video_frame_count(resolved)
+            breadcrumb("validate: probe ok")
+        except (MediaLoadError, OSError, ValueError) as exc:
+            breadcrumb("validate: probe raised", error=str(exc))
+            return False, str(exc)
+        return True, ""
     try:
-        breadcrumb("validate: probing source frame 0 (OpenCV decode)")
-        probe_video_frame_count(resolved)
-        breadcrumb("validate: probe ok")
+        breadcrumb("validate: loading image")
+        frame = load_image(resolved)
+        if frame is None or getattr(frame, "size", 0) == 0:
+            return False, f"Image decoded empty: {resolved.name}"
+        breadcrumb("validate: image ok", shape=str(getattr(frame, "shape", "")))
     except (MediaLoadError, OSError, ValueError) as exc:
-        breadcrumb("validate: probe raised", error=str(exc))
+        breadcrumb("validate: image raised", error=str(exc))
         return False, str(exc)
     return True, ""
+
+
+def validate_av_mp4_data_file(path: Path) -> tuple[bool, str]:
+    """Backward-compatible alias; prefers media-aware validation."""
+    return validate_scientific_data_file(path)
 
 
 def _registry_file_path(root: Path) -> Path:
@@ -293,7 +316,7 @@ def create_sample_from_data(
     root = Path(root).resolve()
     src = Path(source_path).resolve()
     breadcrumb("create_sample: start", src=str(src))
-    ok, err = validate_av_mp4_data_file(src)
+    ok, err = validate_scientific_data_file(src)
     if not ok:
         raise ValueError(err)
 
@@ -348,7 +371,7 @@ def create_samples_from_data_files(
     *,
     notes: str = "",
 ) -> list[SampleImportResult]:
-    """Import multiple AVI/MP4 files into one Condition Group (one Sample per file)."""
+    """Import multiple scientific media files into one Condition Group (one Sample per file)."""
     if not source_paths:
         return []
     results: list[SampleImportResult] = []
@@ -386,11 +409,17 @@ def replace_sample_data(
     batch_name: str,
     source_path: Path,
 ) -> dict[str, Any]:
+    from actintrack_app.media_capabilities import SampleMediaType, classify_media_path
+    from actintrack_app.utils import file_type_label as _file_type_label
+
     root = Path(root).resolve()
     src = Path(source_path).resolve()
-    ok, err = validate_av_mp4_data_file(src)
+    ok, err = validate_scientific_data_file(src)
     if not ok:
         raise ValueError(err)
+
+    media = classify_media_path(src)
+    is_video = media is SampleMediaType.VIDEO
 
     batch = get_batch_by_name(root, breed, batch_name)
     if batch is None:
@@ -422,7 +451,12 @@ def replace_sample_data(
     if old_path and old_path.is_file() and old_path.resolve() != dest_path.resolve():
         old_path.unlink(missing_ok=True)
     store_imported_video(src, dest_path)
-    assert_video_readable(dest_path)
+    if is_video:
+        assert_video_readable(dest_path)
+    else:
+        frame = load_image(dest_path)
+        if frame is None or getattr(frame, "size", 0) == 0:
+            raise MediaLoadError(f"Image decoded empty: {dest_path.name}")
 
     samples_path = root / METADATA_DIR / SAMPLES_CSV
     df = load_samples_csv(samples_path)
@@ -432,13 +466,16 @@ def replace_sample_data(
     auto_name = auto_export_name_for_sample(
         group=breed,
         batch_number=batch_number,
-        is_video=True,
+        is_video=is_video,
         frame_number=0,
     )
     df.at[idx, "original_filename"] = src.name
     df.at[idx, "stored_path"] = relative_to_root(root, dest_path)
-    df.at[idx, "file_type"] = "video"
-    df.at[idx, "is_video"] = "true"
+    df.at[idx, "file_type"] = _file_type_label(src)
+    df.at[idx, "media_type"] = (
+        SampleMediaType.VIDEO.value if is_video else SampleMediaType.IMAGE.value
+    )
+    df.at[idx, "is_video"] = "true" if is_video else "false"
     df.at[idx, "is_image_sequence"] = "false"
     df.at[idx, "auto_export_name"] = auto_name
     df.at[idx, "custom_export_name"] = ""

@@ -77,7 +77,7 @@ def load_cropped_frames_from_video(
     path = Path(video_path)
     if path.suffix.lower() not in VIDEO_EXTENSIONS:
         raise MediaLoadError(
-            "Only AVI and MP4 data files are supported in the current 2D workflow."
+            "Only AVI and MP4 data files are supported for video motion analysis."
         )
 
     cap = cv2.VideoCapture(str(path))
@@ -102,6 +102,25 @@ def load_cropped_frames_from_video(
             "Data file must contain at least 2 readable frames for preview."
         )
     return frames
+
+
+def load_cropped_frame_from_image(
+    image_path: Path,
+    orientation: OrientationState,
+    roi_oriented: RectROI,
+) -> np.ndarray:
+    """Load one static image, orient, and crop to the ROI (IMAGE media)."""
+    from actintrack_app.media_capabilities import classify_media_path, SampleMediaType
+    from actintrack_app.video_processing import load_image
+
+    path = Path(image_path)
+    if classify_media_path(path) is not SampleMediaType.IMAGE:
+        raise MediaLoadError(
+            "Only JPG/JPEG/TIF/TIFF images are supported for static orientation."
+        )
+    frame = load_image(path)
+    oriented = apply_orientation(frame, orientation)
+    return crop_rect_roi(oriented, roi_oriented)
 
 
 def analyze_cropped_preview(

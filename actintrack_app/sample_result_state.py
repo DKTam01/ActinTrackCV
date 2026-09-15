@@ -31,13 +31,15 @@ class ResultInvalidation:
 def draft_results_are_measurable(
     track: Mapping[str, Any] | None,
     optical_flow: Mapping[str, Any] | None,
+    orientation: Mapping[str, Any] | None = None,
 ) -> bool:
     """True when persisted drafts contain at least one usable metric."""
     track_ok = bool(
         track and int(track.get("num_tracks_with_valid_steps", 0) or 0) > 0
     )
     of_ok = bool(optical_flow and optical_flow.get("has_valid_result"))
-    return track_ok or of_ok
+    orientation_ok = bool(orientation and orientation.get("has_valid_result"))
+    return track_ok or of_ok or orientation_ok
 
 
 def sample_is_stale(
@@ -96,6 +98,8 @@ def classify_metric_state(
     optical_flow: Mapping[str, Any] | None,
     stale: bool,
     error_flag: bool,
+    orientation: Mapping[str, Any] | None = None,
+    media_is_image: bool = False,
 ) -> MetricState:
     """Classify Workbench metric status without touching science."""
     if not sample_id:
@@ -106,6 +110,16 @@ def classify_metric_state(
         return "unavailable_no_roi"
     track_present = track is not None
     of_present = optical_flow is not None
+    orientation_present = orientation is not None
+    if media_is_image:
+        if not orientation_present:
+            return "not_analyzed"
+        orientation_ok = bool(orientation.get("has_valid_result"))
+        if error_flag or not orientation_ok:
+            return "error"
+        if stale:
+            return "stale"
+        return "analyzed"
     if not track_present and not of_present:
         return "not_analyzed"
     track_ok = track_present and int(

@@ -402,21 +402,36 @@ def compute_sample_analysis(
 
     primary = data_rows[0]
     primary_id = str(primary.get("sample_id", "")).strip()
-    template_metrics = (
-        load_tracking_metrics_for_sample(root, primary_id, primary)
-        if primary_id
-        else SampleMetrics(has_valid_result=False)
+    from actintrack_app.media_capabilities import (
+        SampleMediaType,
+        media_type_from_sample_row,
     )
-    of_metrics = (
-        load_optical_flow_metrics_for_sample(root, primary_id)
-        if primary_id
-        else SampleMetrics(of_has_valid_result=False)
-    )
-    orientation_metrics = (
-        load_structural_orientation_metrics_for_sample(root, primary_id)
-        if primary_id
-        else SampleMetrics(orientation_has_valid_result=False)
-    )
+
+    media_type = media_type_from_sample_row(primary)
+    caps_image = media_type is SampleMediaType.IMAGE
+
+    if caps_image:
+        # IMAGE samples contribute orientation only; never invent motion zeros.
+        template_metrics = SampleMetrics(has_valid_result=False)
+        of_metrics = SampleMetrics(of_has_valid_result=False)
+        orientation_metrics = (
+            load_structural_orientation_metrics_for_sample(root, primary_id)
+            if primary_id
+            else SampleMetrics(orientation_has_valid_result=False)
+        )
+    else:
+        template_metrics = (
+            load_tracking_metrics_for_sample(root, primary_id, primary)
+            if primary_id
+            else SampleMetrics(has_valid_result=False)
+        )
+        of_metrics = (
+            load_optical_flow_metrics_for_sample(root, primary_id)
+            if primary_id
+            else SampleMetrics(of_has_valid_result=False)
+        )
+        # VIDEO samples do not contribute orientation (structurally N/A).
+        orientation_metrics = SampleMetrics(orientation_has_valid_result=False)
     metrics = _merge_sample_metrics(
         template_metrics,
         of_metrics,

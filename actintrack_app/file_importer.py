@@ -223,6 +223,14 @@ def import_files(
             breadcrumb("import_files: validating stored video (assert_video_readable)")
             assert_video_readable(dest_path)
             breadcrumb("import_files: stored video validated")
+        else:
+            from actintrack_app.video_processing import load_image
+
+            breadcrumb("import_files: validating stored image")
+            frame = load_image(dest_path)
+            if frame is None or getattr(frame, "size", 0) == 0:
+                raise MediaLoadError(f"Image decoded empty: {dest_path.name}")
+            breadcrumb("import_files: stored image validated")
 
         record = _build_sample_record(
             sample_id=sample_id,

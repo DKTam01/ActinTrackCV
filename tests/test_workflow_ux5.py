@@ -316,8 +316,8 @@ class SampleResultsOptionalNucleusTests(unittest.TestCase):
         self.assertIn("1.00 px/frame", text)
         self.assertIn("Toward Nucleus", text)
         self.assertIn("Nucleus required", text)
-        self.assertIn("F-actin Orientation", text)
-        self.assertEqual(text.count("Nucleus required"), 2)
+        self.assertNotIn("F-actin Orientation", text)
+        self.assertEqual(text.count("Nucleus required"), 1)
         self.assertNotIn("0.0°", text)
 
     def test_with_nucleus_shows_values(self) -> None:
@@ -335,7 +335,8 @@ class SampleResultsOptionalNucleusTests(unittest.TestCase):
             has_nucleus=True,
         )
         self.assertIn("0.50 µm/s", text)
-        self.assertIn("33.0°", text)
+        self.assertNotIn("F-actin Orientation", text)
+        self.assertNotIn("33.0°", text)
         self.assertNotIn("Nucleus required", text)
 
 

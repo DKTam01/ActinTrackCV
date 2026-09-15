@@ -156,15 +156,42 @@ def get_tiff_page_count(image_path: str | Path) -> int:
 
 
 def _array_to_bgr(arr: np.ndarray) -> np.ndarray:
+    """Convert a scientific image array to BGR uint8 for the Workbench pipeline.
+
+    Intensity handling (deterministic, explicit):
+
+    - ``uint8`` arrays are used as-is (no rescale).
+    - Wider integer / float arrays are min–max stretched into ``uint8``.
+      This preserves relative intensity structure for structure-tensor /
+      CellRegion pipelines that already normalize via percentiles. It does
+      **not** silently keep only the low 8 bits of a 16-bit TIFF
+      (``astype(np.uint8)`` truncation).
+
+    Multi-page TIFFs remain IMAGE media; callers select the page index.
+    """
+    arr = np.asarray(arr)
     if arr.ndim == 2:
-        return cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        return cv2.cvtColor(_to_display_uint8(arr), cv2.COLOR_GRAY2BGR)
     if arr.ndim == 3:
         if arr.shape[2] == 3:
-            # Assume RGB from scientific TIFF
-            return cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_RGB2BGR)
+            # Assume RGB from scientific TIFF / tifffile
+            return cv2.cvtColor(_to_display_uint8(arr), cv2.COLOR_RGB2BGR)
         if arr.shape[2] == 4:
-            return cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_RGBA2BGR)
+            return cv2.cvtColor(_to_display_uint8(arr), cv2.COLOR_RGBA2BGR)
     raise MediaLoadError(f"Unsupported image array shape: {arr.shape}")
+
+
+def _to_display_uint8(arr: np.ndarray) -> np.ndarray:
+    """Explicit conversion to uint8 without silent low-byte truncation."""
+    if arr.dtype == np.uint8:
+        return arr
+    flat = arr.astype(np.float64, copy=False)
+    lo = float(np.min(flat))
+    hi = float(np.max(flat))
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return np.zeros(arr.shape, dtype=np.uint8)
+    scaled = (flat - lo) * (255.0 / (hi - lo))
+    return np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
 
 
 def load_media_frame(

@@ -87,6 +87,7 @@ class OpticalFlowResult:
     scientific_valid_mask_sha256: str = ""
     fingerprint: str = ""
     analysis_timestamp_utc: str = ""
+    analysis_run_id: str = ""
     sample_id: str = ""
     data_identity: str = ""
     roi_bounds: tuple[int, int, int, int] = (0, 0, 0, 0)
@@ -101,6 +102,7 @@ class OpticalFlowResult:
             "roi_bounds": list(self.roi_bounds),
             "fingerprint": self.fingerprint,
             "analysis_timestamp_utc": self.analysis_timestamp_utc,
+            "analysis_run_id": getattr(self, "analysis_run_id", "") or self.analysis_timestamp_utc,
             "has_valid_result": self.has_valid_result,
             "failure_reason": self.failure_reason,
             "frame_count": self.frame_count,

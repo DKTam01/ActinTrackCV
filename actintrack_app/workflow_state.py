@@ -1,12 +1,12 @@
 """Derive Workbench setup readiness from canonical persisted fields.
 
 No second redundant workflow enum is stored. Callers compose CellRegion,
-derived computational crop, optional nucleus, required cutoff, timing, and
-metric freshness into UI gating.
+derived computational crop, optional nucleus, required cutoff, media
+capabilities, timing (video only), and metric freshness into UI gating.
 
 Legacy ``crop_confirmed`` remains readable for old projects but no longer
 drives researcher-facing readiness. Product gating uses CellRegion, cutoff,
-and valid video timing only.
+media capabilities, and (for VIDEO) valid video timing.
 """
 
 from __future__ import annotations
@@ -14,9 +14,23 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from actintrack_app.media_capabilities import (
+    SampleMediaType,
+    capabilities_for,
+)
+
 
 ANNOTATION_FIELD_CROP_CONFIRMED = "crop_confirmed"
 NUCLEUS_CUTOFF_ALIGNMENT_TOLERANCE_PX = 0.5
+
+
+def _coerce_media_type(media_type: SampleMediaType | str) -> SampleMediaType:
+    if isinstance(media_type, SampleMediaType):
+        return media_type
+    text = str(media_type or "").strip().lower()
+    if text == SampleMediaType.IMAGE.value:
+        return SampleMediaType.IMAGE
+    return SampleMediaType.VIDEO
 
 
 @dataclass(frozen=True)
@@ -35,6 +49,11 @@ class WorkflowSnapshot:
     metrics_stale: bool = False
     metrics_running: bool = False
     nucleus_alignment_needs_review: bool = False
+    media_type: SampleMediaType = SampleMediaType.VIDEO
+
+    @property
+    def capabilities(self):
+        return capabilities_for(self.media_type)
 
     @property
     def cell_region_ready(self) -> bool:
@@ -50,14 +69,20 @@ class WorkflowSnapshot:
 
     @property
     def ready_to_run(self) -> bool:
-        return (
+        if not (
             self.has_sample
             and self.has_cell_region
             and self.has_crop
             and self.has_cutoff
-            and self.has_valid_video_timing
             and not self.metrics_running
-        )
+        ):
+            return False
+        caps = self.capabilities
+        if caps.requires_video_timing and not self.has_valid_video_timing:
+            return False
+        if caps.requires_nucleus_for_run and not self.has_nucleus:
+            return False
+        return True
 
     @property
     def metrics_current(self) -> bool:
@@ -79,8 +104,11 @@ class WorkflowSnapshot:
             return "Cell boundary is not ready"
         if not self.has_cutoff:
             return "Set the Measurement Cutoff to continue."
-        if not self.has_valid_video_timing:
+        caps = self.capabilities
+        if caps.requires_video_timing and not self.has_valid_video_timing:
             return "Valid video timing is required"
+        if caps.requires_nucleus_for_run and not self.has_nucleus:
+            return "Set the nucleus to run F-actin Orientation"
         return None
 
     def metric_analysis_block_reason(self) -> str | None:
@@ -101,16 +129,23 @@ class WorkflowSnapshot:
             return "Identifying the cell boundary…"
         if not self.has_cutoff:
             return "Set the Measurement Cutoff to continue."
-        if not self.has_valid_video_timing:
+        caps = self.capabilities
+        if caps.requires_nucleus_for_run and not self.has_nucleus:
+            return "Set the nucleus to continue."
+        if caps.requires_video_timing and not self.has_valid_video_timing:
             return "Video timing is unavailable — calibrated metrics cannot run."
         if self.metrics_running:
             return "Running metrics…"
         if self.metrics_stale:
             return "Setup changed — run Metrics again."
         if not self.metrics_present:
+            if caps.is_image:
+                return "Ready — click Run Metrics (F-actin Orientation)."
             if self.has_nucleus:
                 return "Ready — click Run Metrics."
-            return "Ready — click Run Metrics (nucleus optional for Toward Nucleus / Orientation)."
+            return "Ready — click Run Metrics (nucleus optional for Toward Nucleus)."
+        if caps.is_image:
+            return "Metrics current. Open Metric Analysis for orientation detail."
         return "Metrics current. Open Metric Analysis for detail, or switch samples."
 
 
@@ -158,6 +193,7 @@ def build_workflow_snapshot(
     has_valid_video_timing: bool | None = None,
     has_cutoff: bool = False,
     nucleus_alignment_needs_review: bool = False,
+    media_type: SampleMediaType | str = SampleMediaType.VIDEO,
 ) -> WorkflowSnapshot:
     video_timing_ready = (
         bool(timing_confirmed)
@@ -177,6 +213,7 @@ def build_workflow_snapshot(
         metrics_stale=bool(metrics_stale),
         metrics_running=bool(metrics_running),
         nucleus_alignment_needs_review=bool(nucleus_alignment_needs_review),
+        media_type=_coerce_media_type(media_type),
     )
 
 
@@ -198,6 +235,7 @@ class WorkbenchLiveInputs:
     metrics_stale: bool
     metrics_running: bool
     nucleus_alignment_needs_review: bool = False
+    media_type: SampleMediaType = SampleMediaType.VIDEO
 
 
 def snapshot_from_live_inputs(inputs: WorkbenchLiveInputs) -> WorkflowSnapshot:
@@ -215,6 +253,7 @@ def snapshot_from_live_inputs(inputs: WorkbenchLiveInputs) -> WorkflowSnapshot:
         metrics_stale=bool(inputs.metrics_stale),
         metrics_running=bool(inputs.metrics_running),
         nucleus_alignment_needs_review=bool(inputs.nucleus_alignment_needs_review),
+        media_type=inputs.media_type,
     )
 
 
@@ -232,8 +271,10 @@ def format_sample_results_summary(
     timing_confirmed: bool,
     stale: bool = False,
     has_nucleus: bool = True,
+    media_type: SampleMediaType | str = SampleMediaType.VIDEO,
 ) -> str:
     """Concise Workbench Sample Results text from persisted display values."""
+    caps = capabilities_for(_coerce_media_type(media_type))
 
     def _px(value: Optional[float]) -> str:
         if value is None:
@@ -248,51 +289,60 @@ def format_sample_results_summary(
     lines = ["SAMPLE RESULTS"]
     if stale:
         lines.append("Outdated — run Metrics again")
-    lines.extend(
-        [
-            "",
-            "General Movement",
-            _px(sparse_px),
-            _um(sparse_um_s),
-        ]
-    )
-    if sparse_um_s is not None and not timing_confirmed:
-        lines.append("Timing unconfirmed")
-    lines.extend(
-        [
-            "",
-            "Optical Flow",
-            _px(of_px),
-            _um(of_um_s),
-        ]
-    )
-    if of_um_s is not None and not timing_confirmed:
-        lines.append("Timing unconfirmed")
-    lines.append("")
-    lines.append("Toward Nucleus")
-    if not has_nucleus:
-        lines.append("Nucleus required")
-    else:
-        lines.append(_um(toward_nucleus_um_s) if toward_nucleus_um_s is not None else "—")
-    lines.append("")
-    lines.append("F-actin Orientation")
-    if not has_nucleus:
-        lines.append("Nucleus required")
-    elif orientation_deg is None:
-        lines.append("—")
-    else:
-        lines.append(f"{float(orientation_deg):.1f}°")
-    lines.append("")
-    lines.append("Tracks")
-    if tracks_used is None:
-        lines.append("—")
-    elif tracks_requested is not None and tracks_requested > tracks_used:
-        lines.append(f"{tracks_used} valid / {tracks_requested} requested")
-    else:
-        lines.append(f"{tracks_used} valid")
-    lines.append("")
-    lines.append("Video Timing")
-    lines.append(timing_label or "—")
+
+    if caps.supports_general_movement:
+        lines.extend(
+            [
+                "",
+                "General Movement",
+                _px(sparse_px),
+                _um(sparse_um_s),
+            ]
+        )
+        if sparse_um_s is not None and not timing_confirmed:
+            lines.append("Timing unconfirmed")
+    if caps.supports_optical_flow:
+        lines.extend(
+            [
+                "",
+                "Optical Flow",
+                _px(of_px),
+                _um(of_um_s),
+            ]
+        )
+        if of_um_s is not None and not timing_confirmed:
+            lines.append("Timing unconfirmed")
+    if caps.supports_toward_nucleus:
+        lines.append("")
+        lines.append("Toward Nucleus")
+        if not has_nucleus:
+            lines.append("Nucleus required")
+        else:
+            lines.append(
+                _um(toward_nucleus_um_s) if toward_nucleus_um_s is not None else "—"
+            )
+    if caps.supports_orientation:
+        lines.append("")
+        lines.append("F-actin Orientation")
+        if not has_nucleus:
+            lines.append("Nucleus required")
+        elif orientation_deg is None:
+            lines.append("—")
+        else:
+            lines.append(f"{float(orientation_deg):.1f}°")
+    if caps.supports_general_movement:
+        lines.append("")
+        lines.append("Tracks")
+        if tracks_used is None:
+            lines.append("—")
+        elif tracks_requested is not None and tracks_requested > tracks_used:
+            lines.append(f"{tracks_used} valid / {tracks_requested} requested")
+        else:
+            lines.append(f"{tracks_used} valid")
+    if caps.requires_video_timing:
+        lines.append("")
+        lines.append("Video Timing")
+        lines.append(timing_label or "—")
     return "\n".join(lines)
 
 
