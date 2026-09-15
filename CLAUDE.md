@@ -11,7 +11,7 @@ Two architectural facts shape almost everything:
 1. **The current tracker is traditional computer vision, not AI.** It finds the brightest actin points/regions in frame 0, searches locally for matches in each subsequent frame, and converts calibrated displacement into velocity. Roboflow/DINOv3/learned models are historical context or deferred future work — do **not** introduce model-training dependencies into the tracking path. See `PROJECT_OVERVIEW.md` and `PROJECT_CHANGES_NATURAL_LANGUAGE.md`.
 2. **PyQt is a workbench; R Shiny is the product.** `actintrack_app/` (PyQt6) is for algorithm development. `shiny_app/` (R) is the intended end-user app. They share the **same analysis core** (`actintrack_app.motion_index`) — Shiny reaches it through the `scripts/shiny_bridge.py` CLI. Keep the Python analysis producing stable CSV/JSON/QC outputs; don't make the PyQt GUI the deliverable.
 
-Keep **2D tracking (Track A)** and **3D stack analysis (Track B)** decoupled. Track A (avi/mp4 velocity) is the active milestone; 3D thickness/depth from `.tif`/`.oir` stacks is future and must not complicate the 2D path. Active import formats are **AVI and MP4 only**.
+Keep **2D tracking (Track A)** and **3D stack analysis (Track B)** decoupled. Track A (AVI/MP4 velocity) remains the motion milestone; static IMAGE samples (JPG/JPEG/TIF/TIFF) support structural F-actin Orientation only. 3D thickness/depth from multi-page `.tif`/`.oir` stacks is future and must not complicate the 2D path. Product import formats: **AVI, MP4, JPG, JPEG, TIF, TIFF**.
 
 ## Commands
 

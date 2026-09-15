@@ -22,6 +22,11 @@ packaging/assets/
 - `README.md` — shown by Help → How to Run.
 - `packaging/assets/app/actintrackcv.png` — runtime window/app icon (QIcon).
 
+## Scientific codecs (MEDIA1)
+
+- **Video:** OpenCV `cv2` dynamic libs / FFmpeg (existing `collect_dynamic_libs("cv2")` + `imageio_ffmpeg` for odd-dimension normalize).
+- **Still images / TIFF:** `tifffile` is imported by `video_processing.load_tiff_page`. Ensure PyInstaller picks it up (normal import graph); validate `.tif`/`.tiff` open in the frozen app on Windows and macOS before release.
+
 ## Icon assets
 - `packaging/assets/app/actintrackcv.png` — present (final app icon).
 - `packaging/assets/app/actintrackcv.ico` — present (Windows .exe icon).

@@ -234,7 +234,8 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
         self.assertIn("8.18 px/frame", text)
         self.assertIn("Optical Flow", text)
         self.assertIn("Toward Nucleus", text)
-        self.assertIn("F-actin Orientation", text)
+        # MEDIA1: orientation is IMAGE-only; VIDEO Sample Results omit it.
+        self.assertNotIn("F-actin Orientation", text)
         self.assertIn("Tracks", text)
         self.assertIn("Video Timing", text)
         self.assertIn("6.00 FPS · 0.1667 s/frame", text)

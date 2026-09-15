@@ -25,13 +25,19 @@ For a plain-language record of direction changes, see `PROJECT_CHANGES_NATURAL_L
 
 This section describes the **current researcher-facing Workbench**. Historical notes below about drawn ROIs, Confirm Crop, and 30 s/frame as an unquestioned default are retained as project history; they are not the current UI.
 
-1. Import AVI/MP4 into a Condition Group / Sample.
+1. Import scientific media into a Condition Group / Sample:
+   - **VIDEO:** AVI / MP4 (motion metrics)
+   - **IMAGE:** JPG / JPEG / TIF / TIFF (structural F-actin Orientation)
+   Multi-select and drag/drop onto a Condition Group are supported.
 2. Automatic **Cell Boundary** (optional sensitivity).
 3. Required **Measurement Cutoff**.
-4. Optional **Nucleus** (required only for Toward Nucleus and F-actin Orientation).
-5. **Detected video timing** (`1 / observed FPS`, `timing_source=video_header`). Encoded FPS is not hard-coded to 6; 6 FPS is read from files when present.
-6. **Run Metrics** (template tracking + optical flow; orientation when a nucleus exists).
-7. **Metric Analysis** inspects that persisted run only (no recompute). Missing modes show an empty-state message in the preview area.
+4. **Nucleus** — required for Toward Nucleus (video) and for F-actin Orientation (image).
+5. **Detected video timing** for VIDEO samples only (`1 / observed FPS`, `timing_source=video_header`). IMAGE samples do not use FPS.
+6. **Run Metrics** — media-aware:
+   - VIDEO: Template Tracking + Optical Flow (+ Toward Nucleus when nucleus set). **Not** orientation.
+   - IMAGE: structural F-actin Orientation only (nucleus required).
+7. **Metric Analysis** inspects that persisted run only (no recompute). Modes follow media capabilities.
+8. **Analysis** aggregates by metric-capable samples. Right-click a Sample Details metric cell → **Show All Measurements** opens a modeless inspector bound to that analysis run.
 
 RectROI remains an **internal** computational crop derived from the Cell Boundary. Researchers no longer draw, confirm, clear, or suggest a rectangle.
 

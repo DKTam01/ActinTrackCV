@@ -1809,11 +1809,12 @@ class MainWindow(QMainWindow):
         return draft_tracking_path(self._project_root, data_id)
 
     def _sample_row_for_id(self, sample_id: str) -> Optional[dict[str, Any]]:
+        current = self.__dict__.get("_current_sample")
         if (
-            self._current_sample is not None
-            and str(self._current_sample.get("sample_id", "")) == sample_id
+            isinstance(current, dict)
+            and str(current.get("sample_id", "")) == sample_id
         ):
-            return self._current_sample
+            return current
         return self._persisted_sample_row_for_id(sample_id)
 
     def _workspace_project_root(self) -> Path | None:
@@ -1825,7 +1826,7 @@ class MainWindow(QMainWindow):
     ) -> Optional[dict[str, Any]]:
         """Load a Sample row from workspace metadata (never the in-memory current sample)."""
         project_root = self._workspace_project_root()
-        if project_root is None:
+        if not isinstance(project_root, Path):
             return None
         sid = str(sample_id).strip()
         if not sid:
@@ -2139,8 +2140,14 @@ class MainWindow(QMainWindow):
     def _sample_media_type_for_id(self, sample_id: str | None) -> SampleMediaType:
         if not sample_id:
             return SampleMediaType.VIDEO
-        row = self._persisted_sample_row_for_id(sample_id)
-        path = self._sample_media_path(sample_id)
+        # Prefer in-memory current sample so stubbed MainWindow.__new__ tests and
+        # live Workbench selection do not require a real samples.csv round-trip.
+        row = self._sample_row_for_id(str(sample_id))
+        path = None
+        try:
+            path = self._sample_media_path(str(sample_id))
+        except (TypeError, OSError, RuntimeError, AttributeError):
+            path = None
         return media_type_from_sample_row(row, fallback_path=path)
 
     def _sample_video_path(self, sample_id: str) -> Optional[Path]:
@@ -2170,7 +2177,10 @@ class MainWindow(QMainWindow):
     def _read_draft_structural_orientation_payload(
         self, sample_id: str
     ) -> dict | None:
-        if self._project_root is None:
+        # Use __dict__ + Path check so MainWindow.__new__ stubs and MagicMock
+        # project roots never hit Qt attribute lookup or fake filesystem paths.
+        project_root = self.__dict__.get("_project_root")
+        if not isinstance(project_root, Path):
             return None
         path = self._draft_structural_orientation_json_path(sample_id)
         if not path.is_file():

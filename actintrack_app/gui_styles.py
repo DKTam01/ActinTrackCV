@@ -861,9 +861,11 @@ def apply_application_design_system(app: QApplication) -> None:
     shared QSS tokens. Do not scatter platform ``if Windows`` stylesheet branches.
     """
     fusion = QStyleFactory.create("Fusion")
-    if fusion is not None:
+    if fusion is not None and hasattr(app, "setStyle"):
         app.setStyle(fusion)
-    app.setPalette(build_application_palette())
-    existing = app.styleSheet() or ""
-    app.setStyleSheet(existing + "\n" + _APP_ROOT_STYLESHEET)
+    if hasattr(app, "setPalette"):
+        app.setPalette(build_application_palette())
+    if hasattr(app, "styleSheet") and hasattr(app, "setStyleSheet"):
+        existing = app.styleSheet() or ""
+        app.setStyleSheet(existing + "\n" + _APP_ROOT_STYLESHEET)
 
