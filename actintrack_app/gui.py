@@ -4803,6 +4803,73 @@ class MainWindow(QMainWindow):
             return None
         return names[labels.index(picked)]
 
+    def _import_media_files_into_group(
+        self,
+        breed: str,
+        sources: list[Path],
+        *,
+        dialog_title: str = "Add Sample",
+    ) -> list:
+        """Canonical multi-file import into one Condition Group (picker or drop)."""
+        if self._project_root is None or not sources:
+            return []
+        self._last_import_dir = sources[0].parent
+        breadcrumb(
+            "gui.import_media: selected",
+            count=len(sources),
+            first=str(sources[0]),
+            group=breed,
+        )
+        results = create_samples_from_data_files(self._project_root, breed, sources)
+        successes = [r for r in results if r.succeeded]
+        failures = [r for r in results if r.error]
+        if not successes:
+            summary = format_sample_import_summary(results, total_selected=len(sources))
+            breadcrumb("gui.import_media: all failed", count=len(failures))
+            gui_dialogs.warning(self, dialog_title, summary)
+            return results
+        breadcrumb(
+            "gui.import_media: create returned, refreshing UI",
+            succeeded=len(successes),
+            failed=len(failures),
+        )
+        first = successes[0]
+        batch = first.batch
+        assert batch is not None
+        self._set_last_import_breed(breed)
+        if self._current_condition_group() != breed:
+            self._refresh_condition_group_combo(select=breed)
+        if self._preview_mode == "cropped_tracking":
+            self.reset_preview_state(clear_image=True)
+        self._after_import_refresh(group=breed, batch_name=str(batch["batch_name"]))
+        for result in successes:
+            if result.batch is not None:
+                self._auto_suggest_roi_for_new_sample(
+                    str(result.batch.get("sample_id", ""))
+                )
+        self._refresh_analysis_if_visible()
+        if failures:
+            summary = format_sample_import_summary(results, total_selected=len(sources))
+            gui_dialogs.warning(self, dialog_title, summary)
+        elif len(sources) > 1:
+            summary = format_sample_import_summary(results, total_selected=len(sources))
+            self._status(summary.split("\n", 1)[0])
+        return results
+
+    def _on_explorer_external_files_dropped(
+        self, condition_group_id: str, paths: list
+    ) -> None:
+        """Import dropped files into the drop-target Condition Group."""
+        if self._require_project_root() is None:
+            return
+        breed = str(condition_group_id or "").strip()
+        if not breed:
+            return
+        sources = [Path(p) for p in paths]
+        self._import_media_files_into_group(
+            breed, sources, dialog_title="Import Files"
+        )
+
     def _on_add_sample(self, group: str | None = None) -> None:
         if self._require_project_root() is None:
             return
@@ -4823,52 +4890,7 @@ class MainWindow(QMainWindow):
         if not path_strs:
             return
         sources = [Path(p) for p in path_strs]
-        self._last_import_dir = sources[0].parent
-        breadcrumb(
-            "gui.add_sample: selected",
-            count=len(sources),
-            first=str(sources[0]),
-        )
-        results = create_samples_from_data_files(self._project_root, breed, sources)
-        successes = [r for r in results if r.succeeded]
-        failures = [r for r in results if r.error]
-        if not successes:
-            summary = format_sample_import_summary(results, total_selected=len(sources))
-            breadcrumb("gui.add_sample: all failed", count=len(failures))
-            gui_dialogs.warning(self, "Add Sample", summary)
-            return
-        breadcrumb(
-            "gui.add_sample: create returned, refreshing UI",
-            succeeded=len(successes),
-            failed=len(failures),
-        )
-        first = successes[0]
-        batch = first.batch
-        assert batch is not None
-        self._set_last_import_breed(breed)
-        if self._current_condition_group() != breed:
-            self._refresh_condition_group_combo(select=breed)
-        if self._preview_mode == "cropped_tracking":
-            self.reset_preview_state(clear_image=True)
-        self._after_import_refresh(group=breed, batch_name=str(batch["batch_name"]))
-        self._auto_suggest_roi_for_new_sample(str(batch.get("sample_id", "")))
-        self._refresh_analysis_if_visible()
-        if failures:
-            summary = format_sample_import_summary(results, total_selected=len(sources))
-            gui_dialogs.warning(self, "Add Sample", summary)
-        if len(sources) == 1:
-            label = display_sample_label(
-                int(batch.get("batch_number", 1) or 1),
-                str(batch.get("batch_name", "")),
-            )
-            self._status(f"Added {label} from {sources[0].name}")
-        elif failures:
-            self._status(
-                f"Added {len(successes)} of {len(sources)} samples "
-                f"(see import summary for failures)"
-            )
-        else:
-            self._status(f"Added {len(successes)} samples from {len(sources)} files")
+        self._import_media_files_into_group(breed, sources, dialog_title="Add Sample")
 
     def _auto_suggest_roi_for_new_sample(self, sample_id: str) -> None:
         """Persist an auto-suggested ROI for a freshly added Sample.

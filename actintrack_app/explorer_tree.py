@@ -1,8 +1,11 @@
-"""Explorer tree widget with internal Sample drag/drop between Condition Groups."""
+"""Explorer tree widget with Sample reorder and external scientific-media import."""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QItemSelectionModel, QMimeData, QModelIndex, QPointF, Qt, pyqtSignal
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+from PyQt6.QtCore import QItemSelectionModel, QMimeData, QModelIndex, QPointF, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QDrag,
@@ -409,11 +412,17 @@ class ExplorerTreeItemDelegate(QStyledItemDelegate):
 
 
 class ExplorerTreeWidget(QTreeWidget):
-    """QTreeWidget that drags one Sample at a time onto a Condition Group target."""
+    """QTreeWidget that drags one Sample at a time onto a Condition Group target.
+
+    Also accepts external filesystem drops of scientific media onto a
+    Condition Group (destination = drop target, not prior selection).
+    """
 
     sample_drop_requested = pyqtSignal(str, str)
     # sample_id, condition_group_id, before_sample_id ("" = append at end)
     sample_reorder_requested = pyqtSignal(str, str, str)
+    # condition_group_id, local filesystem paths (input/drop order)
+    external_files_drop_requested = pyqtSignal(str, list)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -424,6 +433,40 @@ class ExplorerTreeWidget(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    @staticmethod
+    def local_paths_from_mime(mime: QMimeData) -> list[Path]:
+        """Extract local file paths from an OS file drop (macOS/Windows)."""
+        paths: list[Path] = []
+        seen: set[str] = set()
+        urls = mime.urls() if mime.hasUrls() else []
+        for url in urls:
+            if not isinstance(url, QUrl):
+                continue
+            if url.scheme() and url.scheme().lower() not in ("file", ""):
+                continue
+            local = url.toLocalFile()
+            if not local:
+                # Fallback for some Windows path encodings.
+                parsed = urlparse(url.toString())
+                local = unquote(parsed.path or "")
+                if local.startswith("/") and len(local) > 2 and local[2] == ":":
+                    # /C:/... → C:/...
+                    local = local[1:]
+            if not local:
+                continue
+            path = Path(local)
+            key = str(path.resolve()) if path.exists() else str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
+        return paths
+
+    def _mime_has_external_files(self, mime: QMimeData) -> bool:
+        if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            return False
+        return bool(self.local_paths_from_mime(mime))
 
     def drawBranches(self, painter, rect, index) -> None:  # noqa: N802
         if not index.isValid() or index.column() != 0:
@@ -500,32 +543,51 @@ class ExplorerTreeWidget(QTreeWidget):
         drag.exec(Qt.DropAction.MoveAction)
 
     def dragEnterEvent(self, event) -> None:  # noqa: N802
-        if not event.mimeData().hasFormat(EXPLORER_SAMPLE_MIME):
-            event.ignore()
-            return
+        mime = event.mimeData()
         target_gid = self._drop_target_group_id(self.itemAt(event.position().toPoint()))
-        if target_gid:
+        if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            if target_gid:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
+        if self._mime_has_external_files(mime) and target_gid:
             event.acceptProposedAction()
-        else:
-            event.ignore()
+            return
+        event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802
-        if not event.mimeData().hasFormat(EXPLORER_SAMPLE_MIME):
-            event.ignore()
-            return
+        mime = event.mimeData()
         target_gid = self._drop_target_group_id(self.itemAt(event.position().toPoint()))
-        if target_gid:
+        if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            if target_gid:
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            return
+        if self._mime_has_external_files(mime) and target_gid:
             event.acceptProposedAction()
-        else:
-            event.ignore()
+            return
+        event.ignore()
 
     def dropEvent(self, event) -> None:  # noqa: N802
-        if not event.mimeData().hasFormat(EXPLORER_SAMPLE_MIME):
-            event.ignore()
-            return
-        sample_id = bytes(event.mimeData().data(EXPLORER_SAMPLE_MIME)).decode("utf-8")
+        mime = event.mimeData()
         target_item = self.itemAt(event.position().toPoint())
         target_gid = self._drop_target_group_id(target_item)
+
+        if self._mime_has_external_files(mime):
+            paths = self.local_paths_from_mime(mime)
+            if not target_gid or not paths:
+                event.ignore()
+                return
+            self.external_files_drop_requested.emit(target_gid, paths)
+            event.acceptProposedAction()
+            return
+
+        if not mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            event.ignore()
+            return
+        sample_id = bytes(mime.data(EXPLORER_SAMPLE_MIME)).decode("utf-8")
         if not sample_id or not target_gid:
             event.ignore()
             return

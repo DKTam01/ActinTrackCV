@@ -405,6 +405,9 @@ def build_explorer_tree_host(window: MainWindow) -> QWidget:
     window.tree_samples.sample_reorder_requested.connect(
         window._on_explorer_sample_reordered
     )
+    window.tree_samples.external_files_drop_requested.connect(
+        window._on_explorer_external_files_dropped
+    )
     tree_container = QWidget()
     tree_layout = QVBoxLayout(tree_container)
     apply_explorer_tree_content_margins(tree_layout)
