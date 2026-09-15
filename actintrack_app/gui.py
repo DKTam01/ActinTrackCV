@@ -592,11 +592,20 @@ class MainWindow(QMainWindow):
         # Per-Sample explicit metric compute state (decoupled from the live canvas).
         self._metrics_inflight: set[str] = set()
         self._metric_error_by_sample: dict[str, bool] = {}
+        self._measurement_inspectors: list = []
 
         self._splitter_sizes_before_analysis: list[int] | None = None
         self._explorer_group_expansion_by_id: dict[str, bool] = {}
         self._normalizing_explorer_selection = False
         self._build_ui()
+        if self.__dict__.get("_analysis_view") is not None:
+            self._analysis_view.show_all_measurements_requested.connect(
+                self._on_show_all_measurements
+            )
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._close_measurement_inspectors()
+        super().closeEvent(event)
         self._set_tracking_settings_editable(False)
         setup_application_menus(self)
         self._load_project(self._workspace_root, "Workspace project loaded")
@@ -1028,6 +1037,63 @@ class MainWindow(QMainWindow):
             )
             return
         self._analysis_view.refresh(report)
+
+    def _on_show_all_measurements(
+        self,
+        sample_id: str,
+        condition_group: str,
+        sample_label: str,
+        metric_id,
+    ) -> None:
+        if self._project_root is None:
+            return
+        from actintrack_app.measurement_inspector_window import (
+            MeasurementInspectorWindow,
+        )
+        from actintrack_app.measurement_series import load_metric_measurement_series
+        from actintrack_app.media_capabilities import MetricId as _MetricId
+
+        if not isinstance(metric_id, _MetricId):
+            try:
+                metric_id = _MetricId(str(metric_id))
+            except ValueError:
+                return
+        series = load_metric_measurement_series(
+            self._project_root,
+            str(sample_id),
+            metric_id,
+            sample_label=str(sample_label or ""),
+            condition_group=str(condition_group or ""),
+        )
+        if not series.available:
+            gui_dialogs.information(
+                self,
+                "Show All Measurements",
+                series.unavailable_reason or "No contributing measurements available.",
+            )
+            return
+        window = MeasurementInspectorWindow(series, parent=self)
+        self._measurement_inspectors.append(window)
+
+        def _forget(*_args: object) -> None:
+            inspectors = self.__dict__.get("_measurement_inspectors") or []
+            self.__dict__["_measurement_inspectors"] = [
+                w for w in inspectors if w is not window
+            ]
+
+        window.destroyed.connect(_forget)
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _close_measurement_inspectors(self) -> None:
+        inspectors = list(self.__dict__.get("_measurement_inspectors") or [])
+        self.__dict__["_measurement_inspectors"] = []
+        for window in inspectors:
+            try:
+                window.close()
+            except RuntimeError:
+                pass
 
     def _refresh_analysis_if_visible(self) -> None:
         if self._center_stack.currentIndex() == 1:
@@ -4500,6 +4566,7 @@ class MainWindow(QMainWindow):
 
     def _load_project(self, root: Path, status_msg: str) -> None:
         try:
+            self._close_measurement_inspectors()
             root = Path(root).resolve()
             if not is_valid_project(root):
                 create_project_structure(root)

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QGroupBox,
     QHeaderView,
     QLabel,
+    QMenu,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -28,6 +29,7 @@ from actintrack_app.gui_styles import (
     apply_muted_hint_style,
     apply_panel_inner_margins,
 )
+from actintrack_app.media_capabilities import MetricId
 
 UNAVAILABLE = "—"
 NUCLEUS_REQUIRED_TIP = "Requires nucleus annotation"
@@ -55,6 +57,13 @@ SAMPLE_DETAIL_HEADERS = [
     "Toward Nucleus (µm/s)",
     "F-actin Orientation (°)",
 ]
+# Column indices for primary metric cells in Sample Details.
+SAMPLE_DETAIL_METRIC_COLUMNS: dict[int, MetricId] = {
+    3: MetricId.GENERAL_MOVEMENT,
+    4: MetricId.OPTICAL_FLOW,
+    5: MetricId.TOWARD_NUCLEUS,
+    6: MetricId.ORIENTATION,
+}
 COMPARISON_HEADERS = [
     "Rank",
     "Condition Group",
@@ -130,6 +139,9 @@ def _set_table_cell(
 class AnalysisViewWidget(QWidget):
     """Read-only tables for condition-group summaries, sample details, and comparison."""
 
+    # sample_id, condition_group, sample_label, metric_id
+    show_all_measurements_requested = pyqtSignal(str, str, str, object)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -158,6 +170,12 @@ class AnalysisViewWidget(QWidget):
         )
 
         self.tbl_sample_details = self._make_table(SAMPLE_DETAIL_HEADERS)
+        self.tbl_sample_details.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.tbl_sample_details.customContextMenuRequested.connect(
+            self._on_sample_details_context_menu
+        )
         body_layout.addWidget(
             self._wrap_group("Sample Details", self.tbl_sample_details)
         )
@@ -285,6 +303,7 @@ class AnalysisViewWidget(QWidget):
         table = self.tbl_sample_details
         table.setSortingEnabled(False)
         table.setRowCount(len(rows))
+        self._sample_detail_rows = list(rows)
         for r, row in enumerate(rows):
             m = row.metrics
             tn_missing = m.toward_nucleus_velocity is None
@@ -328,10 +347,63 @@ class AnalysisViewWidget(QWidget):
                     numeric=numeric,
                     tooltip=tooltip,
                 )
+            # Persist identity on the row so context menus survive sorting.
+            first = table.item(r, 0)
+            if first is not None:
+                first.setData(
+                    Qt.ItemDataRole.UserRole + 1,
+                    {
+                        "sample_id": str((row.sample_ids or ("",))[0]),
+                        "breed": row.breed,
+                        "sample_label": row.sample_label,
+                        "general_movement": m.general_movement,
+                        "of_general_movement": m.of_general_movement,
+                        "toward_nucleus_velocity": m.toward_nucleus_velocity,
+                        "orientation_median_deg": m.orientation_median_deg,
+                    },
+                )
         table.resizeRowsToContents()
         header = table.horizontalHeader()
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         table.setSortingEnabled(True)
+
+    def _on_sample_details_context_menu(self, pos) -> None:
+        table = self.tbl_sample_details
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        col = index.column()
+        metric_id = SAMPLE_DETAIL_METRIC_COLUMNS.get(col)
+        if metric_id is None:
+            return
+        row = index.row()
+        identity_item = table.item(row, 0)
+        if identity_item is None:
+            return
+        meta = identity_item.data(Qt.ItemDataRole.UserRole + 1)
+        if not isinstance(meta, dict):
+            return
+        metric_value = {
+            MetricId.GENERAL_MOVEMENT: meta.get("general_movement"),
+            MetricId.OPTICAL_FLOW: meta.get("of_general_movement"),
+            MetricId.TOWARD_NUCLEUS: meta.get("toward_nucleus_velocity"),
+            MetricId.ORIENTATION: meta.get("orientation_median_deg"),
+        }.get(metric_id)
+        if metric_value is None:
+            return
+        sample_id = str(meta.get("sample_id") or "").strip()
+        if not sample_id:
+            return
+        menu = QMenu(self)
+        action = menu.addAction("Show All Measurements")
+        chosen = menu.exec(table.viewport().mapToGlobal(pos))
+        if chosen is action:
+            self.show_all_measurements_requested.emit(
+                sample_id,
+                str(meta.get("breed") or ""),
+                str(meta.get("sample_label") or ""),
+                metric_id,
+            )
 
     def _fill_comparison(self, rows: list[BreedComparisonRow]) -> None:
         table = self.tbl_comparison
