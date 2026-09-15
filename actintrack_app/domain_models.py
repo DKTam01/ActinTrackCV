@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class DataFileRecord:
-    """One imported AVI/MP4 (or legacy image) data file."""
+    """One imported scientific media file (video or static image)."""
 
     data_id: str
     breed: str
@@ -19,6 +19,7 @@ class DataFileRecord:
     original_filename: str = ""
     stored_path: str = ""
     file_type: str = ""
+    media_type: str = ""  # "video" | "image" (MEDIA1); empty on pre-MEDIA1 rows
     is_video: str = "false"
     is_image_sequence: str = "false"
     frame_number: str = "0"
@@ -42,6 +43,7 @@ class DataFileRecord:
             "original_filename": self.original_filename,
             "stored_path": self.stored_path,
             "file_type": self.file_type,
+            "media_type": self.media_type,
             "is_video": self.is_video,
             "is_image_sequence": self.is_image_sequence,
             "frame_number": self.frame_number,
@@ -68,6 +70,7 @@ class DataFileRecord:
             "original_filename": d["original_filename"],
             "stored_path": d["stored_path"],
             "file_type": d["file_type"],
+            "media_type": d.get("media_type", ""),
             "is_video": d["is_video"],
             "is_image_sequence": d["is_image_sequence"],
             "frame_number": d["frame_number"],
@@ -101,6 +104,7 @@ class DataFileRecord:
             original_filename=str(row.get("original_filename", "")),
             stored_path=str(row.get("stored_path", "")),
             file_type=str(row.get("file_type", "")),
+            media_type=str(row.get("media_type", "")),
             is_video=str(row.get("is_video", "false")),
             is_image_sequence=str(row.get("is_image_sequence", "false")),
             frame_number=str(row.get("frame_number", "0")),

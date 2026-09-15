@@ -35,6 +35,7 @@ def _coerce_samples_df_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         "original_filename",
         "stored_path",
         "file_type",
+        "media_type",
         "is_video",
         "is_image_sequence",
         "frame_number",

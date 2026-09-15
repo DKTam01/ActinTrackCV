@@ -31,6 +31,10 @@ from actintrack_app.condition_group_manager import (
     get_condition_group_name,
     sync_data_file_group_bridge,
 )
+from actintrack_app.media_capabilities import (
+    SampleMediaType,
+    classify_media_path,
+)
 from actintrack_app.utils import (
     METADATA_DIR,
     SAMPLES_CSV,
@@ -75,6 +79,12 @@ def _build_sample_record(
     notes: str = "",
 ) -> dict[str, str]:
     is_video = is_video_path(src_path)
+    media = classify_media_path(src_path)
+    media_type = (
+        media.value
+        if media is not None
+        else (SampleMediaType.VIDEO.value if is_video else SampleMediaType.IMAGE.value)
+    )
     batch_number = int(batch["batch_number"])
     auto_name = auto_export_name_for_sample(
         group=group_display,
@@ -91,8 +101,10 @@ def _build_sample_record(
             "original_filename": src_path.name,
             "stored_path": relative_to_root(root, dest_path),
             "file_type": file_type_label(src_path),
+            "media_type": media_type,
             "is_video": "true" if is_video else "false",
-            "is_image_sequence": "false" if is_video else "true",
+            # Single still images are IMAGE media, not image sequences.
+            "is_image_sequence": "false",
             "frame_number": str(frame_number),
             "auto_export_name": auto_name,
             "custom_export_name": "",
@@ -184,8 +196,14 @@ def import_files(
         if not is_supported_file(src_path):
             raise ValueError(
                 f"Unsupported file type: {src_path.suffix}. "
-                "Only AVI and MP4 data files are supported in the current "
-                "workflow."
+                "Supported formats: AVI, MP4, JPG, JPEG, TIF, TIFF."
+            )
+        from actintrack_app.media_capabilities import is_product_media_path
+
+        if not is_product_media_path(src_path):
+            raise ValueError(
+                f"Unsupported file type: {src_path.suffix}. "
+                "Supported formats: AVI, MP4, JPG, JPEG, TIF, TIFF."
             )
 
         is_video = is_video_path(src_path)
