@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import (
+    QApplication,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -783,3 +784,86 @@ def configure_orient_panel_action_button(button: QPushButton) -> None:
         QSizePolicy.Policy.Fixed,
     )
     button.setMinimumHeight(ORIENT_PANEL_BUTTON_MIN_HEIGHT)
+
+
+def build_application_palette() -> QPalette:
+    """Neutral dark instrument palette shared across platforms (macOS reference)."""
+    palette = QPalette()
+    window = QColor(COLOR_WORKSPACE_BACKGROUND)
+    base = QColor(COLOR_FIELD_BACKGROUND)
+    text = QColor(COLOR_CONTROL_TEXT)
+    disabled = QColor(COLOR_CONTROL_TEXT_DISABLED)
+    highlight = QColor(COLOR_EXPLORER_SELECTION)
+    highlighted_text = QColor(COLOR_EXPLORER_SELECTION_TEXT)
+    button = QColor(COLOR_CONTROL_BACKGROUND)
+    palette.setColor(QPalette.ColorRole.Window, window)
+    palette.setColor(QPalette.ColorRole.WindowText, text)
+    palette.setColor(QPalette.ColorRole.Base, base)
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(COLOR_CONTROL_BACKGROUND))
+    palette.setColor(QPalette.ColorRole.Text, QColor(COLOR_FIELD_TEXT))
+    palette.setColor(QPalette.ColorRole.Button, button)
+    palette.setColor(QPalette.ColorRole.ButtonText, text)
+    palette.setColor(QPalette.ColorRole.ToolTipBase, base)
+    palette.setColor(QPalette.ColorRole.ToolTipText, text)
+    palette.setColor(QPalette.ColorRole.Highlight, highlight)
+    palette.setColor(QPalette.ColorRole.HighlightedText, highlighted_text)
+    palette.setColor(QPalette.ColorRole.Link, QColor(COLOR_CONTROL_BORDER_FOCUS))
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText, disabled)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text, disabled)
+    palette.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText, disabled)
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Base,
+        QColor(COLOR_FIELD_BACKGROUND_DISABLED),
+    )
+    return palette
+
+
+_APP_ROOT_STYLESHEET = f"""
+QToolTip {{
+  color: {COLOR_FIELD_TEXT};
+  background-color: {COLOR_CONTROL_BACKGROUND};
+  border: 1px solid {COLOR_CONTROL_BORDER};
+}}
+QMenu {{
+  background-color: {COLOR_CONTROL_BACKGROUND};
+  color: {COLOR_CONTROL_TEXT};
+  border: 1px solid {COLOR_CONTROL_BORDER};
+}}
+QMenu::item:selected {{
+  background-color: {COLOR_EXPLORER_SELECTION};
+  color: {COLOR_EXPLORER_SELECTION_TEXT};
+}}
+QMenu::item:disabled {{
+  color: {COLOR_CONTROL_TEXT_DISABLED};
+}}
+QHeaderView::section {{
+  background-color: {COLOR_CONTROL_BACKGROUND};
+  color: {COLOR_CONTROL_TEXT};
+  border: 1px solid {COLOR_CONTROL_BORDER};
+  padding: 4px;
+}}
+QTableWidget {{
+  background-color: {COLOR_WORKSPACE_BACKGROUND};
+  alternate-background-color: {COLOR_CONTROL_BACKGROUND};
+  color: {COLOR_FIELD_TEXT};
+  gridline-color: {COLOR_WORKSPACE_DIVIDER};
+  selection-background-color: {COLOR_EXPLORER_SELECTION};
+  selection-color: {COLOR_EXPLORER_SELECTION_TEXT};
+}}
+"""
+
+
+def apply_application_design_system(app: QApplication) -> None:
+    """Apply one app-level Fusion palette so Windows matches the macOS look.
+
+    Native file dialogs keep platform chrome; Workbench widgets continue to use
+    shared QSS tokens. Do not scatter platform ``if Windows`` stylesheet branches.
+    """
+    fusion = QStyleFactory.create("Fusion")
+    if fusion is not None:
+        app.setStyle(fusion)
+    app.setPalette(build_application_palette())
+    existing = app.styleSheet() or ""
+    app.setStyleSheet(existing + "\n" + _APP_ROOT_STYLESHEET)
+

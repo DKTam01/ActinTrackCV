@@ -252,8 +252,8 @@ def render_structural_orientation_overlay(
 ) -> np.ndarray:
     """Render subsampled QC glyphs from persisted measurements only.
 
-    Tangent ticks use ``local_orientation_deg``. Color encodes the persisted
-    0–90° nucleus-relative structural angle (cyan radial → amber tangential).
+    Tangent ticks use ``local_orientation_deg``. All glyphs share one
+    high-contrast overlay color (angle magnitude is not color-coded).
     This does not recompute structure-tensor orientation.
     """
     if frame.ndim == 2:
@@ -296,9 +296,11 @@ def render_structural_orientation_overlay(
 
 
 def _nucleus_relative_angle_bgr(angle_deg: float) -> tuple[int, int, int]:
-    t = max(0.0, min(1.0, float(angle_deg) / 90.0))
-    # BGR: cyan (radial) -> amber (tangential).
-    blue = int(round(255 * (1.0 - t)))
-    green = int(round(210 - 40 * t))
-    red = int(round(40 + 215 * t))
-    return (blue, green, red)
+    """Single high-contrast glyph color for all orientation measurements.
+
+    Angle magnitude is not encoded by color (presentation-only MEDIA1 change).
+    Geometry and numeric angles remain unchanged.
+    """
+    del angle_deg  # unused — color is uniform by design
+    # BGR: high-contrast lime (readable on dark fluorescence backgrounds).
+    return (40, 255, 180)

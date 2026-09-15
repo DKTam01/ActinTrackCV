@@ -6456,6 +6456,9 @@ def run_app() -> None:
     app.setApplicationName("ActinTrackCV")
     app.setApplicationVersion(__version__)
     app.setOrganizationName("ActinTrackCV")
+    from actintrack_app.gui_styles import apply_application_design_system
+
+    apply_application_design_system(app)
     icon = _app_qicon()
     if icon is not None:
         app.setWindowIcon(icon)

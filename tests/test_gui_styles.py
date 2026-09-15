@@ -42,6 +42,25 @@ class GuiStylesTests(unittest.TestCase):
         warning_style = label.setStyleSheet.call_args[0][0]
         self.assertIn(gui_styles.COLOR_STATUS_WARNING, warning_style)
 
+    def test_application_palette_uses_shared_tokens(self) -> None:
+        palette = gui_styles.build_application_palette()
+        from PyQt6.QtGui import QPalette
+
+        window = palette.color(QPalette.ColorRole.Window).name()
+        self.assertEqual(window.lower(), gui_styles.COLOR_WORKSPACE_BACKGROUND.lower())
+        disabled = palette.color(
+            QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text
+        ).name()
+        self.assertEqual(disabled.lower(), gui_styles.COLOR_CONTROL_TEXT_DISABLED.lower())
+
+    def test_apply_application_design_system_sets_fusion(self) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        gui_styles.apply_application_design_system(app)
+        self.assertTrue(bool(app.styleSheet()))
+        self.assertIsNotNone(app.style())
+
     def test_panel_margin_constants(self) -> None:
         self.assertEqual(gui_styles.PANEL_MARGIN, 6)
         self.assertEqual(gui_styles.PANEL_INNER_MARGIN, 8)
