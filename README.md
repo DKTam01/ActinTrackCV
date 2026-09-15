@@ -37,7 +37,7 @@ Legacy manifests such as `frames_index.csv` and the `raw_source/` archive use ol
 
 Most users do not need Python or the source code — download the prebuilt app from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
 
-1. Download `ActinTrackCV-1.0.0-macos-arm64.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0) (macOS Apple Silicon build only; Windows remains at `v0.2.1`).
+1. Download `ActinTrackCV-1.0.0-macos-arm64.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0) (macOS Apple Silicon).
 2. Unzip it (double-click in Finder).
 3. Open `ActinTrackCV.app`.
 4. Because this build is **unsigned**, macOS may block the first launch. If so, open
@@ -54,9 +54,9 @@ Notes for this build:
 
 ## Download for Windows
 
-A **Windows 10/11 x64 pre-release** is available as a one-folder zip (not an installer wizard yet).
+A **Windows 10/11 x64** build ships as a one-folder zip (not an installer wizard yet) — same idea as Mac: download, unzip, double-click.
 
-1. Download `ActinTrackCV-0.2.1-windows-x64-onefolder.zip` from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
+1. Download `ActinTrackCV-1.0.0-windows-x64-onefolder.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0).
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.

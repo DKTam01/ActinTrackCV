@@ -4,7 +4,13 @@ Builds a debuggable one-folder, windowed Windows app for Windows 10/11 x64.
 This is a **one-folder pre-release** (zip), **not** an installer wizard yet.
 
 > **Must run on Windows.** PyInstaller does not cross-compile — the `.exe` must
-> be built on a Windows 10/11 x64 machine.
+> be built on a Windows 10/11 x64 machine (a lab PC, a cloud VM, **or** GitHub
+> Actions `windows-latest`). You cannot produce a working Windows zip on a Mac
+> alone (Whisky/Wine is not supported for this PyQt6 + OpenCV stack).
+>
+> **From a Mac:** use **Actions → Package Windows → Run workflow**, optionally
+> set `release_tag` to `v1.0.0` (or later) so the zip attaches to that GitHub
+> Release. See `.github/workflows/package-windows.yml`.
 
 ## Prerequisites
 
@@ -46,15 +52,15 @@ Zip the **whole** one-folder app (the `.exe` needs the `_internal` folder and
 bundled files next to it — do not zip the `.exe` alone). From the repo root:
 
 ```powershell
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.1-windows-x64-onefolder.zip -Force
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.0.0-windows-x64-onefolder.zip -Force
 ```
 
 Verify the zip contains a top-level `ActinTrackCV\` folder with `ActinTrackCV.exe`
 and `_internal\` inside it.
 
-## End-user instructions (unsigned pre-release)
+## End-user instructions (unsigned)
 
-1. Download `ActinTrackCV-0.2.1-windows-x64-onefolder.zip`.
+1. Download `ActinTrackCV-1.0.0-windows-x64-onefolder.zip`.
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.
