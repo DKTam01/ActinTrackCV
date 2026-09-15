@@ -97,6 +97,8 @@ if TYPE_CHECKING:
     from actintrack_app.gui import MainWindow
 
 LEFT_PANEL_MIN_WIDTH = 200
+# Widths at or below this after restore are treated as corrupt / unusable.
+LEFT_PANEL_INVALID_WIDTH = 40
 DEFAULT_SPLITTER_SIZES = [LEFT_PANEL_MIN_WIDTH, 900]
 PLAYBACK_SPEED_OPTIONS = ("0.25×", "0.5×", "1×", "1.5×", "2×")
 METRIC_ANALYSIS_VIEW_LABEL = "Metric Analysis"
@@ -109,6 +111,34 @@ ROI_PREVIEW_CANVAS_MIN_WIDTH = 160
 ROI_PREVIEW_CANVAS_MIN_HEIGHT = 120
 WORKBENCH_ACTION_MODE_FULL = 0
 WORKBENCH_ACTION_MODE_METRIC = 1
+
+
+def sanitize_main_splitter_sizes(
+    sizes: list[int] | tuple[int, ...] | None,
+    *,
+    total_width: int | None = None,
+    explorer_min: int = LEFT_PANEL_MIN_WIDTH,
+    invalid_below: int = LEFT_PANEL_INVALID_WIDTH,
+) -> list[int]:
+    """Return usable Explorer|Preview splitter sizes; recover from near-zero panes.
+
+    Researchers may resize the Explorer; valid custom widths are preserved.
+    Near-zero / missing sizes fall back to ``DEFAULT_SPLITTER_SIZES``.
+    """
+    default = list(DEFAULT_SPLITTER_SIZES)
+    if not sizes or len(sizes) < 2:
+        return default
+    left = int(sizes[0])
+    right = int(sizes[1])
+    if left < invalid_below or right < invalid_below:
+        return default
+    left = max(left, explorer_min)
+    if total_width is not None and total_width > 0:
+        # Keep preview as the expanding remainder when the window is known.
+        right = max(invalid_below, int(total_width) - left)
+    elif right < invalid_below:
+        right = default[1]
+    return [left, right]
 
 
 def configure_workbench_adjacent_panel(host: QWidget) -> None:
@@ -331,12 +361,17 @@ def build_main_workspace(window: MainWindow) -> None:
     window._center_stack.addWidget(preview_page)
     window._center_stack.addWidget(build_analysis_page(window))
     splitter.addWidget(window._center_stack)
-    splitter.setSizes(list(DEFAULT_SPLITTER_SIZES))
     splitter.setStretchFactor(0, 0)
     splitter.setStretchFactor(1, 1)
     splitter.setCollapsible(0, False)
     splitter.setCollapsible(1, False)
     apply_main_splitter_style(splitter)
+    splitter.setSizes(
+        sanitize_main_splitter_sizes(
+            DEFAULT_SPLITTER_SIZES,
+            explorer_min=LEFT_PANEL_MIN_WIDTH,
+        )
+    )
     splitter.splitterMoved.connect(window._update_workspace_label)
     window._main_splitter = splitter
     layout.addWidget(splitter)
@@ -349,6 +384,10 @@ def build_left_sidebar(window: MainWindow) -> QWidget:
     apply_explorer_panel_style(panel)
     panel.setMinimumWidth(LEFT_PANEL_MIN_WIDTH)
     panel.setMaximumWidth(360)
+    panel.setSizePolicy(
+        QSizePolicy.Policy.Preferred,
+        QSizePolicy.Policy.Expanding,
+    )
     layout = QVBoxLayout(panel)
     apply_explorer_panel_margins(layout)
     layout.addWidget(build_samples_panel(window), stretch=1)

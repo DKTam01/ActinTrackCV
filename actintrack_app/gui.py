@@ -117,6 +117,7 @@ from actintrack_app.gui_layout_builders import (
     create_playback_slider,
     create_playback_speed_combo,
     create_playback_speed_label,
+    sanitize_main_splitter_sizes,
 )
 from actintrack_app.gui_styles import (
     CONTROL_ROW_SPACING,
@@ -602,13 +603,15 @@ class MainWindow(QMainWindow):
             self._analysis_view.show_all_measurements_requested.connect(
                 self._on_show_all_measurements
             )
-
-    def closeEvent(self, event) -> None:  # noqa: N802
-        self._close_measurement_inspectors()
-        super().closeEvent(event)
         self._set_tracking_settings_editable(False)
         setup_application_menus(self)
         self._load_project(self._workspace_root, "Workspace project loaded")
+        self._ensure_main_splitter_layout()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        """Close modeless inspectors, then defer to QMainWindow shutdown."""
+        self._close_measurement_inspectors()
+        super().closeEvent(event)
 
     def _build_ui(self) -> None:
         build_main_workspace(self)
@@ -900,13 +903,51 @@ class MainWindow(QMainWindow):
             return
         if visible:
             self._left_sidebar.show()
-            if self._splitter_sizes_before_analysis:
-                self._main_splitter.setSizes(self._splitter_sizes_before_analysis)
-                self._splitter_sizes_before_analysis = None
+            restored = self._splitter_sizes_before_analysis
+            self._splitter_sizes_before_analysis = None
+            self._ensure_main_splitter_layout(
+                preferred_sizes=restored,
+                force_defaults=restored is None,
+            )
             return
         if self._left_sidebar.isVisible():
             self._splitter_sizes_before_analysis = self._main_splitter.sizes()
         self._left_sidebar.hide()
+
+    def _ensure_main_splitter_layout(
+        self,
+        *,
+        preferred_sizes: list[int] | tuple[int, ...] | None = None,
+        force_defaults: bool = False,
+    ) -> None:
+        """Keep Explorer|Preview panes usable after show / Analysis restore.
+
+        Near-zero restored widths are rejected; valid researcher resize is kept.
+        """
+        if not hasattr(self, "_main_splitter") or not hasattr(self, "_left_sidebar"):
+            return
+        if not self._left_sidebar.isVisible():
+            return
+        splitter = self._main_splitter
+        total = int(splitter.width()) if splitter.width() > 0 else None
+        if force_defaults and preferred_sizes is None:
+            sizes = sanitize_main_splitter_sizes(
+                _DEFAULT_SPLITTER_SIZES,
+                total_width=total,
+                explorer_min=_LEFT_PANEL_MIN_WIDTH,
+            )
+        else:
+            current = preferred_sizes if preferred_sizes is not None else splitter.sizes()
+            sizes = sanitize_main_splitter_sizes(
+                current,
+                total_width=total,
+                explorer_min=_LEFT_PANEL_MIN_WIDTH,
+            )
+        if list(splitter.sizes()[:2]) != sizes:
+            splitter.setSizes(sizes)
+        # Hard floor matching the sidebar contract (also covers Fusion/QSS quirks).
+        if self._left_sidebar.minimumWidth() < _LEFT_PANEL_MIN_WIDTH:
+            self._left_sidebar.setMinimumWidth(_LEFT_PANEL_MIN_WIDTH)
 
     def _add_explorer_refresh_action(self, menu: QMenu) -> None:
         menu.addSeparator()

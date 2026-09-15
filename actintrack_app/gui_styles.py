@@ -277,7 +277,6 @@ STYLE_WORKSPACE_PREVIEW_PANEL = (
 STYLE_MAIN_SPLITTER = (
     "QSplitter::handle:horizontal {"
     f"  background-color: {COLOR_WORKSPACE_DIVIDER};"
-    "  width: 1px;"
     "}"
     "QSplitter::handle:horizontal:hover {"
     f"  background-color: {COLOR_WORKSPACE_DIVIDER};"
@@ -855,10 +854,13 @@ QTableWidget {{
 
 
 def apply_application_design_system(app: QApplication) -> None:
-    """Apply one app-level Fusion palette so Windows matches the macOS look.
+    """Apply shared palette/QSS; use Fusion when available for cross-platform look.
 
-    Native file dialogs keep platform chrome; Workbench widgets continue to use
-    shared QSS tokens. Do not scatter platform ``if Windows`` stylesheet branches.
+    Visual consistency (Windows matching the neutral macOS Workbench) is the
+    product requirement. Fusion is the preferred style engine for that palette,
+    but layout correctness does not depend on Fusion — Explorer width is owned
+    by splitter/minimum-width contracts in ``gui_layout_builders``.
+    Native file dialogs keep platform chrome.
     """
     fusion = QStyleFactory.create("Fusion")
     if fusion is not None and hasattr(app, "setStyle"):
