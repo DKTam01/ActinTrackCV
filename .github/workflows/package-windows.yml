@@ -37,6 +37,9 @@ jobs:
     name: Windows x64 one-folder zip
     runs-on: windows-latest
     timeout-minutes: 75
+    env:
+      # Headless-friendly for any Qt-touching unit tests during packaging.
+      QT_QPA_PLATFORM: offscreen
 
     steps:
       - name: Checkout
