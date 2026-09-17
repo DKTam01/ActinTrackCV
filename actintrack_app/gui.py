@@ -236,6 +236,11 @@ from actintrack_app.scientific_annotations import (
     scientific_valid_mask_for_tracking,
     valid_mask_crop_local,
 )
+from actintrack_app.sample_preview_cache import (
+    CachedSampleMedia,
+    SampleMediaCache,
+    source_file_identity,
+)
 from actintrack_app.project_manager import (
     create_project_structure,
     is_valid_project,
@@ -567,6 +572,9 @@ class MainWindow(QMainWindow):
         self._cell_boundary_preview_pending = False
         self._prepared_cell_signal = None
         self._prepared_cell_signal_token = None
+        self._decoded_media_cache = SampleMediaCache(max_entries=2)
+        self._oriented_frame_cache = None
+        self._oriented_frame_cache_key = None
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -769,7 +777,8 @@ class MainWindow(QMainWindow):
         """Stop playback and clear cropped/tracking preview when context changes."""
         self._preview_pause()
         self._set_metric_mode_widgets_visible(False)
-        self._clear_of_flow_cache()
+        if self._current_sample_id:
+            self._clear_of_flow_cache(self._current_sample_id)
         self._preview_frame_index = 0
         self._cropped_preview = None
         self.__dict__["_metric_analysis_session"] = None
@@ -2930,9 +2939,26 @@ class MainWindow(QMainWindow):
     def _oriented_frame(self) -> Optional[np.ndarray]:
         if self._base_frame is None:
             return None
-        return apply_orientation(self._base_frame, self._orientation)
+        orientation = self._orientation
+        orient_key = (
+            getattr(orientation, "rotation_angle_degrees", 0),
+            getattr(orientation, "mirror_y_axis", False),
+            getattr(orientation, "flipped_180", False),
+        )
+        key = (id(self._base_frame), orient_key)
+        cached = self.__dict__.get("_oriented_frame_cache")
+        if cached is not None and self.__dict__.get("_oriented_frame_cache_key") == key:
+            return cached
+        out = apply_orientation(self._base_frame, orientation)
+        self.__dict__["_oriented_frame_cache"] = out
+        self.__dict__["_oriented_frame_cache_key"] = key
+        return out
 
-    def _refresh_display(self, *, keep_roi: bool = True) -> None:
+    def _clear_oriented_frame_cache(self) -> None:
+        self.__dict__["_oriented_frame_cache"] = None
+        self.__dict__["_oriented_frame_cache_key"] = None
+
+    def _refresh_display(self, *, keep_roi: bool = True, sync_overlay: bool = True) -> None:
         oriented = self._oriented_frame()
         if oriented is None:
             self._refresh_roi_preview_panel()
@@ -2946,7 +2972,8 @@ class MainWindow(QMainWindow):
         self._update_orientation_label()
         if keep_roi and roi is not None:
             self._autosave_roi(quiet=True)
-        self._sync_scientific_overlay()
+        if sync_overlay:
+            self._sync_scientific_overlay()
         self._refresh_roi_preview_panel()
 
     def _set_roi_save_status(self, text: str, *, saved: bool = True) -> None:
@@ -3169,11 +3196,7 @@ class MainWindow(QMainWindow):
         cutoff = _py_attr(self, "_cutoff_boundary", None)
         nucleus = _py_attr(self, "_nucleus_reference", None)
         if cell is not None or cutoff is not None:
-            mask = valid_mask_crop_local(
-                RectROI(0, 0, ow, oh),
-                cell_region=cell,
-                cutoff=cutoff,
-            )
+            mask = self._cached_display_validity_mask(ow, oh, cell, cutoff)
         nucleus_xy = None
         if nucleus is not None:
             nucleus_xy = (nucleus.x, nucleus.y)
@@ -3189,6 +3212,35 @@ class MainWindow(QMainWindow):
                     self.__dict__.get("_nucleus_cutoff_alignment_review")
                 ),
             )
+
+    def _display_validity_key(
+        self, ow: int, oh: int, cell, cutoff
+    ) -> tuple:
+        cell_key = cell.geometry_key() if cell is not None else None
+        cutoff_key = (
+            None
+            if cutoff is None
+            else (float(getattr(cutoff, "y", 0.0)), str(getattr(cutoff, "source", "")))
+        )
+        return (self.__dict__.get("_current_sample_id"), cell_key, cutoff_key, int(ow), int(oh))
+
+    def _cached_display_validity_mask(self, ow: int, oh: int, cell, cutoff):
+        key = self._display_validity_key(ow, oh, cell, cutoff)
+        cache = self.__dict__.get("_decoded_media_cache")
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if cache is not None and sid:
+            entry = cache.peek(sid)
+            if entry is not None and entry.validity_key == key and entry.validity_mask is not None:
+                if entry.validity_mask.shape[:2] == (oh, ow):
+                    return entry.validity_mask
+        mask = valid_mask_crop_local(
+            RectROI(0, 0, ow, oh),
+            cell_region=cell,
+            cutoff=cutoff,
+        )
+        if cache is not None and sid:
+            cache.store_validity_mask(sid, mask, key)
+        return mask
 
     def _set_scientific_placement_mode(self, mode: str | None) -> None:
         self._scientific_placement_mode = mode
@@ -5437,7 +5489,20 @@ class MainWindow(QMainWindow):
         if not data or data.get("item_type") != ITEM_TYPE_SAMPLE:
             return
 
-        was_metric_analysis_view = self._metric_analysis_view_active
+        sid = str(data.get("sample_id", ""))
+        was_metric_analysis_view = bool(
+            self.__dict__.get("_metric_analysis_view_active")
+        )
+        if (
+            not was_metric_analysis_view
+            and sid
+            and sid == self.__dict__.get("_current_sample_id")
+            and self.__dict__.get("_base_frame") is not None
+            and self.__dict__.get("_preview_mode", "full") == "full"
+        ):
+            self._set_active_sample(data)
+            return
+
         resume_playback = self._preview_playing if was_metric_analysis_view else False
         self._playback_pause()
 
@@ -5453,7 +5518,6 @@ class MainWindow(QMainWindow):
         if data.get("processing_status") == "missing_file":
             return
 
-        sid = str(data.get("sample_id", ""))
         self._preview_page.setUpdatesEnabled(False)
         try:
             if was_metric_analysis_view:
@@ -5471,8 +5535,7 @@ class MainWindow(QMainWindow):
                         resume_playback=resume_playback,
                     )
             else:
-                self.reset_preview_state(clear_image=True)
-                self.update_tracking_result_panel(sid)
+                self.reset_preview_state(clear_image=False)
                 self._load_full_roi_preview_for_current_sample()
         finally:
             self._preview_page.setUpdatesEnabled(True)
@@ -5505,45 +5568,55 @@ class MainWindow(QMainWindow):
         )
         self._reference_frame_index = int(ann.get("reference_frame_index", 0))
         self._loaded_sample_notes = str(ann.get("notes", ""))
-        if render_canvas:
-            self._refresh_display(keep_roi=False)
-            if roi is not None:
+        canvas = self.__dict__.get("canvas")
+        defer = canvas is not None and hasattr(canvas, "begin_display_update")
+        if defer:
+            canvas.begin_display_update()
+        try:
+            if render_canvas:
+                self._refresh_display(keep_roi=False, sync_overlay=False)
+                if roi is not None:
+                    oriented = self._oriented_frame()
+                    if oriented is not None:
+                        self._set_computational_crop(
+                            roi.clamp(oriented.shape[1], oriented.shape[0])
+                        )
+            elif roi is not None:
                 oriented = self._oriented_frame()
                 if oriented is not None:
                     self._set_computational_crop(
                         roi.clamp(oriented.shape[1], oriented.shape[0])
                     )
-        elif roi is not None:
-            oriented = self._oriented_frame()
-            if oriented is not None:
-                self._set_computational_crop(
-                    roi.clamp(oriented.shape[1], oriented.shape[0])
-                )
+                else:
+                    self._set_computational_crop(roi)
             else:
-                self._set_computational_crop(roi)
-        else:
-            self._set_computational_crop(None)
-        self._loaded_annotation_source = str(ann.get("annotation_source", "manual"))
-        self._roi_user_adjusted = False
-        self._roi_autosave_pending = False
-        self._update_orientation_label()
-        self._refresh_roi_save_status_from_context()
-        self._refresh_roi_preview_panel()
-        # Saved CellRegion is authoritative; generate only when missing (legacy).
-        had_saved_cell = self._cell_region is not None
-        self._ensure_cell_first_setup(
-            persist=True,
-            regenerate_cell=False,
-            regenerate_auto_cutoff=False,
-        )
-        self._sync_cell_boundary_slider()
-        if had_saved_cell:
-            # Do not recompute a persisted CellRegion on reopen.
-            pass
-        self._sync_scientific_overlay()
-        self._update_metric_freshness_label()
-        if self.__dict__.get("lbl_timing_detected") is not None:
-            self._ensure_timing_for_current_sample(persist_observed=True)
+                self._set_computational_crop(None)
+            self._loaded_annotation_source = str(ann.get("annotation_source", "manual"))
+            self._roi_user_adjusted = False
+            self._roi_autosave_pending = False
+            self._update_orientation_label()
+            self._refresh_roi_save_status_from_context()
+            self._refresh_roi_preview_panel()
+            # Saved CellRegion is authoritative; generate only when missing (legacy).
+            had_saved_cell = self._cell_region is not None
+            self._ensure_cell_first_setup(
+                persist=True,
+                regenerate_cell=False,
+                regenerate_auto_cutoff=False,
+                sync_overlay=False,
+            )
+            self._sync_cell_boundary_slider()
+            if had_saved_cell:
+                # Do not recompute a persisted CellRegion on reopen.
+                pass
+            if render_canvas:
+                self._sync_scientific_overlay()
+            self._update_metric_freshness_label()
+            if self.__dict__.get("lbl_timing_detected") is not None:
+                self._ensure_timing_for_current_sample(persist_observed=False)
+        finally:
+            if defer:
+                canvas.end_display_update()
 
     def _effective_timing(self) -> TimingMetadata:
         timing = self.__dict__.get("_timing")
@@ -5581,7 +5654,12 @@ class MainWindow(QMainWindow):
         annotations and result JSON but is not used as the live analysis dt.
         """
         path = self._sample_file_path()
-        observed = probe_video_playback_fps(path) if path is not None else None
+        media = self._sample_media_type_for_id(
+            self.__dict__.get("_current_sample_id")
+        )
+        observed = None
+        if media is SampleMediaType.VIDEO and path is not None:
+            observed = probe_video_playback_fps(path)
         loaded: TimingMetadata | None = None
         if self._project_root is not None and self._current_sample is not None:
             sid = str(self._current_sample.get("sample_id", ""))
@@ -5607,6 +5685,8 @@ class MainWindow(QMainWindow):
         )
 
         self._sync_timing_ui_from_state()
+        if media is SampleMediaType.IMAGE:
+            return
         if (
             persist_observed
             and self._project_root is not None
@@ -5626,6 +5706,7 @@ class MainWindow(QMainWindow):
         persist: bool = True,
         regenerate_cell: bool = False,
         regenerate_auto_cutoff: bool = True,
+        sync_overlay: bool = True,
     ) -> None:
         """Identify CellRegion, derive computational crop, and default cutoff.
 
@@ -5682,7 +5763,8 @@ class MainWindow(QMainWindow):
         if generated_cell:
             self._loaded_annotation_source = "auto_suggested"
             self._roi_user_adjusted = False
-        self._sync_scientific_overlay()
+        if sync_overlay:
+            self._sync_scientific_overlay()
         self._sync_cell_boundary_slider()
         if (
             persist
@@ -5727,13 +5809,34 @@ class MainWindow(QMainWindow):
         sid = str(self._current_sample["sample_id"])
         ann = get_sample_annotation(self._project_root, sid)
         ref_idx = int(ann.get("reference_frame_index", 0)) if ann else 0
-        try:
-            frame, idx, total = load_media_frame(path, ref_idx)
-        except MediaLoadError as e:
-            if render_full_preview:
-                gui_dialogs.critical(self, "Load", str(e))
-            return False
+        cache = self.__dict__.get("_decoded_media_cache")
+        cached = cache.get(sid, path, frame_index=ref_idx) if cache is not None else None
+        if cached is not None:
+            frame, idx, total = cached.frame, cached.frame_index, cached.total_frames
+        else:
+            try:
+                frame, idx, total = load_media_frame(path, ref_idx)
+            except MediaLoadError as e:
+                if render_full_preview:
+                    gui_dialogs.critical(self, "Load", str(e))
+                return False
+            if cache is not None:
+                identity = source_file_identity(path)
+                if identity is not None:
+                    path_key, mtime_ns, size = identity
+                    cache.put(
+                        CachedSampleMedia(
+                            sample_id=sid,
+                            path_key=path_key,
+                            mtime_ns=mtime_ns,
+                            size=size,
+                            frame=frame,
+                            frame_index=idx,
+                            total_frames=total,
+                        )
+                    )
         self._base_frame = frame
+        self._clear_oriented_frame_cache()
         self._frame_index = idx
         self._reference_frame_index = idx
         self._total_frames = total
@@ -5803,6 +5906,7 @@ class MainWindow(QMainWindow):
             gui_dialogs.critical(self, "Load", str(e))
             return
         self._base_frame = frame
+        self._clear_oriented_frame_cache()
         self._frame_index = idx
         self._total_frames = total
         self._refresh_display(keep_roi=True)
@@ -6179,6 +6283,11 @@ class MainWindow(QMainWindow):
         except (MediaLoadError, OSError) as exc:
             gui_dialogs.warning(self, "Replace Data", f"Import failed: {exc}")
             return
+        if row is not None:
+            cache = self.__dict__.get("_decoded_media_cache")
+            if cache is not None:
+                cache.invalidate(str(row.get("sample_id", "")))
+        self._clear_oriented_frame_cache()
         final_batch_name = str(updated.get("batch_name", batch_name))
         self._set_last_import_breed(group)
         self.reset_preview_state(clear_image=True)

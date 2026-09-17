@@ -206,6 +206,27 @@ class PolygonRasterizationTests(unittest.TestCase):
         mask_shift = Region.from_polygon(shifted).rasterize_crop_mask()
         self.assertTrue(np.array_equal(mask_base, mask_shift))
 
+    def test_scanline_mask_matches_point_polygon_test_reference(self) -> None:
+        from actintrack_app.region import (
+            _rasterize_polygon_mask,
+            _rasterize_polygon_mask_reference,
+        )
+
+        vertices = ((2, 1), (8, 1), (9, 6), (4, 7), (1, 4))
+        region = Region.from_polygon(vertices)
+        bbox = region.bounding_box()
+        crop = RectROI(0, 0, bbox.x + bbox.width + 2, bbox.y + bbox.height + 2)
+        fast = _rasterize_polygon_mask(vertices, crop)
+        reference = _rasterize_polygon_mask_reference(vertices, crop)
+        self.assertTrue(np.array_equal(fast, reference))
+        full = RectROI(0, 0, 24, 20)
+        self.assertTrue(
+            np.array_equal(
+                _rasterize_polygon_mask(vertices, full),
+                _rasterize_polygon_mask_reference(vertices, full),
+            )
+        )
+
 
 class PolygonValidationTests(unittest.TestCase):
     def test_accept_simple_polygons(self) -> None:

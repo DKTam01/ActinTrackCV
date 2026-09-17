@@ -82,8 +82,19 @@ class ImageCanvas(QLabel):
         self._show_computational_crop = False
         self._empty_state_message: Optional[str] = None
         self._orientation_legend_visible = False
+        self._display_update_depth = 0
+        self._pixmap_dirty = False
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
+
+    def begin_display_update(self) -> None:
+        """Coalesce pixmap rebuilds across one selection/load pass."""
+        self._display_update_depth += 1
+
+    def end_display_update(self) -> None:
+        self._display_update_depth = max(0, int(self._display_update_depth) - 1)
+        if self._display_update_depth == 0 and self._pixmap_dirty:
+            self._update_pixmap()
 
     def clear_preview(self) -> None:
         self._frame = None
@@ -202,6 +213,10 @@ class ImageCanvas(QLabel):
         return self._roi
 
     def _update_pixmap(self) -> None:
+        if self._display_update_depth:
+            self._pixmap_dirty = True
+            return
+        self._pixmap_dirty = False
         if self._frame is None:
             self._pixmap = None
             if self._empty_state_message:
@@ -339,6 +354,9 @@ class ImageCanvas(QLabel):
         )
 
     def _redraw(self) -> None:
+        if self._display_update_depth:
+            self._pixmap_dirty = True
+            return
         target = self.size()
         if self._empty_state_message:
             composite = QPixmap(target)

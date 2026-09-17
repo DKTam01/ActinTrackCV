@@ -398,7 +398,96 @@ def _rasterize_polygon_mask(
     - Inclusion is evaluated at pixel centers (col + 0.5, row + 0.5).
     - Polygon boundaries are inclusive (on-edge centers are inside).
     - Mask shape is (bbox.height, bbox.width), dtype numpy.bool_.
+
+    Scanline even-odd fill at pixel centers, plus inclusive on-edge pixels.
+    Scientifically equivalent to the scalar OpenCV ``pointPolygonTest >= 0``
+    loop; existing Region tests pin the pixel contract.
     """
+    h, w = int(bbox.height), int(bbox.width)
+    if h <= 0 or w <= 0:
+        return np.zeros((max(0, h), max(0, w)), dtype=np.bool_)
+    poly = np.asarray(vertices, dtype=np.float64)
+    if poly.ndim != 2 or poly.shape[0] < 3 or poly.shape[1] != 2:
+        return np.zeros((h, w), dtype=np.bool_)
+
+    min_x = float(np.min(poly[:, 0]))
+    max_x = float(np.max(poly[:, 0]))
+    min_y = float(np.min(poly[:, 1]))
+    max_y = float(np.max(poly[:, 1]))
+    col0 = max(0, int(np.floor(min_x - float(bbox.x) - 0.5)))
+    col1 = min(w, int(np.floor(max_x - float(bbox.x) - 0.5)) + 1)
+    row0 = max(0, int(np.floor(min_y - float(bbox.y) - 0.5)))
+    row1 = min(h, int(np.floor(max_y - float(bbox.y) - 0.5)) + 1)
+    mask = np.zeros((h, w), dtype=np.bool_)
+    if col1 <= col0 or row1 <= row0:
+        return mask
+
+    bx = float(bbox.x)
+    by = float(bbox.y)
+    n = int(poly.shape[0])
+    edges = [
+        (
+            float(poly[i, 0]),
+            float(poly[i, 1]),
+            float(poly[(i + 1) % n, 0]),
+            float(poly[(i + 1) % n, 1]),
+        )
+        for i in range(n)
+    ]
+    for row in range(row0, row1):
+        y = by + row + 0.5
+        hits: list[float] = []
+        for x1, y1, x2, y2 in edges:
+            dy = y2 - y1
+            dx = x2 - x1
+            if dy == 0.0:
+                if abs(y - y1) > 1e-9:
+                    continue
+                lo, hi = (x1, x2) if x1 <= x2 else (x2, x1)
+                start = max(col0, int(np.ceil(lo - bx - 0.5)))
+                stop = min(col1, int(np.floor(hi - bx - 0.5)) + 1)
+                if stop > start:
+                    mask[row, start:stop] = True
+                continue
+            if (y1 > y) != (y2 > y):
+                hits.append(x1 + dx * (y - y1) / dy)
+        if len(hits) >= 2:
+            hits.sort()
+            for i in range(0, len(hits) - 1, 2):
+                a, b = hits[i], hits[i + 1]
+                start = max(col0, int(np.ceil(a - bx - 0.5)))
+                stop = min(col1, int(np.ceil(b - bx - 0.5)))
+                if stop > start:
+                    mask[row, start:stop] = True
+    # Inclusive boundary: pixel centers that sit on a non-horizontal edge.
+    # Cheap O(edges * edge_height); does not scan the full crop width.
+    for x1, y1, x2, y2 in edges:
+        dy = y2 - y1
+        dx = x2 - x1
+        if dy == 0.0:
+            continue
+        ymin, ymax = (y1, y2) if y1 <= y2 else (y2, y1)
+        r0 = max(row0, int(np.ceil(ymin - by - 0.5)))
+        r1 = min(row1, int(np.floor(ymax - by - 0.5)) + 1)
+        for row in range(r0, r1):
+            y = by + row + 0.5
+            x = x1 + dx * (y - y1) / dy
+            if (x - x1) * (x - x2) > 1e-9:
+                continue
+            col_f = x - bx - 0.5
+            col = int(np.round(col_f))
+            if abs(col_f - col) > 1e-6:
+                continue
+            if col0 <= col < col1:
+                mask[row, col] = True
+    return mask
+
+
+def _rasterize_polygon_mask_reference(
+    vertices: tuple[tuple[int, int], ...],
+    bbox: RectROI,
+) -> np.ndarray:
+    """Scalar pointPolygonTest rasterizer kept for equivalence tests."""
     h, w = bbox.height, bbox.width
     mask = np.zeros((h, w), dtype=np.bool_)
     contour = np.array(vertices, dtype=np.float32)
