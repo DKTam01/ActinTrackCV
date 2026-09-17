@@ -27,7 +27,7 @@ Local workspace data under `raw/` (gitignored) currently holds **21 media files*
 
 **Naming:** `{WT\|MUT}{id}_{0001..}.{ext}` inside `{ordinal}_{WT\|Mutant}_{id}/` (e.g. `2_WT_550/WT550_0003.avi`).
 
-**Time-lapse exports:** 15 videos, each **15 frames**. Encoded playback is typically **6.0 fps**. The Workbench uses that **detected video timing** for µm/s (`timing_source=video_header`). Encoded FPS is not independently proven microscope acquisition cadence; px/frame remains visible. Lab slide notes historically mentioned 30 s/frame — that is not the current product default and is not hard-coded.
+**Time-lapse exports:** 15 videos, each **15 frames**. Encoded playback is typically **6.0 fps**. AVI/MP4 FPS is playback metadata only. Scientific timing is the per-sample **acquisition interval** (seconds/frame), defaulting to **60 s/frame** for existing projects. 30 s/frame experiments are supported by setting that sample's interval. Spatial calibration is per-sample **µm/pixel** (legacy default 0.265). See [`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`](docs/science/CAL1_SCIENTIFIC_CALIBRATION.md).
 
 **Higher-fidelity microscopy (`1_WT_218` only):** 16-bit ImageJ TIFF hyperstacks and Olympus **FV3000** OIR Z-stacks (60× water objective, EYFP/Lifeact channel).
 
@@ -200,7 +200,7 @@ Sparse tracking of bright actin-associated features on cropped ROI frames:
 - Tracks features frame-to-frame (default: brightest-local search; template matching remains available)
 - Produces **General Movement** (absolute XY) and **Downward Motion** indices (µm/s)
 
-Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**, **0.2650 µm/pixel**. The Workbench currently uses **detected video timing** (`1 / observed FPS`) for calibrated µm/s. Encoded playback FPS is **not** proven microscope acquisition cadence; px/frame remains the timing-invariant movement measure while the lab verifies biological interval. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
+Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**. Spatial scale and acquisition interval are **per Sample** (legacy defaults **0.265 µm/pixel** and **60 s/frame**). Encoded playback FPS is **not** the biological acquisition interval; px/frame remains the timing-invariant movement measure. See `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
 
 ### Optical Flow Motion Index
 

@@ -13,6 +13,7 @@ fluorescence time-lapse data. Changes must prioritize:
 
 - General Movement is absolute XY displacement over elapsed acquisition time.
 - Encoded playback FPS is not automatically the biological acquisition interval.
+- Scientific timing and spatial scale are per-sample (`acquisition_interval_s`, `microns_per_pixel`).
 - Keep RectROI, CellRegion, CutoffBoundary, and NucleusReference as distinct
   concepts and coordinate spaces.
 - Preserve the 2D AVI/MP4 workflow. Other microscopy formats are out of scope

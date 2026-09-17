@@ -51,7 +51,7 @@ Single module, pure-function pipeline, no Qt dependency, reused by GUI / Shiny b
 `load_frame_sequence` → `frame_to_signal` → `select_starting_points` (top-N bright points/regions in frame 0) → `track_points` (per-frame local search via `_brightest_point_in_window` or `_match_template_in_window`) → `compute_motion_indices` / `compute_velocity_summary` → `save_motion_index_outputs` (CSV + QC overlay video).
 
 - Two tracking methods: `TRACKING_METHOD_BRIGHTEST_LOCAL` and `TRACKING_METHOD_TEMPLATE`, selected in `MotionIndexParams`.
-- Calibration: `DEFAULT_MICRONS_PER_PIXEL = 0.265`, `DEFAULT_SECONDS_PER_FRAME = 30.0` remains the code default. The Workbench currently uses **detected video timing** (`analysis_seconds_per_frame = 1 / observed_video_fps`, `timing_source=video_header`) for calibrated µm/s. Encoded FPS is **not** proven microscope acquisition cadence; keep px/frame visible and provenance fields intact so a researcher override can return. Do not hard-code 6 FPS.
+- Calibration is **per sample**: `acquisition_interval_s` and `microns_per_pixel`. Legacy/default samples use **60.0 s/frame** and **0.265 µm/pixel**. Container FPS is playback provenance only and must not drive µm/s. Analysis runs snapshot the calibration that produced their physical-unit results. See `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
 - `run_motion_index_analysis` is the top-level entry called by every frontend.
 
 ### Workspace & metadata layer

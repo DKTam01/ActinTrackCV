@@ -4,10 +4,10 @@ PERF2 addresses Explorer lag when selecting an already-imported IMAGE sample,
 keeps mixed VIDEO+IMAGE Condition Groups first-class, and adds external
 drag/drop target highlighting.
 
-Scientific freeze (unchanged): 60 s/frame protocol timing, motion/optical-flow/
+Scientific freeze as of PERF2: 60 s/frame protocol timing, motion/optical-flow/
 orientation formulas, CellRegion segmentation algorithm, cutoff/nucleus
-semantics, MEDIA1 capability matrix. No 30-second option. No spatial
-calibration change.
+semantics, MEDIA1 capability matrix. CAL1 later added per-sample acquisition
+interval and µm/pixel; see `CAL1_SCIENTIFIC_CALIBRATION.md`.
 
 ## IMAGE selection pipeline (audit)
 
