@@ -17,7 +17,7 @@ INSPECTION_MODES = (
     INSPECTION_MODE_ORIENTATION,
 )
 
-ORIENTATION_LEGEND_TEXT = "F-actin Orientation · 0° radial → 90° tangential"
+ORIENTATION_LEGEND_TEXT = "0° = radial · 90° = tangential"
 
 NUCLEUS_ALIGNMENT_REVIEW_HINT = "Cutoff moved — review nucleus alignment."
 

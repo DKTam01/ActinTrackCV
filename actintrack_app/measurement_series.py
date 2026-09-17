@@ -26,6 +26,8 @@ from actintrack_app.schema_compat import (
 class MeasurementColumn:
     key: str
     label: str
+    sort_kind: str = "text"  # text | int | float
+    header_tooltip: str = ""
 
 
 @dataclass
@@ -167,12 +169,12 @@ def load_general_movement_series(
         summary_unit="µm/s",
         row_kind="step",
         columns=[
-            MeasurementColumn("n", "#"),
-            MeasurementColumn("track_id", "Track"),
-            MeasurementColumn("prev_frame", "From frame"),
-            MeasurementColumn("frame", "To frame"),
-            MeasurementColumn("px_per_frame", "Velocity (px/frame)"),
-            MeasurementColumn("um_per_s", "Velocity (µm/s)"),
+            MeasurementColumn("n", "Measurement #", sort_kind="int"),
+            MeasurementColumn("track_id", "Track", sort_kind="int"),
+            MeasurementColumn("prev_frame", "From frame", sort_kind="int"),
+            MeasurementColumn("frame", "To frame", sort_kind="int"),
+            MeasurementColumn("px_per_frame", "Velocity (px/frame)", sort_kind="float"),
+            MeasurementColumn("um_per_s", "Velocity (µm/s)", sort_kind="float"),
         ],
         rows=rows,
         notes=("Each row is one valid track step contributing to the sample mean.",),
@@ -240,14 +242,14 @@ def load_toward_nucleus_series(
         summary_unit="µm/s",
         row_kind="step",
         columns=[
-            MeasurementColumn("n", "#"),
-            MeasurementColumn("track_id", "Track"),
-            MeasurementColumn("prev_frame", "From frame"),
-            MeasurementColumn("frame", "To frame"),
-            MeasurementColumn("toward_um_s", "Toward velocity (µm/s)"),
-            MeasurementColumn("sign", "Sign"),
-            MeasurementColumn("delta_distance_um", "Δ distance (µm)"),
-            MeasurementColumn("dt_s", "dt (s)"),
+            MeasurementColumn("n", "Measurement #", sort_kind="int"),
+            MeasurementColumn("track_id", "Track", sort_kind="int"),
+            MeasurementColumn("prev_frame", "From frame", sort_kind="int"),
+            MeasurementColumn("frame", "To frame", sort_kind="int"),
+            MeasurementColumn("toward_um_s", "Toward velocity (µm/s)", sort_kind="float"),
+            MeasurementColumn("sign", "Sign", sort_kind="text"),
+            MeasurementColumn("delta_distance_um", "Δ distance (µm)", sort_kind="float"),
+            MeasurementColumn("dt_s", "dt (s)", sort_kind="float"),
         ],
         rows=rows,
         notes=(
@@ -308,11 +310,11 @@ def load_optical_flow_series(
         summary_unit="µm/s",
         row_kind="frame_pair",
         columns=[
-            MeasurementColumn("n", "#"),
-            MeasurementColumn("frame_a", "Frame A"),
-            MeasurementColumn("frame_b", "Frame B"),
-            MeasurementColumn("mean_px", "Mean magnitude (px/frame)"),
-            MeasurementColumn("valid_count", "Valid pixels"),
+            MeasurementColumn("n", "Measurement #", sort_kind="int"),
+            MeasurementColumn("frame_a", "Frame A", sort_kind="int"),
+            MeasurementColumn("frame_b", "Frame B", sort_kind="int"),
+            MeasurementColumn("mean_px", "Mean magnitude (px/frame)", sort_kind="float"),
+            MeasurementColumn("valid_count", "Valid pixels", sort_kind="int"),
         ],
         rows=rows,
         notes=(
@@ -323,6 +325,14 @@ def load_optical_flow_series(
         available=bool(rows),
         unavailable_reason="" if rows else "No frame-pair summaries",
     )
+
+
+COHERENCE_HEADER_TOOLTIP = (
+    "Coherence (0–1)\n\n"
+    "Indicates how clearly the local F-actin signal has one dominant "
+    "orientation. Higher values indicate a more clearly defined direction; "
+    "lower values indicate a less clearly defined direction."
+)
 
 
 def load_orientation_series(
@@ -373,15 +383,19 @@ def load_orientation_series(
         summary_unit="°",
         row_kind="orientation_sample",
         columns=[
-            MeasurementColumn("n", "#"),
-            MeasurementColumn("angle_deg", "Angle (°)"),
-            MeasurementColumn("x_px", "x (px)"),
-            MeasurementColumn("y_px", "y (px)"),
-            MeasurementColumn("coherence", "Coherence"),
+            MeasurementColumn("n", "Measurement #", sort_kind="int"),
+            MeasurementColumn("angle_deg", "Angle (°)", sort_kind="float"),
+            MeasurementColumn("x_px", "x (px)", sort_kind="float"),
+            MeasurementColumn("y_px", "y (px)", sort_kind="float"),
+            MeasurementColumn(
+                "coherence",
+                "Coherence",
+                sort_kind="float",
+                header_tooltip=COHERENCE_HEADER_TOOLTIP,
+            ),
         ],
         rows=rows,
         notes=(
-            "0° radial · 90° tangential",
             "Sample result is the median of these angles.",
         ),
         available=bool(rows),
