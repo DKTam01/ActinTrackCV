@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QTreeWidget,
     QTreeWidgetItem,
 )
+from actintrack_app.media_capabilities import is_product_media_path
 from actintrack_app import gui_styles
 from actintrack_app.explorer_sidebar import (
     EXPLORER_SAMPLE_MIME,
@@ -36,6 +37,8 @@ from actintrack_app.explorer_sidebar import (
     tree_item_condition_group_id,
     tree_item_sample_id,
 )
+
+EXPLORER_EXTERNAL_DROP_TARGET_ROLE = int(Qt.ItemDataRole.UserRole) + 21
 
 
 def configure_condition_group_tree_item(item: QTreeWidgetItem) -> None:
@@ -393,6 +396,10 @@ class ExplorerTreeItemDelegate(QStyledItemDelegate):
             )
             option.palette.setColor(option.palette.ColorRole.Text, text_color)
             option.palette.setColor(option.palette.ColorRole.HighlightedText, text_color)
+            if bool(index.data(EXPLORER_EXTERNAL_DROP_TARGET_ROLE)):
+                option.backgroundBrush = QBrush(
+                    QColor(gui_styles.COLOR_EXPLORER_DROP_TARGET)
+                )
             return
 
         if item_type not in (ITEM_TYPE_SAMPLE, ITEM_TYPE_EMPTY_SAMPLE):
@@ -409,6 +416,23 @@ class ExplorerTreeItemDelegate(QStyledItemDelegate):
             text_color = QColor(gui_styles.COLOR_EXPLORER_SAMPLE_TEXT)
             option.palette.setColor(option.palette.ColorRole.Text, text_color)
             option.palette.setColor(option.palette.ColorRole.HighlightedText, text_color)
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        super().paint(painter, option, index)
+        if not index.isValid():
+            return
+        if not bool(index.data(EXPLORER_EXTERNAL_DROP_TARGET_ROLE)):
+            return
+        meta = index.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(meta, dict) or meta.get("item_type") != ITEM_TYPE_CONDITION_GROUP:
+            return
+        painter.save()
+        pen = QPen(QColor(gui_styles.COLOR_EXPLORER_DROP_TARGET_OUTLINE))
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(option.rect.adjusted(1, 1, -2, -2))
+        painter.restore()
 
 
 class ExplorerTreeWidget(QTreeWidget):
@@ -433,6 +457,7 @@ class ExplorerTreeWidget(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._external_drop_target_group_id: str | None = None
 
     @staticmethod
     def local_paths_from_mime(mime: QMimeData) -> list[Path]:
@@ -542,38 +567,104 @@ class ExplorerTreeWidget(QTreeWidget):
         drag.setHotSpot(pixmap.rect().center())
         drag.exec(Qt.DropAction.MoveAction)
 
+    def current_external_drop_target(self) -> str | None:
+        return self._external_drop_target_group_id
+
+    def _group_item_by_id(self, group_id: str | None) -> QTreeWidgetItem | None:
+        target = str(group_id or "").strip()
+        if not target:
+            return None
+        for idx in range(self.topLevelItemCount()):
+            item = self.topLevelItem(idx)
+            meta = self._item_meta(item)
+            if (
+                meta
+                and meta.get("item_type") == ITEM_TYPE_CONDITION_GROUP
+                and tree_item_condition_group_id(meta) == target
+            ):
+                return item
+        return None
+
+    def _external_drop_has_supported_files(self, mime: QMimeData) -> bool:
+        if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            return False
+        return any(is_product_media_path(path) for path in self.local_paths_from_mime(mime))
+
+    def _resolve_external_drop_target(self, event) -> str | None:
+        if not self._external_drop_has_supported_files(event.mimeData()):
+            return None
+        return self._drop_target_group_id(self.itemAt(event.position().toPoint()))
+
+    def _apply_external_drop_highlight(self, group_id: str | None) -> None:
+        target = str(group_id or "").strip() or None
+        if self._external_drop_target_group_id == target:
+            return
+        self._clear_external_drop_highlight(repaint=False)
+        self._external_drop_target_group_id = target
+        if target:
+            item = self._group_item_by_id(target)
+            if item is not None:
+                item.setData(0, EXPLORER_EXTERNAL_DROP_TARGET_ROLE, True)
+        self.viewport().update()
+
+    def _clear_external_drop_highlight(self, *, repaint: bool = True) -> None:
+        old = self._external_drop_target_group_id
+        self._external_drop_target_group_id = None
+        if old:
+            item = self._group_item_by_id(old)
+            if item is not None:
+                item.setData(0, EXPLORER_EXTERNAL_DROP_TARGET_ROLE, False)
+        if repaint:
+            self.viewport().update()
+
     def dragEnterEvent(self, event) -> None:  # noqa: N802
         mime = event.mimeData()
-        target_gid = self._drop_target_group_id(self.itemAt(event.position().toPoint()))
         if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            self._clear_external_drop_highlight()
+            target_gid = self._drop_target_group_id(
+                self.itemAt(event.position().toPoint())
+            )
             if target_gid:
                 event.acceptProposedAction()
             else:
                 event.ignore()
             return
-        if self._mime_has_external_files(mime) and target_gid:
+        if self._external_drop_has_supported_files(mime):
+            # Accept the tree so dragMove can track the group under the pointer.
+            self._apply_external_drop_highlight(self._resolve_external_drop_target(event))
             event.acceptProposedAction()
             return
+        self._clear_external_drop_highlight()
         event.ignore()
 
     def dragMoveEvent(self, event) -> None:  # noqa: N802
         mime = event.mimeData()
-        target_gid = self._drop_target_group_id(self.itemAt(event.position().toPoint()))
         if mime.hasFormat(EXPLORER_SAMPLE_MIME):
+            self._clear_external_drop_highlight()
+            target_gid = self._drop_target_group_id(
+                self.itemAt(event.position().toPoint())
+            )
             if target_gid:
                 event.acceptProposedAction()
             else:
                 event.ignore()
             return
-        if self._mime_has_external_files(mime) and target_gid:
+        target_gid = self._resolve_external_drop_target(event)
+        self._apply_external_drop_highlight(target_gid)
+        if target_gid:
             event.acceptProposedAction()
             return
         event.ignore()
+
+    def dragLeaveEvent(self, event) -> None:  # noqa: N802
+        self._clear_external_drop_highlight()
+        event.accept()
 
     def dropEvent(self, event) -> None:  # noqa: N802
         mime = event.mimeData()
         target_item = self.itemAt(event.position().toPoint())
         target_gid = self._drop_target_group_id(target_item)
+        self._clear_external_drop_highlight()
 
         if self._mime_has_external_files(mime):
             paths = self.local_paths_from_mime(mime)

@@ -95,6 +95,8 @@ class GuiStylesTests(unittest.TestCase):
         self.assertEqual(gui_styles.COLOR_EXPLORER_SAMPLE_TEXT, "#a8b0bd")
         self.assertEqual(gui_styles.COLOR_EXPLORER_SELECTION, "#2a4a66")
         self.assertEqual(gui_styles.COLOR_EXPLORER_SELECTION_TEXT, "#e0e0e0")
+        self.assertEqual(gui_styles.COLOR_EXPLORER_DROP_TARGET, "#243040")
+        self.assertEqual(gui_styles.COLOR_EXPLORER_DROP_TARGET_OUTLINE, "#4a7fa3")
         self.assertEqual(gui_styles.EXPLORER_CONTENT_LEFT_PADDING, 6)
         self.assertEqual(
             gui_styles.EXPLORER_TREE_ROOT_OFFSET,
