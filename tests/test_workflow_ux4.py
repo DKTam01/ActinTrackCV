@@ -21,6 +21,7 @@ from actintrack_app.timing_provenance import (
     TIMING_SOURCE_LAB_DEFAULT,
     TIMING_SOURCE_LEGACY_DEFAULT,
     TIMING_SOURCE_PROTOCOL_STANDARD,
+    TIMING_SOURCE_RESEARCHER_ENTERED,
     TIMING_SOURCE_VIDEO_HEADER,
     TimingMetadata,
     calibrated_um_per_s,
@@ -54,6 +55,18 @@ class VideoTimingPolicyTests(unittest.TestCase):
         self.assertTrue(timing.is_calibrated_analysis_ready)
         self.assertEqual(timing.display_label(), "60 s between frames")
         require_calibrated_timing(timing)
+
+    def test_researcher_entered_interval_is_analysis_ready(self) -> None:
+        timing = TimingMetadata(
+            observed_video_fps=3.0,
+            analysis_seconds_per_frame=30.0,
+            timing_source=TIMING_SOURCE_RESEARCHER_ENTERED,
+            confirmed=True,
+        )
+        self.assertTrue(timing.is_calibrated_analysis_ready)
+        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 30.0)
+        self.assertAlmostEqual(timing.observed_video_fps or 0.0, 3.0)
+        self.assertNotAlmostEqual(timing.analysis_seconds_per_frame, 1.0 / 3.0)
 
     def test_container_fps_does_not_change_scientific_dt(self) -> None:
         for fps in (6.0, 15.0, 30.0, None):

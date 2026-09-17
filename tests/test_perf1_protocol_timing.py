@@ -31,7 +31,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ProtocolTimingScienceTests(unittest.TestCase):
-    def test_gm_uses_sixty_second_dt(self) -> None:
+    def test_configured_sample_interval_is_used_not_constant_only(self) -> None:
+        params = MotionIndexParams(microns_per_pixel=1.0, seconds_per_frame=30.0)
+        prev = TrackPoint(0, 0, 0.0, 0.0, 1.0)
+        nxt = TrackPoint(0, 1, 3.0, 4.0, 1.0)
+        step = compute_step_metrics(prev, nxt, params)
+        self.assertAlmostEqual(step.dt_s, 30.0)
+        self.assertAlmostEqual(step.absolute_velocity_um_per_s, 5.0 / 30.0)
+
+    def test_legacy_default_sample_still_uses_sixty(self) -> None:
         params = MotionIndexParams(
             microns_per_pixel=1.0,
             seconds_per_frame=STANDARD_ACQUISITION_INTERVAL_S,

@@ -38,9 +38,12 @@ class MetricAnalysisUiTests(unittest.TestCase):
         )
 
     def test_orientation_legend_is_compact_and_explicit(self) -> None:
-        self.assertIn("0° radial", ORIENTATION_LEGEND_TEXT)
-        self.assertIn("90° tangential", ORIENTATION_LEGEND_TEXT)
+        self.assertEqual(ORIENTATION_LEGEND_TEXT, "0° = radial · 90° = tangential")
+        self.assertIn("0° = radial", ORIENTATION_LEGEND_TEXT)
+        self.assertIn("90° = tangential", ORIENTATION_LEGEND_TEXT)
         self.assertNotIn("motion", ORIENTATION_LEGEND_TEXT.lower())
+        self.assertEqual(ORIENTATION_LEGEND_TEXT.lower().count("radial"), 1)
+        self.assertEqual(ORIENTATION_LEGEND_TEXT.lower().count("tangential"), 1)
 
     def test_cached_analysis_matches_current_draft_run_only(self) -> None:
         self.assertEqual(

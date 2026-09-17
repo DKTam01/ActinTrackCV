@@ -105,6 +105,7 @@ class PersistedSeriesTests(unittest.TestCase):
         self.assertTrue(series.available)
         self.assertEqual(series.measurement_count, 2)
         self.assertEqual(series.analysis_run_id, "run-gm")
+        self.assertEqual(series.columns[0].label, "Measurement #")
         self.assertTrue(verify_series_matches_summary(series))
 
     def test_toward_nucleus_series_sign_and_formula(self) -> None:
@@ -192,6 +193,8 @@ class PersistedSeriesTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         series = load_orientation_series(self.root, self.sid)
         self.assertEqual(series.metric_id, MetricId.ORIENTATION)
+        self.assertEqual(series.columns[0].label, "Measurement #")
+        self.assertEqual(series.notes, ("Sample result is the median of these angles.",))
         self.assertTrue(verify_series_matches_summary(series))
 
 
