@@ -69,12 +69,18 @@ def compute_video_metrics(
     nucleus_xy_px: tuple[float, float] | None,
     sample_id: str,
     cutoff_y_crop_px: float | None = None,
+    timing: TimingMetadata | None = None,
 ) -> MetricsComputeResult:
-    """Run motion pipelines for a VIDEO sample (no structural orientation)."""
-    timing = TimingMetadata.from_protocol_standard(
-        observed_video_fps=probe_video_playback_fps(path),
-        confirmed=True,
-    )
+    """Run motion pipelines for a VIDEO sample (no structural orientation).
+
+    ``timing`` must already carry the sample acquisition interval. Container
+    FPS is probed only as playback provenance when timing is omitted.
+    """
+    if timing is None:
+        timing = TimingMetadata.from_protocol_standard(
+            observed_video_fps=probe_video_playback_fps(path),
+            confirmed=True,
+        )
     if not timing.is_calibrated_analysis_ready:
         return MetricsComputeResult(
             status="unavailable",
@@ -216,6 +222,7 @@ def dispatch_metrics_compute(
     nucleus_xy_px: tuple[float, float] | None,
     sample_id: str,
     cutoff_y_crop_px: float | None = None,
+    timing: TimingMetadata | None = None,
 ) -> MetricsComputeResult:
     if media_type is SampleMediaType.IMAGE:
         return compute_image_orientation_metrics(
@@ -236,4 +243,5 @@ def dispatch_metrics_compute(
         nucleus_xy_px=nucleus_xy_px,
         sample_id=sample_id,
         cutoff_y_crop_px=cutoff_y_crop_px,
+        timing=timing,
     )

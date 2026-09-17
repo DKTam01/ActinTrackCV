@@ -1055,14 +1055,6 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
         "Number of future frames to check if a point is temporarily lost."
     )
 
-    window.spin_track_mpp = NoWheelDoubleSpinBox()
-    window.spin_track_mpp.setRange(0.001, 10.0)
-    window.spin_track_mpp.setDecimals(4)
-    window.spin_track_mpp.setValue(defaults.microns_per_pixel)
-    window.spin_track_mpp.setToolTip(
-        "Physical image scale used to convert pixels to microns."
-    )
-
     window._tracking_setting_widgets = (
         window.combo_track_method,
         window.spin_track_points,
@@ -1071,7 +1063,6 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
         window.spin_track_patch,
         window.spin_track_confidence,
         window.spin_track_lookahead,
-        window.spin_track_mpp,
     )
     for widget in window._tracking_setting_widgets:
         configure_tracking_field(widget, full_column=True)
@@ -1082,25 +1073,95 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
 
 
 def build_timing_settings_section(window: MainWindow) -> QWidget:
-    """Protocol acquisition-interval readout. Researcher override UI is deferred."""
+    """Per-sample acquisition interval and spatial calibration."""
     host = QWidget()
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_FORM_SPACING)
 
+    interval_host = QWidget()
+    interval_layout = QVBoxLayout(interval_host)
+    interval_layout.setContentsMargins(0, 0, 0, 0)
+    interval_layout.setSpacing(SIDE_PANEL_FORM_SPACING)
     title = QLabel("Acquisition Interval")
     apply_inspector_field_label_style(title)
-    layout.addWidget(title)
+    interval_layout.addWidget(title)
+
+    interval_row = QHBoxLayout()
+    interval_row.setContentsMargins(0, 0, 0, 0)
+    interval_row.setSpacing(6)
+    window.edit_acquisition_interval = QLineEdit()
+    window.edit_acquisition_interval.setText("60")
+    window.edit_acquisition_interval.setPlaceholderText("60")
+    window.edit_acquisition_interval.setToolTip(
+        "Actual time between microscope acquisitions, in seconds per frame. "
+        "AVI/MP4 playback FPS is export metadata and does not set this interval."
+    )
+    apply_inspector_field_style(window.edit_acquisition_interval)
+    window.edit_acquisition_interval.editingFinished.connect(
+        window._on_acquisition_interval_editing_finished
+    )
+    interval_suffix = QLabel("seconds/frame")
+    apply_muted_hint_style(interval_suffix)
+    interval_row.addWidget(window.edit_acquisition_interval, stretch=1)
+    interval_row.addWidget(interval_suffix)
+    interval_layout.addLayout(interval_row)
+
+    preset_row = QHBoxLayout()
+    preset_row.setContentsMargins(0, 0, 0, 0)
+    preset_row.setSpacing(6)
+    window.btn_interval_30 = QPushButton("30 s")
+    window.btn_interval_30.setToolTip("Set acquisition interval to 30 seconds/frame.")
+    window.btn_interval_30.clicked.connect(
+        lambda: window._apply_acquisition_interval_preset(30.0)
+    )
+    apply_workbench_action_button(window.btn_interval_30, expanding=True)
+    window.btn_interval_60 = QPushButton("60 s")
+    window.btn_interval_60.setToolTip("Set acquisition interval to 60 seconds/frame.")
+    window.btn_interval_60.clicked.connect(
+        lambda: window._apply_acquisition_interval_preset(60.0)
+    )
+    apply_workbench_action_button(window.btn_interval_60, expanding=True)
+    preset_row.addWidget(window.btn_interval_30)
+    preset_row.addWidget(window.btn_interval_60)
+    interval_layout.addLayout(preset_row)
+    window._acquisition_interval_host = interval_host
+    layout.addWidget(interval_host)
 
     window.lbl_timing_detected = QLabel("60 s between frames")
-    window.lbl_timing_detected.setWordWrap(True)
-    apply_hint_style(window.lbl_timing_detected)
-    window.lbl_timing_detected.setToolTip(
-        "Scientific acquisition interval from lab protocol "
-        "(60 seconds between consecutive frames). "
-        "Container playback FPS is metadata only and does not set velocity dt."
-    )
+    window.lbl_timing_detected.hide()
     layout.addWidget(window.lbl_timing_detected)
+
+    spatial_host = QWidget()
+    spatial_layout = QVBoxLayout(spatial_host)
+    spatial_layout.setContentsMargins(0, 0, 0, 0)
+    spatial_layout.setSpacing(SIDE_PANEL_FORM_SPACING)
+    spatial_title = QLabel("Spatial Calibration")
+    apply_inspector_field_label_style(spatial_title)
+    spatial_layout.addWidget(spatial_title)
+    spatial_row = QHBoxLayout()
+    spatial_row.setContentsMargins(0, 0, 0, 0)
+    spatial_row.setSpacing(6)
+    window.edit_microns_per_pixel = QLineEdit()
+    window.edit_microns_per_pixel.setText("0.265")
+    window.edit_microns_per_pixel.setPlaceholderText("0.265")
+    window.edit_microns_per_pixel.setToolTip(
+        "Physical image scale in micrometres per pixel. "
+        "This is sample/acquisition metadata; do not infer it from playback FPS, "
+        "JPEG DPI, or objective magnification alone."
+    )
+    apply_inspector_field_style(window.edit_microns_per_pixel)
+    window.edit_microns_per_pixel.editingFinished.connect(
+        window._on_spatial_calibration_editing_finished
+    )
+    spatial_suffix = QLabel("µm/pixel")
+    apply_muted_hint_style(spatial_suffix)
+    spatial_row.addWidget(window.edit_microns_per_pixel, stretch=1)
+    spatial_row.addWidget(spatial_suffix)
+    spatial_layout.addLayout(spatial_row)
+    window._spatial_calibration_host = spatial_host
+    layout.addWidget(spatial_host)
+
     window.lbl_timing_status = QLabel("")
     window.lbl_timing_status.setWordWrap(True)
     apply_hint_style(window.lbl_timing_status)
@@ -1138,7 +1199,6 @@ def build_tracking_settings_form(window: MainWindow) -> QWidget:
             window.spin_track_lookahead,
             window.spin_track_lookahead.toolTip(),
         ),
-        ("Microns per Pixel", window.spin_track_mpp, window.spin_track_mpp.toolTip()),
     ]
     form = build_inspector_fields_section(rows)
     wrap = QWidget()
@@ -1151,7 +1211,7 @@ def build_tracking_settings_form(window: MainWindow) -> QWidget:
 
 def build_tracking_settings_page(window: MainWindow) -> QWidget:
     # Widgets are created with the Workbench setup panel when available.
-    if not hasattr(window, "spin_track_mpp"):
+    if not hasattr(window, "spin_track_points"):
         create_tracking_setting_widgets(window)
     content = QWidget()
     layout = QVBoxLayout(content)
@@ -1292,8 +1352,8 @@ def build_optical_flow_settings_form(window: MainWindow) -> QWidget:
     layout = section.layout()
     assert isinstance(layout, QVBoxLayout)
     units_hint = QLabel(
-        "Microns per Pixel and Seconds per Frame are shared with Template "
-        "Tracking settings on the other preview mode panel."
+        "Spatial calibration (µm/pixel) and acquisition interval (seconds/frame) "
+        "are set per Sample in Sample Setup."
     )
     units_hint.setWordWrap(True)
     apply_muted_hint_style(units_hint)

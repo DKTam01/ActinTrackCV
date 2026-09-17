@@ -74,9 +74,21 @@ def invalidation_for_scientific_edit(
     *,
     had_measurable_results: bool,
     geometry_changed: bool,
+    motion_calibration_changed: bool = False,
+    media_is_image: bool = False,
 ) -> ResultInvalidation:
-    """Preserve current Workbench invalidation: stale only when results exist."""
-    if not geometry_changed:
+    """Preserve current Workbench invalidation: stale only when results exist.
+
+    Geometry edits invalidate every metric that used that geometry.
+    Calibration edits change the meaning of physical-unit motion results
+    (General Movement, Toward Nucleus, Optical Flow) but not F-actin
+    Orientation. IMAGE samples therefore do not become stale from
+    calibration-only edits.
+    """
+    setup_changed = bool(geometry_changed)
+    if motion_calibration_changed and not media_is_image:
+        setup_changed = True
+    if not setup_changed:
         return ResultInvalidation(
             mark_stale=False,
             clear_live_caches=False,

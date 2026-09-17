@@ -8,6 +8,7 @@ tool.
 from __future__ import annotations
 
 import json
+import math
 import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -354,6 +355,18 @@ from actintrack_app.sample_result_state import (
     scientific_state_key_from_annotation,
     set_sample_stale,
 )
+from actintrack_app.scientific_calibration import (
+    CALIBRATION_SOURCE_PROTOCOL_DEFAULT,
+    CALIBRATION_SOURCE_RESEARCHER_ENTERED,
+    InvalidScientificCalibration,
+    SampleScientificCalibration,
+    calibration_from_annotation,
+    calibration_state_key_from_annotation,
+    format_calibration_number,
+    legacy_default_calibration,
+    merge_calibration_into_annotation,
+    parse_calibration_number,
+)
 from actintrack_app.workflow_state import (
     WorkbenchLiveInputs,
     format_delete_samples_confirmation,
@@ -566,6 +579,10 @@ class MainWindow(QMainWindow):
         self._scientific_placement_mode: Optional[str] = None
         self._timing: TimingMetadata | None = None
         self._timing_ui_syncing = False
+        self._scientific_calibration: SampleScientificCalibration = (
+            legacy_default_calibration()
+        )
+        self._scientific_calibration_by_sample: dict[str, SampleScientificCalibration] = {}
         self._crop_confirmed = False
         self._cell_boundary_sensitivity = CELL_BOUNDARY_SENSITIVITY_DEFAULT
         self._cell_boundary_slider_timer: QTimer | None = None
@@ -1615,20 +1632,7 @@ class MainWindow(QMainWindow):
         return None
 
     def _optical_flow_settings_from_ui(self) -> OpticalFlowSettings:
-        blur = int(self.combo_of_blur.currentData() or 0)
-        timing = self._require_calibrated_timing()
-        return OpticalFlowSettings(
-            mask_percentile=float(self.spin_of_mask_percentile.value()),
-            gaussian_blur_kernel=blur,
-            pyr_scale=float(self.spin_of_pyr_scale.value()),
-            levels=int(self.spin_of_levels.value()),
-            winsize=int(self.spin_of_winsize.value()),
-            iterations=int(self.spin_of_iterations.value()),
-            poly_n=int(self.spin_of_poly_n.value()),
-            poly_sigma=float(self.spin_of_poly_sigma.value()),
-            microns_per_pixel=float(self.spin_track_mpp.value()),
-            seconds_per_frame=float(timing.analysis_seconds_per_frame),
-        )
+        return self._optical_flow_settings_for_sample(str(self._current_sample_id or ""))
 
     def _draft_optical_flow_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
@@ -1645,13 +1649,24 @@ class MainWindow(QMainWindow):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(result_to_dict(result), indent=2), encoding="utf-8")
         timing = self.__dict__.get("_timing")
-        if timing is not None:
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
+        cal = self._scientific_calibration_for_sample(sample_id)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if timing is not None:
                 data["timing_provenance"] = timing.result_provenance_dict()
-                path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            except (OSError, json.JSONDecodeError):
-                pass
+            data["scientific_calibration"] = SampleScientificCalibration(
+                acquisition_interval_s=float(result.settings.seconds_per_frame)
+                if result.settings is not None
+                else cal.acquisition_interval_s,
+                microns_per_pixel=float(result.settings.microns_per_pixel)
+                if result.settings is not None
+                else cal.microns_per_pixel,
+                acquisition_interval_source=cal.acquisition_interval_source,
+                spatial_calibration_source=cal.spatial_calibration_source,
+            ).to_dict()
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
 
     def _draft_structural_orientation_json_path(self, data_id: str) -> Path:
         assert self._project_root is not None
@@ -2077,6 +2092,13 @@ class MainWindow(QMainWindow):
             }
         if self.__dict__.get("_timing") is not None:
             payload["timing_provenance"] = self.__dict__["_timing"].result_provenance_dict()
+        cal = self._scientific_calibration_for_sample(sample_id)
+        payload["scientific_calibration"] = SampleScientificCalibration(
+            acquisition_interval_s=float(params.seconds_per_frame),
+            microns_per_pixel=float(params.microns_per_pixel),
+            acquisition_interval_source=cal.acquisition_interval_source,
+            spatial_calibration_source=cal.spatial_calibration_source,
+        ).to_dict()
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     def _invalidate_tracking_result_for_sample(self, sample_id: str) -> None:
@@ -2210,11 +2232,12 @@ class MainWindow(QMainWindow):
         return path
 
     def _timing_from_sample_video(self, sample_id: str) -> TimingMetadata | None:
-        """Protocol-standard acquisition timing for a VIDEO sample."""
+        """Sample acquisition timing for a VIDEO sample, with playback FPS."""
         path = self._sample_video_path(sample_id)
         if path is None:
             return None
-        return TimingMetadata.from_protocol_standard(
+        cal = self._scientific_calibration_for_sample(sample_id)
+        return cal.to_timing_metadata(
             observed_video_fps=probe_video_playback_fps(path),
             confirmed=True,
         )
@@ -2364,7 +2387,8 @@ class MainWindow(QMainWindow):
         params = None
         of_settings = None
         if media_type is SampleMediaType.VIDEO:
-            video_timing = TimingMetadata.from_protocol_standard(
+            cal = self._scientific_calibration_for_sample(sample_id)
+            video_timing = cal.to_timing_metadata(
                 observed_video_fps=probe_video_playback_fps(path),
                 confirmed=True,
             )
@@ -2372,8 +2396,8 @@ class MainWindow(QMainWindow):
                 return "unavailable"
             self.__dict__["_timing"] = video_timing
             try:
-                params = self._tracking_params_from_ui()
-                of_settings = self._optical_flow_settings_from_ui()
+                params = self._tracking_params_for_sample(sample_id)
+                of_settings = self._optical_flow_settings_for_sample(sample_id)
             except ValueError:
                 self.__dict__["_timing"] = previous_timing
                 self._metric_error_by_sample[sample_id] = True
@@ -2390,8 +2414,8 @@ class MainWindow(QMainWindow):
             if sample_id == self._current_sample_id:
                 self.__dict__["_timing"] = None
             try:
-                params = self._tracking_params_from_ui()
-                of_settings = self._optical_flow_settings_from_ui()
+                params = self._tracking_params_for_sample(sample_id)
+                of_settings = self._optical_flow_settings_for_sample(sample_id)
             except ValueError:
                 params = MotionIndexParams()
                 of_settings = OpticalFlowSettings()
@@ -2446,6 +2470,7 @@ class MainWindow(QMainWindow):
                 nucleus_xy_px=nucleus_xy_px,
                 sample_id=sample_id,
                 cutoff_y_crop_px=cutoff_y_crop,
+                timing=self.__dict__.get("_timing") if media_type is SampleMediaType.VIDEO else None,
             )
             if compute.timing is not None and sample_id == self._current_sample_id:
                 self.__dict__["_timing"] = compute.timing
@@ -2841,7 +2866,13 @@ class MainWindow(QMainWindow):
             self._set_sample_playback_visible(False)
         timing_label = self.__dict__.get("lbl_timing_detected")
         if timing_label is not None:
-            timing_label.setVisible(not is_image)
+            timing_label.setVisible(False)
+        interval_host = self.__dict__.get("_acquisition_interval_host")
+        if interval_host is not None:
+            interval_host.setVisible(not is_image)
+        spatial_host = self.__dict__.get("_spatial_calibration_host")
+        if spatial_host is not None:
+            spatial_host.setVisible(True)
         combo = self.__dict__.get("combo_metric_mode")
         if combo is not None:
             allowed = set(caps.metric_analysis_modes)
@@ -3008,6 +3039,11 @@ class MainWindow(QMainWindow):
 
         sid = ann["sample_id"]
         previous_key = self._scientific_state_key_for_sample(sid)
+        previous_cal_key = None
+        if self._project_root is not None:
+            previous_cal_key = calibration_state_key_from_annotation(
+                get_sample_annotation(self._project_root, sid)
+            )
         current_status = str(self._current_sample.get("processing_status", ""))
         if has_roi:
             new_status = self._status_after_roi_autosave(current_status)
@@ -3049,9 +3085,15 @@ class MainWindow(QMainWindow):
         else:
             self._set_roi_save_status("Annotations saved", saved=True)
         new_key = self._scientific_state_key_from_annotation(ann)
+        media = self._sample_media_type_for_id(sid)
+        new_cal_key = calibration_state_key_from_annotation(ann)
         effects = invalidation_for_scientific_edit(
             had_measurable_results=self._sample_has_measurable_draft_results(sid),
             geometry_changed=previous_key is not None and new_key != previous_key,
+            motion_calibration_changed=(
+                previous_cal_key is not None and new_cal_key != previous_cal_key
+            ),
+            media_is_image=media is SampleMediaType.IMAGE,
         )
         if (
             effects.mark_stale
@@ -3609,6 +3651,9 @@ class MainWindow(QMainWindow):
         self._refresh_analysis_if_visible()
 
     def _tracking_params_from_ui(self) -> MotionIndexParams:
+        return self._tracking_params_for_sample(str(self._current_sample_id or ""))
+
+    def _tracking_params_for_sample(self, sample_id: str) -> MotionIndexParams:
         patch = int(self.spin_track_patch.value())
         if patch % 2 == 0:
             raise ValueError("Template patch size must be an odd integer.")
@@ -3620,6 +3665,7 @@ class MainWindow(QMainWindow):
         min_spacing = int(self.spin_track_spacing.value())
         if min_spacing < 1:
             raise ValueError("Minimum point spacing must be at least 1 px.")
+        cal = self._scientific_calibration_for_sample(sample_id)
         return MotionIndexParams(
             num_starting_points=int(self.spin_track_points.value()),
             min_point_spacing_px=min_spacing,
@@ -3627,12 +3673,28 @@ class MainWindow(QMainWindow):
             template_patch_size_px=patch,
             min_template_confidence=float(self.spin_track_confidence.value()),
             lookahead_frames=int(self.spin_track_lookahead.value()),
-            microns_per_pixel=float(self.spin_track_mpp.value()),
-            seconds_per_frame=float(self._require_calibrated_timing().analysis_seconds_per_frame),
+            microns_per_pixel=float(cal.microns_per_pixel),
+            seconds_per_frame=float(cal.acquisition_interval_s),
             downward_direction="increasing_y",
             tracking_method=str(
                 self.combo_track_method.currentData() or TRACKING_METHOD_BRIGHTEST_LOCAL
             ),
+        )
+
+    def _optical_flow_settings_for_sample(self, sample_id: str) -> OpticalFlowSettings:
+        blur = int(self.combo_of_blur.currentData() or 0)
+        cal = self._scientific_calibration_for_sample(sample_id)
+        return OpticalFlowSettings(
+            mask_percentile=float(self.spin_of_mask_percentile.value()),
+            gaussian_blur_kernel=blur,
+            pyr_scale=float(self.spin_of_pyr_scale.value()),
+            levels=int(self.spin_of_levels.value()),
+            winsize=int(self.spin_of_winsize.value()),
+            iterations=int(self.spin_of_iterations.value()),
+            poly_n=int(self.spin_of_poly_n.value()),
+            poly_sigma=float(self.spin_of_poly_sigma.value()),
+            microns_per_pixel=float(cal.microns_per_pixel),
+            seconds_per_frame=float(cal.acquisition_interval_s),
         )
 
     def _on_show_metric_analysis_view(self) -> None:
@@ -4132,6 +4194,7 @@ class MainWindow(QMainWindow):
             and self._cutoff_boundary is None,
             cell_region=self._cell_region,
             timing=self.__dict__.get("_timing"),
+            scientific_calibration=self._current_scientific_calibration(),
             cell_boundary_sensitivity=clamp_cell_boundary_sensitivity(
                 self.__dict__.get("_cell_boundary_sensitivity")
             ),
@@ -5561,7 +5624,19 @@ class MainWindow(QMainWindow):
             and bool(ann.get("cutoff_cleared"))
         )
         self._cell_region = cell_region_from_sample_annotation(ann)
-        self.__dict__["_timing"] = timing_from_annotation(ann)
+        loaded_cal = calibration_from_annotation(ann)
+        self.__dict__["_scientific_calibration"] = loaded_cal
+        sid = str(ann.get("sample_id") or self.__dict__.get("_current_sample_id") or "")
+        if sid:
+            cache = self.__dict__.setdefault("_scientific_calibration_by_sample", {})
+            cache[sid] = loaded_cal
+        loaded_timing = timing_from_annotation(ann)
+        self.__dict__["_timing"] = loaded_cal.to_timing_metadata(
+            observed_video_fps=(
+                loaded_timing.observed_video_fps if loaded_timing is not None else None
+            ),
+            confirmed=True,
+        )
         saved_sensitivity = cell_boundary_sensitivity_from_annotation(ann)
         self.__dict__["_cell_boundary_sensitivity"] = clamp_cell_boundary_sensitivity(
             saved_sensitivity
@@ -5618,6 +5693,172 @@ class MainWindow(QMainWindow):
             if defer:
                 canvas.end_display_update()
 
+    def _current_scientific_calibration(self) -> SampleScientificCalibration:
+        cal = self.__dict__.get("_scientific_calibration")
+        if isinstance(cal, SampleScientificCalibration):
+            return cal
+        return legacy_default_calibration()
+
+    def _scientific_calibration_for_sample(
+        self, sample_id: str
+    ) -> SampleScientificCalibration:
+        sid = str(sample_id or "").strip()
+        cache = self.__dict__.setdefault("_scientific_calibration_by_sample", {})
+        if sid and sid in cache:
+            return cache[sid]
+        if sid and isinstance(self.__dict__.get("_project_root"), Path):
+            loaded = calibration_from_annotation(
+                get_sample_annotation(self._project_root, sid)
+            )
+            cache[sid] = loaded
+            return loaded
+        current_id = str(self.__dict__.get("_current_sample_id") or "")
+        if sid and sid == current_id:
+            current = self.__dict__.get("_scientific_calibration")
+            if isinstance(current, SampleScientificCalibration):
+                return current
+        return legacy_default_calibration()
+
+    def _set_current_scientific_calibration(
+        self, calibration: SampleScientificCalibration
+    ) -> None:
+        self.__dict__["_scientific_calibration"] = calibration
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        if sid:
+            cache = self.__dict__.setdefault("_scientific_calibration_by_sample", {})
+            cache[sid] = calibration
+        timing = self.__dict__.get("_timing")
+        fps = timing.observed_video_fps if isinstance(timing, TimingMetadata) else None
+        self.__dict__["_timing"] = calibration.to_timing_metadata(
+            observed_video_fps=fps,
+            confirmed=True,
+        )
+
+    def _persist_current_scientific_calibration(self) -> None:
+        if self._project_root is None or self._current_sample is None:
+            return
+        sid = str(self._current_sample.get("sample_id", "")).strip()
+        if not sid:
+            return
+        cal = self._current_scientific_calibration()
+        existing = get_sample_annotation(self._project_root, sid)
+        if existing is None:
+            return
+        timing = self.__dict__.get("_timing")
+        fps = timing.observed_video_fps if isinstance(timing, TimingMetadata) else None
+        updated = merge_calibration_into_annotation(
+            existing, cal, observed_video_fps=fps
+        )
+        crop_path = self._project_root / METADATA_DIR / CROP_METADATA_JSON
+        save_sample_crop_annotation(crop_path, sid, updated)
+
+    def _commit_scientific_calibration(
+        self,
+        calibration: SampleScientificCalibration,
+        *,
+        persist: bool = True,
+    ) -> None:
+        previous = self._current_scientific_calibration()
+        self._set_current_scientific_calibration(calibration)
+        sid = str(self.__dict__.get("_current_sample_id") or "")
+        changed = previous.motion_calibration_key() != calibration.motion_calibration_key()
+        if persist and sid:
+            self._persist_current_scientific_calibration()
+        if changed and sid:
+            media = self._sample_media_type_for_id(sid)
+            effects = invalidation_for_scientific_edit(
+                had_measurable_results=self._sample_has_measurable_draft_results(sid),
+                geometry_changed=False,
+                motion_calibration_changed=True,
+                media_is_image=media is SampleMediaType.IMAGE,
+            )
+            if (
+                effects.mark_stale
+                or effects.clear_live_caches
+                or effects.discard_inspection_if_current
+            ):
+                self._mark_draft_metrics_stale(sid)
+        self._sync_timing_ui_from_state()
+        self._update_metric_freshness_label()
+
+    def _on_acquisition_interval_editing_finished(self) -> None:
+        if self.__dict__.get("_timing_ui_syncing"):
+            return
+        edit = self.__dict__.get("edit_acquisition_interval")
+        if edit is None:
+            return
+        previous = self._current_scientific_calibration()
+        try:
+            value = parse_calibration_number(edit.text(), field="acquisition_interval_s")
+        except InvalidScientificCalibration:
+            self._show_calibration_validation_error(
+                "Acquisition interval must be a finite number greater than zero."
+            )
+            self._sync_timing_ui_from_state()
+            return
+        source = (
+            CALIBRATION_SOURCE_PROTOCOL_DEFAULT
+            if math.isclose(value, 60.0, rel_tol=0.0, abs_tol=1e-12)
+            else CALIBRATION_SOURCE_RESEARCHER_ENTERED
+        )
+        self._clear_calibration_validation_error()
+        self._commit_scientific_calibration(
+            previous.with_acquisition_interval(value, source=source)
+        )
+
+    def _on_spatial_calibration_editing_finished(self) -> None:
+        if self.__dict__.get("_timing_ui_syncing"):
+            return
+        edit = self.__dict__.get("edit_microns_per_pixel")
+        if edit is None:
+            return
+        previous = self._current_scientific_calibration()
+        try:
+            value = parse_calibration_number(edit.text(), field="microns_per_pixel")
+        except InvalidScientificCalibration:
+            self._show_calibration_validation_error(
+                "Spatial calibration must be a finite number greater than zero."
+            )
+            self._sync_timing_ui_from_state()
+            return
+        source = (
+            CALIBRATION_SOURCE_PROTOCOL_DEFAULT
+            if math.isclose(value, 0.265, rel_tol=0.0, abs_tol=1e-12)
+            else CALIBRATION_SOURCE_RESEARCHER_ENTERED
+        )
+        self._clear_calibration_validation_error()
+        self._commit_scientific_calibration(
+            previous.with_microns_per_pixel(value, source=source)
+        )
+
+    def _apply_acquisition_interval_preset(self, seconds: float) -> None:
+        previous = self._current_scientific_calibration()
+        source = (
+            CALIBRATION_SOURCE_PROTOCOL_DEFAULT
+            if math.isclose(float(seconds), 60.0, rel_tol=0.0, abs_tol=1e-12)
+            else CALIBRATION_SOURCE_RESEARCHER_ENTERED
+        )
+        self._clear_calibration_validation_error()
+        self._commit_scientific_calibration(
+            previous.with_acquisition_interval(float(seconds), source=source)
+        )
+
+    def _show_calibration_validation_error(self, message: str) -> None:
+        status = self.__dict__.get("lbl_timing_status")
+        if status is None:
+            return
+        status.setText(message)
+        status.show()
+
+    def _clear_calibration_validation_error(self) -> None:
+        status = self.__dict__.get("lbl_timing_status")
+        if status is None:
+            return
+        timing = self._effective_timing()
+        if timing.is_calibrated_analysis_ready:
+            status.hide()
+            status.setText("")
+
     def _effective_timing(self) -> TimingMetadata:
         timing = self.__dict__.get("_timing")
         if timing is not None:
@@ -5628,11 +5869,23 @@ class MainWindow(QMainWindow):
         return require_calibrated_timing(self.__dict__.get("_timing"))
 
     def _sync_timing_ui_from_state(self) -> None:
-        if self.__dict__.get("lbl_timing_detected") is None:
-            return
-        timing = self._effective_timing()
-        self.lbl_timing_detected.setText(timing.display_label())
-        self._sync_timing_status_label()
+        self.__dict__["_timing_ui_syncing"] = True
+        try:
+            cal = self._current_scientific_calibration()
+            edit_interval = self.__dict__.get("edit_acquisition_interval")
+            if edit_interval is not None:
+                edit_interval.setText(
+                    format_calibration_number(cal.acquisition_interval_s)
+                )
+            edit_mpp = self.__dict__.get("edit_microns_per_pixel")
+            if edit_mpp is not None:
+                edit_mpp.setText(format_calibration_number(cal.microns_per_pixel))
+            if self.__dict__.get("lbl_timing_detected") is not None:
+                timing = self._effective_timing()
+                self.lbl_timing_detected.setText(timing.display_label())
+            self._sync_timing_status_label()
+        finally:
+            self.__dict__["_timing_ui_syncing"] = False
 
     def _sync_timing_status_label(self) -> None:
         if self.__dict__.get("lbl_timing_status") is None:
@@ -5646,12 +5899,10 @@ class MainWindow(QMainWindow):
         self.lbl_timing_status.show()
 
     def _ensure_timing_for_current_sample(self, *, persist_observed: bool = False) -> None:
-        """Apply protocol-standard biological timing (60 s/frame).
+        """Apply per-sample acquisition interval; probe container FPS as playback only.
 
-        Container FPS is probed for playback provenance only. Missing or
-        malformed FPS does not block calibrated VIDEO analysis. Historical
-        lab_default/custom/video_header provenance remains readable from
-        annotations and result JSON but is not used as the live analysis dt.
+        Missing or malformed FPS does not block calibrated VIDEO analysis.
+        Samples without an explicit CAL1 calibration keep the 60 s/frame fallback.
         """
         path = self._sample_file_path()
         media = self._sample_media_type_for_id(
@@ -5660,12 +5911,19 @@ class MainWindow(QMainWindow):
         observed = None
         if media is SampleMediaType.VIDEO and path is not None:
             observed = probe_video_playback_fps(path)
-        loaded: TimingMetadata | None = None
-        if self._project_root is not None and self._current_sample is not None:
+        sid = ""
+        if self._current_sample is not None:
             sid = str(self._current_sample.get("sample_id", ""))
-            ann = get_sample_annotation(self._project_root, sid) if sid else None
+        cal = self._scientific_calibration_for_sample(sid)
+        self.__dict__["_scientific_calibration"] = cal
+        if sid:
+            cache = self.__dict__.setdefault("_scientific_calibration_by_sample", {})
+            cache[sid] = cal
+        loaded: TimingMetadata | None = None
+        if self._project_root is not None and sid:
+            ann = get_sample_annotation(self._project_root, sid)
             loaded = timing_from_annotation(ann)
-            if loaded is None and sid:
+            if loaded is None:
                 try:
                     from actintrack_app.schema_compat import resolve_draft_tracking_path
 
@@ -5679,8 +5937,11 @@ class MainWindow(QMainWindow):
                     except (OSError, json.JSONDecodeError, TypeError, ValueError):
                         loaded = None
         self.__dict__["_loaded_timing_provenance"] = loaded
-        self.__dict__["_timing"] = TimingMetadata.from_protocol_standard(
-            observed_video_fps=observed,
+        fps = observed
+        if fps is None and loaded is not None:
+            fps = loaded.observed_video_fps
+        self.__dict__["_timing"] = cal.to_timing_metadata(
+            observed_video_fps=fps,
             confirmed=True,
         )
 
@@ -5848,6 +6109,7 @@ class MainWindow(QMainWindow):
         self._clear_prepared_cell_signal()
         self._scientific_placement_mode = None
         self.__dict__["_timing"] = None
+        self.__dict__["_scientific_calibration"] = legacy_default_calibration()
         self.__dict__["_cell_boundary_sensitivity"] = CELL_BOUNDARY_SENSITIVITY_DEFAULT
         self._update_current_sample_panel_fields(sid, frame, idx, total)
 
