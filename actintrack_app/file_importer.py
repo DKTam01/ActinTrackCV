@@ -34,6 +34,7 @@ from actintrack_app.condition_group_manager import (
 from actintrack_app.media_capabilities import (
     SampleMediaType,
     classify_media_path,
+    UNSUPPORTED_MEDIA_MESSAGE,
 )
 from actintrack_app.utils import (
     METADATA_DIR,
@@ -196,14 +197,14 @@ def import_files(
         if not is_supported_file(src_path):
             raise ValueError(
                 f"Unsupported file type: {src_path.suffix}. "
-                "Supported formats: AVI, MP4, JPG, JPEG, TIF, TIFF."
+                f"{UNSUPPORTED_MEDIA_MESSAGE}"
             )
         from actintrack_app.media_capabilities import is_product_media_path
 
         if not is_product_media_path(src_path):
             raise ValueError(
                 f"Unsupported file type: {src_path.suffix}. "
-                "Supported formats: AVI, MP4, JPG, JPEG, TIF, TIFF."
+                f"{UNSUPPORTED_MEDIA_MESSAGE}"
             )
 
         is_video = is_video_path(src_path)

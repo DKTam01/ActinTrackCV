@@ -72,6 +72,25 @@ def classify_paths(paths: list[Path]) -> tuple[ImportKind, list[Path], str]:
             for p in files
             if _per_file_kind(p) in {"unknown", "unsupported_image"}
         ]
+        valid = [
+            p
+            for p in files
+            if _per_file_kind(p) in {"video", "image"}
+        ]
+        if valid:
+            valid_kinds = {_per_file_kind(p) for p in valid}
+            if valid_kinds <= {"video"}:
+                kind = ImportKind.VIDEO
+            elif valid_kinds <= {"image"}:
+                kind = ImportKind.IMAGE
+            else:
+                kind = ImportKind.MIXED
+            return (
+                kind,
+                valid,
+                f"Unsupported file type: {', '.join(unknown[:3])}. "
+                f"{UNSUPPORTED_MEDIA_MESSAGE}",
+            )
         return (
             ImportKind.MIXED,
             [],
