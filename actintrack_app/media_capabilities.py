@@ -32,12 +32,12 @@ class MetricId(str, Enum):
 
 # Product import formats for MEDIA1 (case-insensitive via Path.suffix.lower()).
 PRODUCT_VIDEO_EXTENSIONS = frozenset({".avi", ".mp4"})
-PRODUCT_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".tif", ".tiff"})
+PRODUCT_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".tif", ".tiff", ".png"})
 PRODUCT_MEDIA_EXTENSIONS = PRODUCT_VIDEO_EXTENSIONS | PRODUCT_IMAGE_EXTENSIONS
 
 UNSUPPORTED_MEDIA_MESSAGE = (
     "Unsupported file type. Supported formats: "
-    "AVI, MP4 (video); JPG, JPEG, TIF, TIFF (image)."
+    "AVI, MP4 (video); JPG, JPEG, PNG, TIF, TIFF (image)."
 )
 
 

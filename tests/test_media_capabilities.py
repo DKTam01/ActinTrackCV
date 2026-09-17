@@ -40,9 +40,14 @@ class MediaCapabilitiesTests(unittest.TestCase):
             )
 
     def test_classify_rejects_unsupported(self) -> None:
-        for name in ("notes.txt", "stack.png", "raw.oir", "data.oib"):
+        for name in ("notes.txt", "raw.oir", "data.oib", "movie.gif"):
             self.assertIsNone(classify_media_path(Path(name)))
             self.assertFalse(is_product_media_path(Path(name)))
+
+    def test_png_is_product_image(self) -> None:
+        self.assertIn(".png", PRODUCT_IMAGE_EXTENSIONS)
+        self.assertEqual(classify_media_path(Path("cell.png")), SampleMediaType.IMAGE)
+        self.assertEqual(classify_media_path(Path("CELL.PNG")), SampleMediaType.IMAGE)
 
     def test_video_capability_matrix(self) -> None:
         caps = capabilities_for(SampleMediaType.VIDEO)
@@ -163,11 +168,18 @@ class ImportClassifierMediaTests(unittest.TestCase):
         self.assertEqual(files, [])
         self.assertIn("Unsupported", msg)
 
-    def test_classify_rejects_png(self) -> None:
+    def test_classify_accepts_png(self) -> None:
         path = self._touch("still.png")
         kind, files, msg = classify_paths([path])
-        self.assertEqual(kind, ImportKind.MIXED)
-        self.assertEqual(files, [])
+        self.assertEqual(kind, ImportKind.IMAGE)
+        self.assertEqual(files, [path.resolve()])
+        self.assertEqual(msg, "")
+
+    def test_classify_accepts_png_uppercase(self) -> None:
+        path = self._touch("still.PNG")
+        kind, files, msg = classify_paths([path])
+        self.assertEqual(kind, ImportKind.IMAGE)
+        self.assertEqual(msg, "")
 
 
 if __name__ == "__main__":

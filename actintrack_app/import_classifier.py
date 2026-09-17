@@ -23,7 +23,7 @@ UNSUPPORTED_2D_MESSAGE = UNSUPPORTED_MEDIA_MESSAGE
 
 MIXED_MESSAGE = (
     "Cannot import unsupported formats together with scientific media. "
-    "Import AVI/MP4 videos and JPG/JPEG/TIF/TIFF images only."
+    "Import AVI/MP4 videos and JPG/JPEG/PNG/TIF/TIFF images only."
 )
 
 # Kept for older call sites; multi-file video import is now supported via
@@ -51,8 +51,6 @@ def _per_file_kind(path: Path) -> str:
     ext = path.suffix.lower()
     if ext in RAW_MICROSCOPY_EXTENSIONS:
         return "wip"
-    if ext in {".png"}:
-        return "unsupported_image"
     return "unknown"
 
 
@@ -101,7 +99,7 @@ def classify_paths(paths: list[Path]) -> tuple[ImportKind, list[Path], str]:
 
 def import_kind_label(kind: ImportKind) -> str:
     labels = {
-        ImportKind.IMAGE: "Static image — JPG/JPEG/TIF/TIFF (orientation)",
+        ImportKind.IMAGE: "Static image — JPG/JPEG/PNG/TIF/TIFF (orientation)",
         ImportKind.IMAGE_SEQUENCE: "Postponed — image sequence (not importable)",
         ImportKind.VIDEO: "Video — AVI/MP4 timelapse (motion metrics)",
         ImportKind.WIP_RAW_3D: "Postponed — raw / 3D microscopy (not importable)",

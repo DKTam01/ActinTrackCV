@@ -98,17 +98,48 @@ def assert_video_readable(video_path: str | Path) -> int:
 
 
 def load_image(image_path: str | Path) -> np.ndarray:
-    """Load a single image (BGR). For multi-page TIFF, first page only in phase 1."""
+    """Load a single image (BGR). For multi-page TIFF, first page only in phase 1.
+
+    PNG follows the same explicit intensity policy as TIFF via ``_array_to_bgr``:
+    uint8 as-is; wider bit depth min–max stretched (never low-byte truncate).
+    RGBA alpha is dropped (BGR from RGB channels only) so transparent pixels
+    do not become scientific signal.
+    """
     path = Path(image_path)
     ext = path.suffix.lower()
 
     if ext in {".tif", ".tiff"}:
         return load_tiff_page(image_path, page_index=0)
 
+    if ext == ".png":
+        arr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if arr is None:
+            raise MediaLoadError(f"Cannot open image: {path}")
+        return _opencv_unchanged_to_bgr(arr)
+
     img = cv2.imread(str(path), cv2.IMREAD_COLOR)
     if img is None:
         raise MediaLoadError(f"Cannot open image: {path}")
     return img
+
+
+def _opencv_unchanged_to_bgr(arr: np.ndarray) -> np.ndarray:
+    """Convert OpenCV IMREAD_UNCHANGED output to BGR uint8.
+
+    OpenCV loads color PNG as BGR/BGRA (not RGB/RGBA). Alpha is dropped so
+    transparent pixels do not become scientific intensity. Wider-than-8-bit
+    samples use the same min–max stretch as TIFF (no low-byte truncation).
+    """
+    arr = np.asarray(arr)
+    if arr.ndim == 2:
+        return cv2.cvtColor(_to_display_uint8(arr), cv2.COLOR_GRAY2BGR)
+    if arr.ndim == 3:
+        if arr.shape[2] == 3:
+            return _to_display_uint8(arr)
+        if arr.shape[2] == 4:
+            bgr = _to_display_uint8(arr[:, :, :3])
+            return bgr
+    raise MediaLoadError(f"Unsupported PNG array shape: {arr.shape}")
 
 
 def load_tiff_page(image_path: str | Path, page_index: int = 0) -> np.ndarray:

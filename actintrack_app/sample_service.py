@@ -49,7 +49,7 @@ from actintrack_app.video_normalize import store_imported_video
 from actintrack_app.video_processing import MediaLoadError, assert_video_readable, load_image
 
 DATA_IMPORT_FILTER = (
-    "Scientific media (*.avi *.mp4 *.jpg *.jpeg *.tif *.tiff);;All files (*)"
+    "Scientific media (*.avi *.mp4 *.jpg *.jpeg *.png *.tif *.tiff);;All files (*)"
 )
 
 _DERIVED_STATUSES = frozenset(
