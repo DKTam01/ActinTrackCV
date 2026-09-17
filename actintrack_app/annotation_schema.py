@@ -22,6 +22,10 @@ from actintrack_app.roi_workflow import (
     roi_oriented_as_dict,
     roi_original_as_dict,
 )
+from actintrack_app.scientific_calibration import (
+    SampleScientificCalibration,
+    merge_calibration_into_annotation,
+)
 from actintrack_app.scientific_annotations import (
     ANNOTATION_FIELD_CELL_BOUNDARY_SENSITIVITY,
     ANNOTATION_FIELD_CELL_DETECTION,
@@ -79,6 +83,7 @@ def build_sample_annotation(
     cutoff_cleared: bool | None = None,
     cell_region: CellRegion | None = None,
     timing: TimingMetadata | None = None,
+    scientific_calibration: SampleScientificCalibration | None = None,
     crop_confirmed: bool | None = None,
     cell_boundary_sensitivity: float | None = None,
     cell_detection_parameters: dict[str, Any] | None = None,
@@ -86,11 +91,11 @@ def build_sample_annotation(
     """Structured annotation for training and export.
 
     Optional ``nucleus_reference``, ``cutoff_boundary``, ``cell_region``,
-    ``timing``, ``crop_confirmed``, and ``roi`` persist in
-    oriented_frame_pixels (timing/crop_confirmed are workflow metadata, not
-    geometry). They are omitted when None so old projects stay unchanged and
-    a missing crop does not erase scientific state. Legacy cutoff_y is not
-    written here and is not promoted on load.
+    ``timing``, ``scientific_calibration``, ``crop_confirmed``, and ``roi`` persist
+    in oriented_frame_pixels (timing/calibration/crop_confirmed are workflow
+    metadata, not geometry). They are omitted when None so old projects stay
+    unchanged and a missing crop does not erase scientific state. Legacy
+    cutoff_y is not written here and is not promoted on load.
     """
     ann: dict[str, Any] = {
         "sample_id": str(sample_id),
@@ -141,6 +146,13 @@ def build_sample_annotation(
         ann[ANNOTATION_FIELD_CELL_REGION] = cell_region.to_dict()
     if timing is not None:
         ann[ANNOTATION_FIELD_TIMING] = timing.to_dict()
+    if scientific_calibration is not None:
+        fps = None
+        if timing is not None:
+            fps = timing.observed_video_fps
+        ann = merge_calibration_into_annotation(
+            ann, scientific_calibration, observed_video_fps=fps
+        )
     if crop_confirmed is not None:
         ann[ANNOTATION_FIELD_CROP_CONFIRMED] = bool(crop_confirmed)
     if cell_boundary_sensitivity is not None:
