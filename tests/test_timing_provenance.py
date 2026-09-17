@@ -27,6 +27,7 @@ from actintrack_app.timing_provenance import (
     TIMING_SOURCE_CUSTOM,
     TIMING_SOURCE_LAB_DEFAULT,
     TIMING_SOURCE_LEGACY_DEFAULT,
+    TIMING_SOURCE_PROTOCOL_STANDARD,
     TIMING_SOURCE_VIDEO_HEADER,
     TimingMetadata,
     calibrated_um_per_s,
@@ -66,8 +67,8 @@ class VideoFpsProbeTests(unittest.TestCase):
 class TimingMetadataPersistenceTests(unittest.TestCase):
     def test_video_header_custom_and_lab_persistence(self) -> None:
         video = TimingMetadata.from_observed_fps(6.0, confirmed=False)
-        self.assertEqual(video.timing_source, TIMING_SOURCE_VIDEO_HEADER)
-        self.assertAlmostEqual(video.analysis_seconds_per_frame, 1.0 / 6.0, places=6)
+        self.assertEqual(video.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+        self.assertAlmostEqual(video.analysis_seconds_per_frame, 60.0, places=6)
         self.assertFalse(video.confirmed)
 
         confirmed = video.confirm()
@@ -75,7 +76,15 @@ class TimingMetadataPersistenceTests(unittest.TestCase):
         loaded = timing_from_dict(confirmed.to_dict())
         self.assertIsNotNone(loaded)
         self.assertTrue(loaded.confirmed)
-        self.assertEqual(loaded.timing_source, TIMING_SOURCE_VIDEO_HEADER)
+        self.assertEqual(loaded.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+
+        legacy_header = TimingMetadata.from_observed_fps(
+            6.0, prefer_video_header=True, confirmed=True
+        )
+        self.assertEqual(legacy_header.timing_source, TIMING_SOURCE_VIDEO_HEADER)
+        self.assertAlmostEqual(
+            legacy_header.analysis_seconds_per_frame, 1.0 / 6.0, places=6
+        )
 
         lab = TimingMetadata.lab_default(observed_video_fps=6.0, confirmed=True)
         self.assertEqual(lab.timing_source, TIMING_SOURCE_LAB_DEFAULT)
@@ -119,7 +128,8 @@ class SparseOfTimingConsistencyTests(unittest.TestCase):
             seconds_per_frame=timing.analysis_seconds_per_frame
         )
         self.assertEqual(params.seconds_per_frame, of_settings.seconds_per_frame)
-        self.assertAlmostEqual(params.seconds_per_frame, 1.0 / 6.0, places=6)
+        self.assertAlmostEqual(params.seconds_per_frame, 60.0, places=6)
+        self.assertEqual(timing.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
 
     def test_frame_gap_velocity_uses_confirmed_timing(self) -> None:
         params = MotionIndexParams(
@@ -217,7 +227,8 @@ class AnnotationTimingRoundtripTests(unittest.TestCase):
         )
         self.assertIn("timing", ann)
         self.assertTrue(ann["timing"]["timing_confirmed"])
-        self.assertAlmostEqual(ann["timing"]["analysis_seconds_per_frame"], 1.0 / 6.0)
+        self.assertAlmostEqual(ann["timing"]["analysis_seconds_per_frame"], 60.0)
+        self.assertEqual(ann["timing"]["timing_source"], TIMING_SOURCE_PROTOCOL_STANDARD)
 
 
 if __name__ == "__main__":

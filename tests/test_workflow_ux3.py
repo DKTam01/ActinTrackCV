@@ -229,7 +229,7 @@ class SampleResultsPlacementTests(unittest.TestCase):
         self.assertIn("build_sample_results_beside_canvas(window)", images)
         self.assertIn("slider_cell_boundary", setup)
         self.assertIn("Select Nucleus", setup)
-        self.assertIn("Video Timing", layout)
+        self.assertIn("Acquisition Interval", layout)
         self.assertNotIn("Confirm Timing", layout)
         self.assertNotIn("radio_timing_video", layout)
         self.assertNotIn("Custom s/frame", layout)

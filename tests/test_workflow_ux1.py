@@ -93,7 +93,9 @@ class WorkflowSnapshotGatingTests(unittest.TestCase):
             metrics_present=False,
             metrics_stale=False,
         )
-        self.assertEqual(snap.run_metrics_block_reason(), "Valid video timing is required")
+        self.assertEqual(
+            snap.run_metrics_block_reason(), "Valid acquisition timing is required"
+        )
 
     def test_ready_enables_run_but_not_metric_analysis(self) -> None:
         snap = build_workflow_snapshot(
@@ -174,7 +176,7 @@ class SampleResultsFormattingTests(unittest.TestCase):
             orientation_deg=33.5,
             tracks_used=8,
             tracks_requested=10,
-            timing_label="video_header · 0.1667 s/frame",
+            timing_label="60 s between frames",
             timing_confirmed=True,
             stale=False,
         )
@@ -186,8 +188,8 @@ class SampleResultsFormattingTests(unittest.TestCase):
         self.assertNotIn("F-actin Orientation", text)
         self.assertNotIn("33.5°", text)
         self.assertIn("8 valid / 10 requested", text)
-        self.assertIn("Video Timing", text)
-        self.assertIn("video_header", text)
+        self.assertIn("Acquisition Interval", text)
+        self.assertIn("60 s between frames", text)
         self.assertNotIn("Timing unconfirmed", text)
 
     def test_unconfirmed_timing_marker(self) -> None:

@@ -142,6 +142,7 @@ class MediaReadinessTests(unittest.TestCase):
         self.assertIn("42.5°", text)
         self.assertNotIn("General Movement", text)
         self.assertNotIn("Optical Flow", text)
+        self.assertNotIn("Acquisition Interval", text)
         self.assertNotIn("Video Timing", text)
 
     def test_sample_results_video_omits_orientation(self) -> None:

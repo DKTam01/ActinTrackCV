@@ -89,6 +89,7 @@ from actintrack_app.cell_detection import (
     clamp_cell_boundary_sensitivity,
     computational_crop_from_cell_region,
     detection_parameters_payload,
+    prepare_cell_signal,
     suggest_conservative_cell_region,
     suggest_default_cutoff_boundary,
 )
@@ -564,6 +565,8 @@ class MainWindow(QMainWindow):
         self._cell_boundary_sensitivity = CELL_BOUNDARY_SENSITIVITY_DEFAULT
         self._cell_boundary_slider_timer: QTimer | None = None
         self._cell_boundary_preview_pending = False
+        self._prepared_cell_signal = None
+        self._prepared_cell_signal_token = None
         self._workspace_root = default_workspace_root()
         self._default_source_root = (
             DEFAULT_SOURCE_ROOT if DEFAULT_SOURCE_ROOT.exists() else self._workspace_root
@@ -2198,11 +2201,14 @@ class MainWindow(QMainWindow):
         return path
 
     def _timing_from_sample_video(self, sample_id: str) -> TimingMetadata | None:
-        """Detected video-header timing for a sample, or None if FPS is invalid."""
+        """Protocol-standard acquisition timing for a VIDEO sample."""
         path = self._sample_video_path(sample_id)
         if path is None:
             return None
-        return TimingMetadata.from_video_header(probe_video_playback_fps(path))
+        return TimingMetadata.from_protocol_standard(
+            observed_video_fps=probe_video_playback_fps(path),
+            confirmed=True,
+        )
 
     def _sample_has_valid_data_and_roi(self, sample_id: str) -> bool:
         if self._sample_media_path(sample_id) is None:
@@ -2349,10 +2355,11 @@ class MainWindow(QMainWindow):
         params = None
         of_settings = None
         if media_type is SampleMediaType.VIDEO:
-            video_timing = TimingMetadata.from_video_header(
-                probe_video_playback_fps(path)
+            video_timing = TimingMetadata.from_protocol_standard(
+                observed_video_fps=probe_video_playback_fps(path),
+                confirmed=True,
             )
-            if video_timing is None:
+            if not video_timing.is_calibrated_analysis_ready:
                 return "unavailable"
             self.__dict__["_timing"] = video_timing
             try:
@@ -3073,6 +3080,8 @@ class MainWindow(QMainWindow):
         if not same and self._base_frame is not None:
             new_roi = self._reorient_open_annotations(old_state, new_state)
         self._orientation = new_state
+        if not same:
+            self._clear_prepared_cell_signal()
         self._refresh_display(keep_roi=False if new_roi is not None else True)
         if new_roi is not None:
             oriented = self._oriented_frame()
@@ -3393,6 +3402,62 @@ class MainWindow(QMainWindow):
         self._preview_cell_boundary_from_slider()
         self._commit_cell_boundary_sensitivity()
 
+    def _cell_signal_prep_token(self) -> tuple[Any, ...] | None:
+        """Identity for the current oriented frame used by CellRegion prep cache."""
+        base = self.__dict__.get("_base_frame")
+        if base is None or not hasattr(base, "shape"):
+            return None
+        try:
+            shape = tuple(int(v) for v in base.shape[:2])
+        except (TypeError, ValueError):
+            return None
+        if len(shape) < 2:
+            return None
+        sid = self.__dict__.get("_current_sample_id")
+        orientation = self.__dict__.get("_orientation")
+        orient_key = None
+        if orientation is not None:
+            orient_key = (
+                getattr(orientation, "rotation_angle_degrees", 0),
+                getattr(orientation, "mirror_y_axis", False),
+                getattr(orientation, "flipped_180", False),
+            )
+        return (
+            sid,
+            self.__dict__.get("_frame_index"),
+            orient_key,
+            id(base),
+            shape[0],
+            shape[1],
+        )
+
+    def _prepared_cell_signal_for_oriented(
+        self, oriented: np.ndarray
+    ):
+        """Reuse actin-signal prep across sensitivity changes for one sample frame."""
+        token = self._cell_signal_prep_token()
+        prepared = self.__dict__.get("_prepared_cell_signal")
+        cached_token = self.__dict__.get("_prepared_cell_signal_token")
+        if (
+            prepared is not None
+            and cached_token == token
+            and prepared.shape == (int(oriented.shape[0]), int(oriented.shape[1]))
+        ):
+            return prepared
+        try:
+            prepared = prepare_cell_signal(oriented)
+        except (ValueError, TypeError, AttributeError):
+            # Low-contrast / stub frames fall through to suggest_* fallback.
+            self._clear_prepared_cell_signal()
+            return None
+        self.__dict__["_prepared_cell_signal"] = prepared
+        self.__dict__["_prepared_cell_signal_token"] = token
+        return prepared
+
+    def _clear_prepared_cell_signal(self) -> None:
+        self.__dict__["_prepared_cell_signal"] = None
+        self.__dict__["_prepared_cell_signal_token"] = None
+
     def _preview_cell_boundary_from_slider(self) -> None:
         self.__dict__["_cell_boundary_preview_pending"] = False
         oriented = self._oriented_frame() if hasattr(self, "_oriented_frame") else None
@@ -3400,10 +3465,12 @@ class MainWindow(QMainWindow):
             return
         canvas = self.__dict__.get("canvas")
         fallback = canvas.rect_roi() if canvas is not None else None
+        prepared = self._prepared_cell_signal_for_oriented(oriented)
         self._cell_region = suggest_conservative_cell_region(
             oriented,
             fallback_rect=fallback,
             sensitivity=self.__dict__.get("_cell_boundary_sensitivity"),
+            prepared=prepared,
         )
         self._derive_computational_crop_from_cell()
         self._sync_scientific_overlay()
@@ -5506,44 +5573,42 @@ class MainWindow(QMainWindow):
         self.lbl_timing_status.show()
 
     def _ensure_timing_for_current_sample(self, *, persist_observed: bool = False) -> None:
-        """Probe video FPS and apply video-header analysis interval when valid.
+        """Apply protocol-standard biological timing (60 s/frame).
 
-        Old lab_default/custom metadata remains readable from annotations and
-        result JSON. Live Workbench analysis uses detected video timing only.
+        Container FPS is probed for playback provenance only. Missing or
+        malformed FPS does not block calibrated VIDEO analysis. Historical
+        lab_default/custom/video_header provenance remains readable from
+        annotations and result JSON but is not used as the live analysis dt.
         """
         path = self._sample_file_path()
         observed = probe_video_playback_fps(path) if path is not None else None
-        video = TimingMetadata.from_video_header(observed)
-        if video is not None:
-            self.__dict__["_timing"] = video
-        else:
-            loaded: TimingMetadata | None = None
-            if self._project_root is not None and self._current_sample is not None:
-                sid = str(self._current_sample.get("sample_id", ""))
-                ann = get_sample_annotation(self._project_root, sid) if sid else None
-                loaded = timing_from_annotation(ann)
-                if loaded is None and sid:
-                    try:
-                        from actintrack_app.schema_compat import resolve_draft_tracking_path
+        loaded: TimingMetadata | None = None
+        if self._project_root is not None and self._current_sample is not None:
+            sid = str(self._current_sample.get("sample_id", ""))
+            ann = get_sample_annotation(self._project_root, sid) if sid else None
+            loaded = timing_from_annotation(ann)
+            if loaded is None and sid:
+                try:
+                    from actintrack_app.schema_compat import resolve_draft_tracking_path
 
-                        draft_path = resolve_draft_tracking_path(self._project_root, sid)
-                    except Exception:
-                        draft_path = None
-                    if draft_path is not None and draft_path.is_file():
-                        try:
-                            draft = json.loads(draft_path.read_text(encoding="utf-8"))
-                            loaded = timing_from_result_payload(draft)
-                        except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                            loaded = None
-            self.__dict__["_loaded_timing_provenance"] = loaded
-            self.__dict__["_timing"] = TimingMetadata.unresolved(
-                observed_video_fps=observed
-            )
+                    draft_path = resolve_draft_tracking_path(self._project_root, sid)
+                except Exception:
+                    draft_path = None
+                if draft_path is not None and draft_path.is_file():
+                    try:
+                        draft = json.loads(draft_path.read_text(encoding="utf-8"))
+                        loaded = timing_from_result_payload(draft)
+                    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                        loaded = None
+        self.__dict__["_loaded_timing_provenance"] = loaded
+        self.__dict__["_timing"] = TimingMetadata.from_protocol_standard(
+            observed_video_fps=observed,
+            confirmed=True,
+        )
 
         self._sync_timing_ui_from_state()
         if (
             persist_observed
-            and video is not None
             and self._project_root is not None
             and self._current_sample is not None
             and self.__dict__.get("canvas") is not None
@@ -5581,10 +5646,12 @@ class MainWindow(QMainWindow):
         derived_crop = False
         generated_cutoff = False
         if regenerate_cell or self.__dict__.get("_cell_region") is None:
+            prepared = self._prepared_cell_signal_for_oriented(oriented)
             self._cell_region = suggest_conservative_cell_region(
                 oriented,
                 fallback_rect=fallback,
                 sensitivity=sensitivity,
+                prepared=prepared,
             )
             generated_cell = True
         if self._cell_region is not None and (
@@ -5675,6 +5742,7 @@ class MainWindow(QMainWindow):
         self._cutoff_boundary = None
         self.__dict__["_cutoff_intentionally_cleared"] = False
         self._cell_region = None
+        self._clear_prepared_cell_signal()
         self._scientific_placement_mode = None
         self.__dict__["_timing"] = None
         self.__dict__["_cell_boundary_sensitivity"] = CELL_BOUNDARY_SENSITIVITY_DEFAULT

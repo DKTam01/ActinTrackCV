@@ -49,7 +49,7 @@ class MotionIndexTests(unittest.TestCase):
         params = MotionIndexParams()
 
         self.assertEqual(params.num_starting_points, 10)
-        self.assertEqual(params.seconds_per_frame, 30.0)
+        self.assertEqual(params.seconds_per_frame, 60.0)
         self.assertEqual(params.tracking_method, TRACKING_METHOD_BRIGHTEST_LOCAL)
 
     def test_starting_points_avoid_nucleus_void_and_perinuclear_ring(self) -> None:

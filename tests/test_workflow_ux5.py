@@ -307,7 +307,7 @@ class SampleResultsOptionalNucleusTests(unittest.TestCase):
             orientation_deg=None,
             tracks_used=5,
             tracks_requested=5,
-            timing_label="6.00 FPS · 0.1667 s/frame",
+            timing_label="60 s between frames",
             timing_confirmed=True,
             has_nucleus=False,
         )
@@ -330,7 +330,7 @@ class SampleResultsOptionalNucleusTests(unittest.TestCase):
             orientation_deg=33.0,
             tracks_used=5,
             tracks_requested=5,
-            timing_label="6.00 FPS",
+            timing_label="60 s between frames",
             timing_confirmed=True,
             has_nucleus=True,
         )

@@ -71,12 +71,15 @@ def compute_video_metrics(
     cutoff_y_crop_px: float | None = None,
 ) -> MetricsComputeResult:
     """Run motion pipelines for a VIDEO sample (no structural orientation)."""
-    timing = TimingMetadata.from_video_header(probe_video_playback_fps(path))
-    if timing is None or not timing.is_calibrated_analysis_ready:
+    timing = TimingMetadata.from_protocol_standard(
+        observed_video_fps=probe_video_playback_fps(path),
+        confirmed=True,
+    )
+    if not timing.is_calibrated_analysis_ready:
         return MetricsComputeResult(
             status="unavailable",
             media_type=SampleMediaType.VIDEO,
-            error_messages=["Valid video timing is required"],
+            error_messages=["Valid acquisition timing is required"],
         )
 
     run_id = _utc_run_id()

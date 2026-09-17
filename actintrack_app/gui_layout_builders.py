@@ -1082,23 +1082,23 @@ def create_tracking_setting_widgets(window: MainWindow) -> None:
 
 
 def build_timing_settings_section(window: MainWindow) -> QWidget:
-    """Detected video timing readout. Researcher override UI is deferred."""
+    """Protocol acquisition-interval readout. Researcher override UI is deferred."""
     host = QWidget()
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(SIDE_PANEL_FORM_SPACING)
 
-    title = QLabel("Video Timing")
+    title = QLabel("Acquisition Interval")
     apply_inspector_field_label_style(title)
     layout.addWidget(title)
 
-    window.lbl_timing_detected = QLabel("Video timing unavailable")
+    window.lbl_timing_detected = QLabel("60 s between frames")
     window.lbl_timing_detected.setWordWrap(True)
     apply_hint_style(window.lbl_timing_detected)
     window.lbl_timing_detected.setToolTip(
-        "Encoded playback metadata from the video file. "
-        "This is the current analysis interval, not a proven microscope "
-        "acquisition cadence."
+        "Scientific acquisition interval from lab protocol "
+        "(60 seconds between consecutive frames). "
+        "Container playback FPS is metadata only and does not set velocity dt."
     )
     layout.addWidget(window.lbl_timing_detected)
     window.lbl_timing_status = QLabel("")

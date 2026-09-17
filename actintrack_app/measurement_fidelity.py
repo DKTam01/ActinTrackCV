@@ -490,9 +490,9 @@ def collect_temporal_evidence(repo_root: Path) -> list[dict[str, Any]]:
             applies_to="current production defaults",
             confidence="code_fact",
             notes=(
-                "Current default is 30.0 s/frame. This is a documented acquisition "
-                "hypothesis from lab notes/slide deck, not an automatically "
-                "validated property of the exported test corpus."
+                "Current default is 60.0 s/frame (PERF1 lab protocol: consecutive "
+                "scientific acquisition frames are one minute apart). Container "
+                "playback FPS remains provenance only and does not set velocity dt."
             ),
         ),
         TemporalEvidenceItem(

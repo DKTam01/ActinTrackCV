@@ -106,7 +106,7 @@ class WorkflowSnapshot:
             return "Set the Measurement Cutoff to continue."
         caps = self.capabilities
         if caps.requires_video_timing and not self.has_valid_video_timing:
-            return "Valid video timing is required"
+            return "Valid acquisition timing is required"
         if caps.requires_nucleus_for_run and not self.has_nucleus:
             return "Set the nucleus to run F-actin Orientation"
         return None
@@ -133,7 +133,7 @@ class WorkflowSnapshot:
         if caps.requires_nucleus_for_run and not self.has_nucleus:
             return "Set the nucleus to continue."
         if caps.requires_video_timing and not self.has_valid_video_timing:
-            return "Video timing is unavailable — calibrated metrics cannot run."
+            return "Acquisition timing is unavailable — calibrated metrics cannot run."
         if self.metrics_running:
             return "Running metrics…"
         if self.metrics_stale:
@@ -341,7 +341,7 @@ def format_sample_results_summary(
             lines.append(f"{tracks_used} valid")
     if caps.requires_video_timing:
         lines.append("")
-        lines.append("Video Timing")
+        lines.append("Acquisition Interval")
         lines.append(timing_label or "—")
     return "\n".join(lines)
 

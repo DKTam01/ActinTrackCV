@@ -50,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-confidence", type=float, default=0.55)
     parser.add_argument("--lookahead-frames", type=int, default=0)
     parser.add_argument("--microns-per-pixel", type=float, default=0.265)
-    parser.add_argument("--seconds-per-frame", type=float, default=30.0)
+    parser.add_argument("--seconds-per-frame", type=float, default=60.0)
     parser.add_argument(
         "--tracking-method",
         choices=[TRACKING_METHOD_BRIGHTEST_LOCAL, TRACKING_METHOD_TEMPLATE],

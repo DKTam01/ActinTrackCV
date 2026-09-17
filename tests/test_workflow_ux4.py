@@ -1,4 +1,4 @@
-"""Phase UX4: video-timing-only Workbench, control styling, terminology."""
+"""Phase PERF1: protocol-standard VIDEO timing (60 s/frame)."""
 
 from __future__ import annotations
 
@@ -13,11 +13,14 @@ from actintrack_app.gui_styles import (
     apply_workbench_action_button,
 )
 from actintrack_app.timing_provenance import (
+    ANALYSIS_USES_PROTOCOL_STANDARD,
     ANALYSIS_USES_VIDEO_HEADER_ONLY,
     MISSING_VIDEO_TIMING_MESSAGE,
+    STANDARD_ACQUISITION_INTERVAL_S,
     TIMING_SOURCE_CUSTOM,
     TIMING_SOURCE_LAB_DEFAULT,
     TIMING_SOURCE_LEGACY_DEFAULT,
+    TIMING_SOURCE_PROTOCOL_STANDARD,
     TIMING_SOURCE_VIDEO_HEADER,
     TimingMetadata,
     calibrated_um_per_s,
@@ -40,19 +43,25 @@ def _read(rel: str) -> str:
 
 
 class VideoTimingPolicyTests(unittest.TestCase):
-    def test_valid_fps_derives_interval_and_is_ready_without_confirm_ui(self) -> None:
-        self.assertTrue(ANALYSIS_USES_VIDEO_HEADER_ONLY)
-        timing = TimingMetadata.from_video_header(6.0)
-        self.assertIsNotNone(timing)
-        assert timing is not None
-        self.assertEqual(timing.timing_source, TIMING_SOURCE_VIDEO_HEADER)
-        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 1.0 / 6.0, places=6)
-        self.assertTrue(timing.has_valid_video_timing)
+    def test_protocol_standard_is_ready_without_container_fps(self) -> None:
+        self.assertTrue(ANALYSIS_USES_PROTOCOL_STANDARD)
+        self.assertFalse(ANALYSIS_USES_VIDEO_HEADER_ONLY)
+        self.assertEqual(STANDARD_ACQUISITION_INTERVAL_S, 60.0)
+        timing = TimingMetadata.from_protocol_standard(observed_video_fps=None)
+        self.assertEqual(timing.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 60.0, places=6)
+        self.assertFalse(timing.has_valid_video_timing)
         self.assertTrue(timing.is_calibrated_analysis_ready)
-        self.assertEqual(timing.display_label(), "6.00 FPS · 0.1667 s/frame")
+        self.assertEqual(timing.display_label(), "60 s between frames")
         require_calibrated_timing(timing)
 
-    def test_six_fps_is_detected_not_hardcoded(self) -> None:
+    def test_container_fps_does_not_change_scientific_dt(self) -> None:
+        for fps in (6.0, 15.0, 30.0, None):
+            timing = TimingMetadata.from_protocol_standard(observed_video_fps=fps)
+            self.assertAlmostEqual(timing.analysis_seconds_per_frame, 60.0, places=9)
+            self.assertEqual(timing.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+
+    def test_six_fps_is_detected_as_playback_only(self) -> None:
         path = ROOT / "testsamples/2_WT_550/01.avi"
         if not path.is_file():
             self.skipTest("testsamples AVI not present")
@@ -61,6 +70,12 @@ class VideoTimingPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(float(fps), 6.0, places=3)
         interval = frame_interval_from_fps(fps)
         self.assertAlmostEqual(float(interval or 0.0), 1.0 / 6.0, places=6)
+        timing = TimingMetadata.from_protocol_standard(observed_video_fps=fps)
+        self.assertAlmostEqual(timing.observed_video_fps or 0.0, 6.0, places=3)
+        self.assertAlmostEqual(
+            timing.observed_frame_interval_s or 0.0, 1.0 / 6.0, places=6
+        )
+        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 60.0, places=6)
         for rel in (
             "actintrack_app/timing_provenance.py",
             "actintrack_app/gui.py",
@@ -69,32 +84,32 @@ class VideoTimingPolicyTests(unittest.TestCase):
             src = _read(rel)
             self.assertNotIn("DEFAULT_VIDEO_FPS", src)
             self.assertNotIn("HARDCODED_FPS", src)
-            self.assertNotIn("6.00 FPS · 0.1667", src)
 
-    def test_invalid_fps_does_not_invent_timing_and_blocks_calibrated_run(self) -> None:
-        self.assertIsNone(TimingMetadata.from_video_header(None))
-        self.assertIsNone(TimingMetadata.from_video_header(0))
-        self.assertIsNone(TimingMetadata.from_video_header(-3))
-        unresolved = TimingMetadata.unresolved()
-        self.assertFalse(unresolved.has_valid_video_timing)
-        self.assertFalse(unresolved.is_calibrated_analysis_ready)
+    def test_legacy_video_header_still_readable_but_not_live_policy(self) -> None:
+        header = TimingMetadata.from_video_header(6.0)
+        self.assertIsNotNone(header)
+        assert header is not None
+        self.assertEqual(header.timing_source, TIMING_SOURCE_VIDEO_HEADER)
+        self.assertAlmostEqual(header.analysis_seconds_per_frame, 1.0 / 6.0, places=6)
+        self.assertFalse(header.is_calibrated_analysis_ready)
         with self.assertRaises(ValueError) as ctx:
-            require_calibrated_timing(unresolved)
-        self.assertIn("Valid video timing", str(ctx.exception))
+            require_calibrated_timing(header)
         self.assertEqual(str(ctx.exception), MISSING_VIDEO_TIMING_MESSAGE)
 
-    def test_provenance_persists_video_header_fields(self) -> None:
-        timing = TimingMetadata.from_video_header(6.0)
-        assert timing is not None
+    def test_provenance_persists_protocol_and_playback_fields(self) -> None:
+        timing = TimingMetadata.from_protocol_standard(observed_video_fps=6.0)
         payload = timing.to_dict()
         self.assertAlmostEqual(payload["observed_video_fps"], 6.0)
         self.assertAlmostEqual(payload["observed_frame_interval_s"], 1.0 / 6.0, places=6)
-        self.assertAlmostEqual(payload["analysis_seconds_per_frame"], 1.0 / 6.0, places=6)
-        self.assertEqual(payload["timing_source"], TIMING_SOURCE_VIDEO_HEADER)
+        self.assertAlmostEqual(
+            payload["container_playback_interval_s"], 1.0 / 6.0, places=6
+        )
+        self.assertAlmostEqual(payload["analysis_seconds_per_frame"], 60.0, places=6)
+        self.assertEqual(payload["timing_source"], TIMING_SOURCE_PROTOCOL_STANDARD)
         loaded = timing_from_dict(payload)
         self.assertIsNotNone(loaded)
         assert loaded is not None
-        self.assertEqual(loaded.timing_source, TIMING_SOURCE_VIDEO_HEADER)
+        self.assertEqual(loaded.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
         self.assertTrue(loaded.is_calibrated_analysis_ready)
 
     def test_old_timing_metadata_remains_readable(self) -> None:
@@ -116,8 +131,11 @@ class VideoTimingPolicyTests(unittest.TestCase):
 
         custom = TimingMetadata.custom(0.2, observed_video_fps=6.0, confirmed=True)
         self.assertEqual(custom.timing_source, TIMING_SOURCE_CUSTOM)
-        restored = custom.with_source_choice(TIMING_SOURCE_VIDEO_HEADER, confirmed=True)
-        self.assertEqual(restored.timing_source, TIMING_SOURCE_VIDEO_HEADER)
+        restored = custom.with_source_choice(
+            TIMING_SOURCE_PROTOCOL_STANDARD, confirmed=True
+        )
+        self.assertEqual(restored.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+        self.assertAlmostEqual(restored.analysis_seconds_per_frame, 60.0)
 
         legacy = timing_from_result_payload(
             {"parameters": {"seconds_per_frame": 0.2, "microns_per_pixel": 0.265}}
@@ -129,7 +147,7 @@ class VideoTimingPolicyTests(unittest.TestCase):
     def test_px_per_frame_invariant_when_interval_changes(self) -> None:
         px = 4.5
         mpp = 0.265
-        for spf in (30.0, 0.2, 1.0 / 6.0):
+        for spf in (60.0, 30.0, 0.2, 1.0 / 6.0):
             um_s = calibrated_um_per_s(px, seconds_per_frame=spf, microns_per_pixel=mpp)
             back = um_s * spf / mpp
             self.assertAlmostEqual(back, px, places=9)
@@ -151,7 +169,7 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
         self.assertFalse(incomplete.ready_to_run)
         self.assertEqual(
             incomplete.run_metrics_block_reason(),
-            "Valid video timing is required",
+            "Valid acquisition timing is required",
         )
 
         ready = build_workflow_snapshot(
@@ -216,17 +234,17 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
             "Results are outdated — run Metrics again",
         )
 
-    def test_sample_results_show_video_timing_and_px_frame(self) -> None:
+    def test_sample_results_show_acquisition_interval_and_px_frame(self) -> None:
         text = format_sample_results_summary(
             sparse_px=8.18,
-            sparse_um_s=13.0,
+            sparse_um_s=0.0361,
             of_px=4.52,
-            of_um_s=7.19,
-            toward_nucleus_um_s=1.2,
+            of_um_s=0.0200,
+            toward_nucleus_um_s=0.0033,
             orientation_deg=33.5,
             tracks_used=8,
             tracks_requested=10,
-            timing_label="6.00 FPS · 0.1667 s/frame",
+            timing_label="60 s between frames",
             timing_confirmed=True,
         )
         self.assertIn("SAMPLE RESULTS", text)
@@ -234,11 +252,11 @@ class WorkflowReadinessUx4Tests(unittest.TestCase):
         self.assertIn("8.18 px/frame", text)
         self.assertIn("Optical Flow", text)
         self.assertIn("Toward Nucleus", text)
-        # MEDIA1: orientation is IMAGE-only; VIDEO Sample Results omit it.
         self.assertNotIn("F-actin Orientation", text)
         self.assertIn("Tracks", text)
-        self.assertIn("Video Timing", text)
-        self.assertIn("6.00 FPS · 0.1667 s/frame", text)
+        self.assertIn("Acquisition Interval", text)
+        self.assertIn("60 s between frames", text)
+        self.assertNotIn("6.00 FPS · 0.1667 s/frame", text)
 
 
 class WorkbenchLayoutUx4Tests(unittest.TestCase):
@@ -253,7 +271,7 @@ class WorkbenchLayoutUx4Tests(unittest.TestCase):
         self.assertNotIn("Custom s/frame", layout)
         self.assertNotIn("btn_confirm_timing", layout)
         self.assertNotIn("btn_confirm_timing", gui)
-        self.assertIn("Video Timing", layout)
+        self.assertIn("Acquisition Interval", layout)
         setup = layout.split("def build_roi_preview_panel", 1)[1].split(
             "def build_roi_workflow_strip", 1
         )[0]
@@ -341,7 +359,7 @@ class WorkbenchControlStyleTests(unittest.TestCase):
 
 
 class GuiTimingIntegrationTests(unittest.TestCase):
-    def test_ensure_timing_uses_video_header_when_fps_valid(self) -> None:
+    def test_ensure_timing_uses_protocol_standard(self) -> None:
         from actintrack_app.gui import MainWindow
 
         window = MainWindow.__new__(MainWindow)
@@ -357,9 +375,25 @@ class GuiTimingIntegrationTests(unittest.TestCase):
             self.skipTest("testsamples AVI not present")
         MainWindow._ensure_timing_for_current_sample(window, persist_observed=False)
         timing = window._timing
-        self.assertEqual(timing.timing_source, TIMING_SOURCE_VIDEO_HEADER)
-        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 1.0 / 6.0, places=6)
+        self.assertEqual(timing.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+        self.assertAlmostEqual(timing.analysis_seconds_per_frame, 60.0, places=6)
         self.assertTrue(timing.is_calibrated_analysis_ready)
+        self.assertAlmostEqual(timing.observed_video_fps or 0.0, 6.0, places=3)
+
+    def test_missing_container_fps_still_ready(self) -> None:
+        from actintrack_app.gui import MainWindow
+
+        window = MainWindow.__new__(MainWindow)
+        window._project_root = None
+        window._current_sample = None
+        window.lbl_timing_detected = MagicMock()
+        window.lbl_timing_status = MagicMock()
+        window._sample_file_path = MagicMock(return_value=None)
+        MainWindow._ensure_timing_for_current_sample(window, persist_observed=False)
+        timing = window._timing
+        self.assertEqual(timing.timing_source, TIMING_SOURCE_PROTOCOL_STANDARD)
+        self.assertTrue(timing.is_calibrated_analysis_ready)
+        require_calibrated_timing(timing)
 
     def test_require_calibrated_timing_blocks_unresolved(self) -> None:
         from actintrack_app.gui import MainWindow
