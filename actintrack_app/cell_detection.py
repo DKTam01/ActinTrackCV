@@ -153,21 +153,66 @@ def computational_crop_from_cell_region(
     return RectROI(x0, y0, width, height).clamp(fw, fh)
 
 
+@dataclass(frozen=True)
+class PreparedCellSignal:
+    """Sensitivity-independent actin signal for one oriented frame.
+
+    Threshold/morphology still depend on sensitivity; only signal + Otsu base
+    are reusable across Tighter↔Broader adjustments for the same frame.
+    """
+
+    frame_key: int
+    signal: np.ndarray
+    signal_u8: np.ndarray
+    otsu_value: float
+    shape: tuple[int, int]
+
+
+def cell_frame_cache_key(oriented_frame: np.ndarray) -> int:
+    """Stable-enough identity for in-memory reuse within one sample session."""
+    return id(np.asarray(oriented_frame))
+
+
+def prepare_cell_signal(oriented_frame: np.ndarray) -> PreparedCellSignal:
+    """Compute actin signal + Otsu once for sensitivity-independent reuse."""
+    import cv2
+
+    frame = np.asarray(oriented_frame)
+    signal, _source = actin_signal_image(frame)
+    signal_u8 = (signal * 255).astype(np.uint8)
+    otsu_value, _ = cv2.threshold(
+        signal_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    return PreparedCellSignal(
+        frame_key=cell_frame_cache_key(frame),
+        signal=signal,
+        signal_u8=signal_u8,
+        otsu_value=float(otsu_value),
+        shape=(int(frame.shape[0]), int(frame.shape[1])),
+    )
+
+
 def suggest_conservative_cell_region(
     oriented_frame: np.ndarray,
     *,
     fallback_rect: RectROI | None = None,
     sensitivity: float | None = None,
+    prepared: PreparedCellSignal | None = None,
 ) -> CellRegion:
     """Return a conservative CellRegion in oriented-frame pixels.
 
     On failure, falls back to ``fallback_rect`` (computational crop) if given,
     otherwise the full oriented frame. Never returns an empty region.
+
+    When ``prepared`` matches this frame, signal/Otsu are not recomputed —
+    only sensitivity-dependent threshold/morphology/contour work runs.
     """
     fh, fw = int(oriented_frame.shape[0]), int(oriented_frame.shape[1])
     params = map_boundary_sensitivity(sensitivity)
     try:
-        cell = _detect_conservative_cell_region(oriented_frame, params)
+        cell = _detect_conservative_cell_region(
+            oriented_frame, params, prepared=prepared
+        )
         validate_region(cell.region, fw, fh)
         bbox = cell.bounding_box()
         if bbox.width < 4 or bbox.height < 4:
@@ -205,14 +250,22 @@ def suggest_default_cutoff_boundary(
 def _detect_conservative_cell_region(
     oriented_frame: np.ndarray,
     params: CellDetectionParams,
+    *,
+    prepared: PreparedCellSignal | None = None,
 ) -> CellRegion:
     import cv2
 
-    signal, _source = actin_signal_image(oriented_frame)
-    signal_u8 = (signal * 255).astype(np.uint8)
-    otsu_value, _ = cv2.threshold(
-        signal_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
+    frame = np.asarray(oriented_frame)
+    if prepared is not None and prepared.shape == (
+        int(frame.shape[0]),
+        int(frame.shape[1]),
+    ):
+        signal = prepared.signal
+        otsu_value = prepared.otsu_value
+    else:
+        prepared_now = prepare_cell_signal(frame)
+        signal = prepared_now.signal
+        otsu_value = prepared_now.otsu_value
     threshold = max(
         float(params.threshold_min),
         min(float(params.threshold_max), float(otsu_value / 255.0) * float(params.otsu_scale)),
@@ -244,8 +297,8 @@ def _detect_conservative_cell_region(
     vertices = _concavity_preserving_contour_vertices(
         largest,
         component=component,
-        frame_width=int(oriented_frame.shape[1]),
-        frame_height=int(oriented_frame.shape[0]),
+        frame_width=int(frame.shape[1]),
+        frame_height=int(frame.shape[0]),
     )
     return CellRegion.from_polygon(vertices, source=CELL_REGION_SOURCE_AUTO)
 
@@ -275,13 +328,15 @@ def _concavity_preserving_contour_vertices(
         if value > epsilons[-1]:
             epsilons.append(value)
 
+    cover_crop = _component_cover_crop(component)
+
     for epsilon in epsilons:
         approx = cv2.approxPolyDP(contour, float(epsilon), True)
         vertices = _unique_contour_vertices(
             approx, frame_width=frame_width, frame_height=frame_height
         )
-        if not _filled_polygon_covers_component(
-            vertices, component, lost_fraction=0.02
+        if not _filled_polygon_covers_component_crop(
+            vertices, cover_crop, lost_fraction=0.02
         ):
             continue
         try:
@@ -298,25 +353,51 @@ def _concavity_preserving_contour_vertices(
     )
 
 
+def _component_cover_crop(component: np.ndarray) -> tuple[np.ndarray, int, int] | None:
+    ys, xs = np.where(component.astype(bool))
+    if ys.size == 0:
+        return None
+    y0 = int(ys.min())
+    y1 = int(ys.max()) + 1
+    x0 = int(xs.min())
+    x1 = int(xs.max()) + 1
+    return component[y0:y1, x0:x1].astype(bool), x0, y0
+
+
+def _filled_polygon_covers_component_crop(
+    vertices: list[tuple[int, int]],
+    cover_crop: tuple[np.ndarray, int, int] | None,
+    *,
+    lost_fraction: float,
+) -> bool:
+    import cv2
+
+    if cover_crop is None or len(vertices) < 3:
+        return False
+    crop, x0, y0 = cover_crop
+    filled = np.zeros(crop.shape, dtype=np.uint8)
+    local_pts = [(int(x) - x0, int(y) - y0) for (x, y) in vertices]
+    pts = np.asarray(local_pts, dtype=np.int32).reshape((-1, 1, 2))
+    cv2.fillPoly(filled, [pts], 1)
+    kept = int(np.count_nonzero(crop))
+    if kept <= 0:
+        return False
+    lost = int(np.count_nonzero(crop & (filled == 0)))
+    return (lost / float(kept)) <= float(lost_fraction)
+
+
 def _filled_polygon_covers_component(
     vertices: list[tuple[int, int]],
     component: np.ndarray,
     *,
     lost_fraction: float,
 ) -> bool:
-    import cv2
-
-    if len(vertices) < 3:
-        return False
-    filled = np.zeros(component.shape[:2], dtype=np.uint8)
-    pts = np.asarray(vertices, dtype=np.int32).reshape((-1, 1, 2))
-    cv2.fillPoly(filled, [pts], 1)
-    component_on = component.astype(bool)
-    kept = int(np.count_nonzero(component_on))
-    if kept <= 0:
-        return False
-    lost = int(np.count_nonzero(component_on & (filled == 0)))
-    return (lost / float(kept)) <= float(lost_fraction)
+    """Compatibility wrapper; prefers the precomputable bbox-crop path."""
+    return _filled_polygon_covers_component_crop(
+        vertices,
+        _component_cover_crop(component),
+        lost_fraction=lost_fraction,
+    )
 
 
 def _unique_contour_vertices(

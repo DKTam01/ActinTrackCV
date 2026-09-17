@@ -204,8 +204,13 @@ def validate_region(
     _validate_polygon_vertices(region.vertices, fw, fh)
     bbox = region.bounding_box()
     _validate_rectangle(bbox, fw, fh, label="Polygon bounding box")
-    mask = region.rasterize_crop_mask()
-    if not np.any(mask):
+    # Emptiness without full-frame center sampling: signed area already
+    # rejects zero-area rings. A cheap fillPoly occupancy check catches
+    # degenerate rings that survive floating-area thresholds without the
+    # O(pixels) Python pointPolygonTest loop used by scientific rasterize.
+    if abs(_signed_area(region.vertices)) < 1e-9:
+        raise RegionValidationError("Polygon has zero area.")
+    if not _polygon_has_occupied_pixels(region.vertices, bbox):
         raise RegionValidationError("Polygon rasterizes to an empty inclusion mask.")
 
 
@@ -328,6 +333,31 @@ def _polygon_bounding_box(
         max_x - min_x + 1,
         max_y - min_y + 1,
     )
+
+
+def _polygon_has_occupied_pixels(
+    vertices: tuple[tuple[int, int], ...] | None,
+    bbox: RectROI,
+) -> bool:
+    """Fast non-empty occupancy check for validation (not scientific masks).
+
+    Uses OpenCV fillPoly on the bounding-box crop. This is intentionally
+    cheaper than :func:`_rasterize_polygon_mask` (center-sampled
+    pointPolygonTest) and is only used to reject clearly empty rings during
+    ``validate_region``. Scientific inclusion masks still use the center-
+    sampled rasterizer.
+    """
+    if vertices is None or len(vertices) < 3:
+        return False
+    if bbox.width <= 0 or bbox.height <= 0:
+        return False
+    mask = np.zeros((bbox.height, bbox.width), dtype=np.uint8)
+    local = np.asarray(
+        [[int(x) - bbox.x, int(y) - bbox.y] for x, y in vertices],
+        dtype=np.int32,
+    ).reshape((-1, 1, 2))
+    cv2.fillPoly(mask, [local], 1)
+    return bool(np.any(mask))
 
 
 def _polygon_to_dict(
