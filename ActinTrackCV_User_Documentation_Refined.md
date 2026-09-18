@@ -2,19 +2,20 @@
 
 ## User Documentation
 
-ActinTrackCV is a desktop application for organizing and analyzing 2D Arabidopsis F-actin fluorescence microscopy time-lapse data. The current workflow supports AVI and MP4 time-lapse data. It helps researchers confirm the automatic cell boundary, set a measurement cutoff, optionally mark the nucleus, run metrics, inspect overlays, and compare results across biological groups.
+ActinTrackCV is a desktop application for organizing and analyzing 2D Arabidopsis F-actin fluorescence microscopy. Import **VIDEO** (AVI, MP4) and **IMAGE** (JPG, JPEG, PNG, TIF, TIFF) samples into Condition Groups. Review the automatic CellRegion, set a Measurement Cutoff, place a Nucleus when required, set per-sample scientific calibration, run metrics, inspect overlays, and compare results across biological groups.
 
 This guide is written for biological researchers. It avoids software implementation details unless they help explain how to use the app safely.
 
 Current workflow:
 
 ```text
-Condition Group -> Add Sample -> Cell Boundary -> Measurement Cutoff -> optional Nucleus -> Run Metrics -> Metric Analysis -> Analysis
+Condition Group -> Add Sample (VIDEO and/or IMAGE) -> CellRegion -> Measurement Cutoff
+  -> Nucleus when required -> scientific calibration -> Run Metrics -> Sample Results / Metric Analysis -> Analysis
 ```
 
-Current supported data type: 2D AVI/MP4 time-lapse data.
+Condition Groups may mix VIDEO and IMAGE samples. Capability is per Sample. Unsupported metrics display as `—`, not zero.
 
-Image sequences, 3D image stacks, and raw microscopy formats are postponed and should not be treated as active import workflows.
+3D image stacks and raw microscopy formats (`.oir` depth analysis, etc.) are postponed and should not be treated as active import workflows.
 
 ---
 
@@ -24,11 +25,12 @@ Use this short path when starting a new analysis session.
 
 1. Open ActinTrackCV and open or create a workspace.
 2. Select a Condition Group in the left panel.
-3. Choose Sample -> Add Sample, then select one or more AVI or MP4 data files. Each file becomes one Sample in the selected Condition Group.
-4. Confirm the automatic Cell Boundary. Adjust sensitivity if needed.
-5. Set the Measurement Cutoff. Optionally mark the Nucleus (required only for Toward Nucleus and F-actin Orientation).
-6. Click Run Metrics. Review Sample Results, then open Metric Analysis to inspect overlays.
-7. Open Analysis to compare Samples and Condition Groups. The Workbench uses detected video timing for µm/s.
+3. Choose Sample -> Add Sample, then select VIDEO (AVI/MP4) and/or IMAGE (JPG/JPEG/PNG/TIF/TIFF) files. Each file becomes one Sample in the selected Condition Group.
+4. Confirm the automatic CellRegion. Adjust Tighter/Broader if needed.
+5. Set the Measurement Cutoff. Place a Nucleus when Toward Nucleus or F-actin Orientation is required.
+6. Set scientific calibration for that Sample: acquisition interval (VIDEO, seconds/frame) and spatial calibration (µm/pixel). Playback FPS is not biological timing.
+7. Click Run Metrics. Review Sample Results, then open Metric Analysis to inspect overlays.
+8. Open Analysis to compare Samples and Condition Groups. Each metric's `n` counts only samples that have that metric.
 
 Run command from the project folder:
 
@@ -45,8 +47,8 @@ On macOS or Linux, `./run_app.sh` is also available. On Windows, use `run_app.ba
 | Term | Meaning |
 |------|---------|
 | Condition Group | A researcher-defined experimental grouping such as a genotype, chemical treatment, control, mutant, environmental condition, or other experimental setup (e.g. `Control` or `LatB Treatment`). You create custom names per workspace. |
-| Sample | One imported AVI/MP4 data file plus its project state: cell boundary, cutoff, optional nucleus, notes, metrics, and analysis status. |
-| Data | The AVI/MP4 file selected by the user for a Sample. The app stores a project-managed internal copy so the workspace can be reopened later. |
+| Sample | One imported VIDEO or IMAGE file plus its project state: CellRegion, cutoff, optional nucleus, calibration, notes, metrics, and analysis status. |
+| Data | The imported media file selected by the user for a Sample. The app stores a project-managed internal copy so the workspace can be reopened later. |
 | Cell Boundary | Automatically detected cell outline. This is the scientific analysis region. Sensitivity can be adjusted. |
 | Measurement Cutoff | Required horizontal line. Tracking uses the cell on the side of the cutoff with smaller image y. |
 | Nucleus | Optional center mark on the cutoff. Needed for Toward Nucleus and F-actin Orientation. Not required for General Movement or Optical Flow. |
@@ -66,22 +68,24 @@ Select Condition Group
   -> Add Sample by choosing AVI/MP4 Data
   -> Confirm Cell Boundary
   -> Set Measurement Cutoff
-  -> Optionally mark Nucleus
+  -> Place Nucleus when required
+  -> Set scientific calibration
   -> Run Metrics
-  -> Inspect Metric Analysis
+  -> Inspect Sample Results / Metric Analysis
   -> Open Analysis
 ```
 
 | Step | What you do | What the app stores or updates |
 |------|-------------|--------------------------------|
 | Select Condition Group | Choose the experimental group in the left panel. | The Sample list filters to that Condition Group. |
-| Add Sample | Select one or more AVI or MP4 files. | One Sample per file: a Sample record, project-managed internal data copy, and metadata row. |
-| Cell Boundary | Confirm the automatic outline; adjust sensitivity if needed. | CellRegion metadata and an internal computational crop. |
+| Add Sample | Select VIDEO (AVI/MP4) and/or IMAGE (JPG/JPEG/PNG/TIF/TIFF) files. | One Sample per file: a Sample record, project-managed internal data copy, and metadata row. |
+| CellRegion | Confirm the automatic outline; use Tighter/Broader if needed. | CellRegion metadata and an internal computational crop. |
 | Measurement Cutoff | Place or drag the horizontal cutoff. | CutoffBoundary metadata. Moving it does not silently move a saved nucleus. |
-| Nucleus (optional) | Click the nucleus center; it snaps to the cutoff. | NucleusReference metadata. Needed for Toward Nucleus and Orientation. |
-| Run Metrics | Compute tracking and optical flow for the current Sample. | Persisted run with an analysis_run_id. |
-| Metric Analysis | Inspect overlays for the current non-stale run. | No recompute. Missing modes show a message in the preview area. |
-| Analysis | Open the Analysis tab/menu item. | Analysis reads saved results and aggregates by Condition Group and Sample. |
+| Nucleus (when required) | Click the nucleus center; it snaps to the cutoff. | NucleusReference metadata. Needed for Toward Nucleus and Orientation. Optional for General Movement / Optical Flow. |
+| Calibration | Set acquisition interval (VIDEO) and µm/pixel. | Per-sample scientific_calibration. Playback FPS is not used as dt. |
+| Run Metrics | Compute the metrics supported by that Sample's media type. | Persisted run with an analysis_run_id and the calibration snapshot. |
+| Sample Results / Metric Analysis | Inspect overlays for the current non-stale run. | No recompute. Missing modes show a message in the preview area. |
+| Analysis | Open the Analysis tab/menu item. | Analysis reads saved results. Each metric's `n` counts only samples that have that metric. |
 
 ### Condition Groups
 
@@ -99,11 +103,11 @@ Older workspaces that used legacy preset folder names (for example `1_WT_218`) s
 
 ### Adding a Sample
 
-Create a Condition Group first. Then use Sample -> Add Sample, or right-click the empty area in the Sample list and choose Add Sample. Select one or more AVI or MP4 data files. Each file becomes one Sample in the selected Condition Group. If a file cannot be read, that file is skipped and reported in an import summary; successfully imported Samples remain.
+Create a Condition Group first. Then use Sample -> Add Sample, or right-click the empty area in the Sample list and choose Add Sample. Select VIDEO (AVI/MP4) and/or IMAGE (JPG/JPEG/PNG/TIF/TIFF) files. Each file becomes one Sample in the selected Condition Group. Groups may mix media types. If a file cannot be read, that file is skipped and reported in an import summary; successfully imported Samples remain.
 
 ### Replacing Data
 
-Use Replace Data when a Sample should point to a different AVI/MP4 file. Replacing Data can clear ROI, tracking, processed outputs, and analysis state for that Sample because those results may no longer match the new file.
+Use Replace Data when a Sample should point to a different supported media file. Replacing Data can clear CellRegion, tracking, processed outputs, and analysis state for that Sample because those results may no longer match the new file.
 
 ### Deleting a Sample
 
@@ -273,28 +277,24 @@ Advanced Tracking Settings appear beside Metric Analysis. Changing scientific se
 
 ---
 
-## 9. Tracking / Motion Index
+## 9. Metrics
 
-The tracking/index result is intended as an ROI-level and Sample-level motion estimate. It is not a claim that every individual filament has been tracked perfectly.
-
-The current draft method uses bright-point/template tracking:
-
-1. It selects bright F-actin signal points in the first cropped ROI frame.
-2. It follows those local image patches across frames.
-3. It calculates movement values from valid tracked steps.
-4. It summarizes the result for the Sample.
+Metrics are Sample-level image measurements. They are not a claim that every individual filament has been tracked perfectly.
 
 ### How to interpret the values
 
 | Output | General meaning |
 |--------|-----------------|
-| Downward Velocity | Historical image-Y metric: average positive movement toward the bottom of the image (µm/s). Not the same as Toward Nucleus. Optional in Analysis. |
-| General Movement | Average overall displacement speed, regardless of direction. |
-| Motion Index | Internal stored alias of General Movement on current runs. Analysis does not show it as a separate column. |
-| Toward Nucleus | Signed movement toward the annotated nucleus (µm/s). Missing when no nucleus is set. |
-| F-actin Orientation | Structural angle relative to the nucleus (0° radial · 90° tangential). Not a motion direction. |
+| General Movement | VIDEO. Mean absolute XY sparse-tracking speed (µm/s). |
+| Optical Flow | VIDEO. Mean Farnebäck flow magnitude over valid pixels (µm/s). Complementary to sparse tracking; numbers need not match. |
+| Toward Nucleus | VIDEO. Signed radial distance-change speed (µm/s). Positive = toward the nucleus; negative = away. Missing when no nucleus is set. |
+| F-actin Orientation | IMAGE. Structural angle relative to the nucleus (0° radial · 90° tangential). Not a motion direction. Sample summary is the median angle. |
+| Coherence | 0–1 measure of how strongly local image structure has one dominant orientation. Not accuracy or a radial/tangential score. |
+| Downward Velocity | Historical image-Y metric. Not the same as Toward Nucleus. Optional in Analysis. |
 
-Use these results as draft comparison metrics. They may not always match visual intuition, especially when contrast is low, cables overlap, the sample drifts, or structures move out of plane.
+Motion Index is an internal stored alias of General Movement on current runs. Analysis does not show it as a separate researcher column.
+
+Use these results as comparison metrics. They may not always match visual intuition, especially when contrast is low, cables overlap, the sample drifts, or structures move out of plane.
 
 ### Default tracking settings
 
@@ -307,11 +307,14 @@ Use these results as draft comparison metrics. They may not always match visual 
 | Minimum match confidence | 0.55 |
 | Lookahead frames | 0 |
 | Tracking method | brightest_local |
-| Microns per pixel | 0.2650 |
-| Seconds per frame | 30.0 |
-| Downward direction | `increasing_y` internally |
+| Spatial calibration | per Sample (legacy fallback 0.265 µm/pixel) |
+| Acquisition interval | per Sample (legacy fallback 60 s/frame; presets 30 s and 60 s) |
 
-The `seconds per frame` value is especially important for velocity units. The current **30.0 s/frame** default is the documented acquisition hypothesis used by the application; it is **not** automatically proven by encoded playback FPS (often ~6 fps on exported AVI/MP4 files). Confirm against acquisition metadata or lab notes when possible. Values much smaller than ~1 µm/s can indicate a timing/units investigation rather than “no motion.” Sparse tracking and Optical Flow remain separate methods and should not be expected to match numerically. See `docs/science/V1_MEASUREMENT_FIDELITY.md`.
+**Acquisition interval** is the biological time between consecutive acquired frames. It is not AVI/MP4 playback FPS. A 15-frame series acquired every 60 s is 14 minutes of biology whether the file plays at 1 FPS or 3 FPS. Changing only 60 s → 30 s doubles µm/s if pixel motion is unchanged.
+
+Those fallback numbers are compatibility defaults, not universal microscope constants. Enter the interval and µm/pixel that belong to the sample. ActinTrackCV µm/s values are not expected to match historical ImageJ arbitrary-unit measurements.
+
+See `docs/science/CURRENT_SCIENTIFIC_METHODS.md` and `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
 
 ---
 
@@ -349,15 +352,15 @@ Missing results should be treated as missing data, not as zero movement. Analysi
 
 Use visual inspection and metadata checks together.
 
-- Confirm that the AVI/MP4 data loads correctly.
-- Confirm the Cell Boundary and Measurement Cutoff match the intended analysis region.
+- Confirm that the VIDEO or IMAGE data loads correctly.
+- Confirm the CellRegion and Measurement Cutoff match the intended analysis region.
 - Confirm Metric Analysis overlays match visible F-actin.
 - Watch the looping preview and compare it to Sample Results values.
 - Check whether tracked movement aligns with visible F-actin movement.
 - Watch for low contrast, photobleaching, sample drift, out-of-plane movement, tangled cables, and overlapping filaments.
 - Compare multiple Samples per Condition Group.
 - Avoid drawing conclusions from one Sample alone.
-- Confirm video timing in Sample Results before interpreting µm/s as biological velocity. Encoded FPS is detected from the file; it is not a global 6 FPS or 30 s/frame default.
+- Confirm the Sample's acquisition interval and µm/pixel before interpreting µm/s as biological velocity. Encoded AVI/MP4 FPS is playback metadata, not the biological interval. ActinTrackCV µm/s values are not expected to match historical ImageJ arbitrary-unit measurements.
 
 ---
 
@@ -365,9 +368,9 @@ Use visual inspection and metadata checks together.
 
 | Problem | Likely cause | Suggested fix |
 |---------|--------------|---------------|
-| Data will not load | File is not AVI/MP4, the file is unreadable, or the path is missing. | Re-export as AVI/MP4 or choose a readable file. Confirm it opens outside the app. |
-| Add Sample creates nothing | The file picker was canceled or every selected file failed validation. | Select one or more valid AVI/MP4 files. Check the import summary for per-file errors. |
-| ROI appears wrong | Cell Boundary sensitivity or cutoff is misplaced. | Adjust Cell Boundary sensitivity and the Measurement Cutoff, then Run Metrics again. |
+| Data will not load | File is not a supported format, the file is unreadable, or the path is missing. | Use AVI/MP4 (video) or JPG/JPEG/PNG/TIF/TIFF (image). Confirm it opens outside the app. |
+| Add Sample creates nothing | The file picker was canceled or every selected file failed validation. | Select one or more supported files. Check the import summary for per-file errors. |
+| ROI appears wrong | CellRegion sensitivity or cutoff is misplaced. | Adjust Tighter/Broader and the Measurement Cutoff, then Run Metrics again. |
 | Cropped preview is blank | That inspection mode has no persisted result, or results are outdated. | Run Metrics. If Orientation is blank, set a nucleus first. |
 | Tracking result looks unrealistic | Low contrast, overlapping filaments, sample drift, or unsuitable tracking settings. | Visually inspect Metric Analysis, adjust tracking settings, and Run Metrics again. |
 | Analysis shows missing result | Run Metrics has not been completed for that Sample, or the result was cleared. | Select the Sample and click Run Metrics. |
@@ -381,21 +384,21 @@ Use visual inspection and metadata checks together.
 
 Current limitations:
 
-- Active import supports AVI/MP4 only.
+- Active import supports AVI, MP4, JPG, JPEG, PNG, TIF, and TIFF.
 - Current analysis is 2D only.
-- Image sequence import is postponed.
-- 3D/raw microscopy formats are postponed.
-- TIFF stacks and raw microscope formats should not be documented as active workflows.
-- The current motion index / General Movement is a comparison metric.
+- Multi-frame IMAGE sequences as VIDEO substitutes are not a product workflow.
+- 3D/raw microscopy formats (`.oir` depth, multi-page thickness) are postponed.
+- General Movement is a comparison metric, not a claim of complete filament identity tracking.
 - Metrics should be interpreted with visual inspection and experimental context.
 - Analysis still calculates historical image-Y metrics; they are optional in the Analysis view, not primary columns. See `docs/science/LEGACY_METRICS_AUDIT.md`.
+- Calibration is researcher-entered. The app does not read scale bars, DPI, or AVI FPS as scientific calibration.
 
 Possible future work:
 
-- Image-sequence workflow.
+- Automatic microscopy-metadata calibration with explicit provenance.
 - 3D/raw microscopy support.
 - Multi-frame structural orientation.
-- Researcher override UI for analysis timing (the provenance model already supports it).
+- Signed/notarized installers.
 
 ---
 
@@ -405,10 +408,12 @@ Possible future work:
 
 | Type | Status |
 |------|--------|
-| AVI | Active |
-| MP4 | Active |
-| PNG/JPG image sequence | Postponed |
-| TIFF image/stack | Postponed for active app import |
+| AVI | Active VIDEO |
+| MP4 | Active VIDEO |
+| JPG / JPEG | Active IMAGE |
+| PNG | Active IMAGE |
+| TIF / TIFF | Active IMAGE (page 0; not 3D thickness analysis) |
+| Multi-file image sequence as VIDEO | Not a product workflow |
 | OIB/OIF/OIR raw microscopy | Postponed |
 
 ### Legacy terminology note
@@ -443,7 +448,8 @@ On Windows, activate the environment with `.venv\Scripts\activate` and use `run_
 - Do not manually edit `metadata/` files unless you are doing advanced troubleshooting.
 - Do not treat missing Analysis values as zero.
 - Do not interpret a single Sample as proof of a Condition Group-level biological effect.
-- Do not treat image sequences or 3D/raw microscopy files as active import types in the current workflow.
+- Do not treat 3D/raw microscopy stacks as active import types in the current workflow.
+- Do not treat AVI/MP4 playback FPS as the biological acquisition interval.
 
 ---
 

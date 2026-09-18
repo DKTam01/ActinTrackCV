@@ -9,9 +9,11 @@ ActinTrackCV quantifies **F-actin motion/velocity** from *Arabidopsis* reproduct
 Two architectural facts shape almost everything:
 
 1. **The current tracker is traditional computer vision, not AI.** It finds the brightest actin points/regions in frame 0, searches locally for matches in each subsequent frame, and converts calibrated displacement into velocity. Roboflow/DINOv3/learned models are historical context or deferred future work — do **not** introduce model-training dependencies into the tracking path. See `PROJECT_OVERVIEW.md` and `PROJECT_CHANGES_NATURAL_LANGUAGE.md`.
-2. **PyQt is a workbench; R Shiny is the product.** `actintrack_app/` (PyQt6) is for algorithm development. `shiny_app/` (R) is the intended end-user app. They share the **same analysis core** (`actintrack_app.motion_index`) — Shiny reaches it through the `scripts/shiny_bridge.py` CLI. Keep the Python analysis producing stable CSV/JSON/QC outputs; don't make the PyQt GUI the deliverable.
+2. **Shared analysis core.** `actintrack_app/` (PyQt6) is the current researcher Workbench. `shiny_app/` (R) is an alternate review UI. They share `actintrack_app.motion_index` — Shiny reaches it through `scripts/shiny_bridge.py`. Keep the Python analysis producing stable CSV/JSON/QC outputs.
 
-Keep **2D tracking (Track A)** and **3D stack analysis (Track B)** decoupled. Track A (AVI/MP4 velocity) remains the motion milestone; static IMAGE samples (JPG/JPEG/TIF/TIFF) support structural F-actin Orientation only. 3D thickness/depth from multi-page `.tif`/`.oir` stacks is future and must not complicate the 2D path. Product import formats: **AVI, MP4, JPG, JPEG, TIF, TIFF**.
+Keep **2D tracking (Track A)** and **3D stack analysis (Track B)** decoupled. Track A (AVI/MP4 velocity) remains the motion milestone; static IMAGE samples (JPG/JPEG/PNG/TIF/TIFF) support structural F-actin Orientation only. 3D thickness/depth from multi-page `.tif`/`.oir` stacks is future and must not complicate the 2D path. Product import formats: **AVI, MP4, JPG, JPEG, PNG, TIF, TIFF**.
+
+The PyQt Workbench is the current researcher application. `shiny_app/` remains an alternate review frontend over the same Python analysis core — do not treat Shiny parity as a BUILD2 requirement, and do not add model-training dependencies to tracking.
 
 ## Commands
 
@@ -51,14 +53,14 @@ Single module, pure-function pipeline, no Qt dependency, reused by GUI / Shiny b
 `load_frame_sequence` → `frame_to_signal` → `select_starting_points` (top-N bright points/regions in frame 0) → `track_points` (per-frame local search via `_brightest_point_in_window` or `_match_template_in_window`) → `compute_motion_indices` / `compute_velocity_summary` → `save_motion_index_outputs` (CSV + QC overlay video).
 
 - Two tracking methods: `TRACKING_METHOD_BRIGHTEST_LOCAL` and `TRACKING_METHOD_TEMPLATE`, selected in `MotionIndexParams`.
-- Calibration is **per sample**: `acquisition_interval_s` and `microns_per_pixel`. Legacy/default samples use **60.0 s/frame** and **0.265 µm/pixel**. Container FPS is playback provenance only and must not drive µm/s. Analysis runs snapshot the calibration that produced their physical-unit results. See `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
+- Calibration is **per sample**: `acquisition_interval_s` and `microns_per_pixel`. Legacy samples without an explicit CAL1 block keep **60.0 s/frame** and **0.265 µm/pixel** as compatibility fallbacks, not universal microscope constants. Container FPS is playback provenance only and must not drive µm/s. Analysis runs snapshot the calibration that produced their physical-unit results. See `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md` and `docs/science/CURRENT_SCIENTIFIC_METHODS.md`.
 - `run_motion_index_analysis` is the top-level entry called by every frontend.
 
 ### Workspace & metadata layer
 
 Workspaces are local on-disk folders (`raw/`, `processed/`, `metadata/`, `previews/`), **not committed to git**. Created/managed by `project_manager.py`.
 
-- **Domain model** (`domain_models.py`): **Breed** (genetic group) → **Sample** (one imported AVI/MP4 + derived state) → **Data** (the file). UI/docs say "Breed/Sample/Data"; older code says "group/batch".
+- **Domain model** (`domain_models.py`): **Condition Group** (UI; code may still say breed/group) → **Sample** (one imported VIDEO or IMAGE file + derived state) → **Data** (the file). Older code says "group/batch".
 - **Schema v1 → v2 migration** is automatic on opening a workspace — `schema_compat.py` migrates legacy `samples.csv`/`batches.json` to `data_files.csv` + `sample_registry.json`. When touching metadata I/O, handle both schemas; fixtures live in `tests/fixtures/v1_workspace`.
 - Persistence: `metadata.py` (CSV/JSON for samples + crop ROI), `sample_registry.py`, `crop_metadata.json`. Constants (folder names, status strings, group IDs) are centralized in `utils.py` — reuse them, don't hardcode.
 - Sample lifecycle status strings (`STATUS_*` in `utils.py`) drive UI state: imported → roi_marked → processed → motion_index_generated.

@@ -1,10 +1,17 @@
 # ActinTrackCV Natural-Language Change Record
 
-Last updated: 2026-06-22
+Last updated: 2026-09-18 (BUILD2 documentation pass)
 
 This document explains the main project changes in plain language. It is meant
 to help a lab member, PI, or future developer understand why the project changed
 direction and what should happen next.
+
+**Current product (BUILD2):** the PyQt Workbench is the researcher application.
+Calibration is per-sample (acquisition interval and µm/pixel). Condition Groups
+may mix VIDEO and IMAGE. See `README.md` and
+`docs/science/CURRENT_SCIENTIFIC_METHODS.md`. Older sections below that assume
+a single global 30 s/frame or 0.265 µm/pixel, rectangle ROI drawing, or
+Shiny-as-the-only-product are historical.
 
 ## Biological Material
 
@@ -212,7 +219,11 @@ For now, DINOv3 and other AI models should remain optional future work. They
 should not replace the traditional CV baseline until the bright-point tracking
 method has been tested and its limitations are understood.
 
-## Practical Next Steps
+## Practical Next Steps (historical; 2026-06)
+
+These items were written before CAL1 / MEDIA1. Current practice is: enter the
+per-sample acquisition interval and µm/pixel; do not assume 30 s or 0.265 µm
+for every file.
 
 1. Confirm 30 seconds per frame and 0.265 microns per pixel from microscope
    metadata or acquisition notes.

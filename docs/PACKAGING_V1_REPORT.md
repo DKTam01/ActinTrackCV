@@ -1,6 +1,8 @@
 # Plain-language packaging report (v1.0.0)
 
 **Date:** 2026-09-15  
+**Later note:** BUILD2 prepares application version **1.1.0**. This report describes the published **v1.0.0** GitHub release. See `docs/BUILD2_RESEARCHER_BUILD.md`.
+
 **Audience:** anyone who just wants to know “how do people get the app?”
 
 ---

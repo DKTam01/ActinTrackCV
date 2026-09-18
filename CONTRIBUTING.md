@@ -16,8 +16,11 @@ fluorescence time-lapse data. Changes must prioritize:
 - Scientific timing and spatial scale are per-sample (`acquisition_interval_s`, `microns_per_pixel`).
 - Keep RectROI, CellRegion, CutoffBoundary, and NucleusReference as distinct
   concepts and coordinate spaces.
-- Preserve the 2D AVI/MP4 workflow. Other microscopy formats are out of scope
-  unless a change explicitly introduces and validates them.
+- Preserve the 2D product media: VIDEO (AVI, MP4) and IMAGE (JPG, JPEG, PNG,
+  TIF, TIFF). 3D/raw stack analysis is out of scope unless a change explicitly
+  introduces and validates it.
+- Do not infer Condition Group capability from the first sample. Unsupported
+  metrics must display as N/A / — rather than zero.
 - Do not add correction multipliers, genotype-aware behavior, or parameter
   tuning intended to force expected condition ordering or magnitude.
 - Keep sparse point tracking and dense Optical Flow as separate measurements.

@@ -80,3 +80,6 @@ local_context/
 
 # Local editor and development-assistant configuration
 .cursor/
+
+# Local audit/researcher sample corpus (not unit-test fixtures)
+/testsamples/

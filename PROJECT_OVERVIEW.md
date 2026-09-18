@@ -21,44 +21,33 @@ Meeting update, 2026-06-11:
 
 For a plain-language record of direction changes, see `PROJECT_CHANGES_NATURAL_LANGUAGE.md`.
 
-## Current Workbench product workflow (2026-09)
+## Current Workbench product workflow (BUILD2)
 
-This section describes the **current researcher-facing Workbench**. Historical notes below about drawn ROIs, Confirm Crop, and 30 s/frame as an unquestioned default are retained as project history; they are not the current UI.
+This section describes the **current researcher-facing Workbench**. Historical notes below about drawn rectangle ROIs, Confirm Crop, global 30 s/frame, or detected-FPS timing are retained as project history; they are not the current UI.
 
 1. Import scientific media into a Condition Group / Sample:
-   - **VIDEO:** AVI / MP4 (motion metrics)
-   - **IMAGE:** JPG / JPEG / TIF / TIFF (structural F-actin Orientation)
-   Multi-select and drag/drop onto a Condition Group are supported.
-2. Automatic **Cell Boundary** (optional sensitivity).
+   - **VIDEO:** AVI / MP4 (General Movement, Optical Flow, Toward Nucleus)
+   - **IMAGE:** JPG / JPEG / PNG / TIF / TIFF (structural F-actin Orientation)
+   Multi-select and drag/drop onto a Condition Group are supported. Groups may mix VIDEO and IMAGE.
+2. Automatic **CellRegion** (Tighter/Broader). Persisted region is reused on selection.
 3. Required **Measurement Cutoff**.
-4. **Nucleus** — required for Toward Nucleus (video) and for F-actin Orientation (image).
-5. **Detected video timing** for VIDEO samples only (`1 / observed FPS`, `timing_source=video_header`). IMAGE samples do not use FPS.
+4. **Nucleus** — optional for General Movement / Optical Flow; required for Toward Nucleus and F-actin Orientation.
+5. **Per-sample scientific calibration** (CAL1): acquisition interval (VIDEO; 30 s / 60 s presets) and µm/pixel (IMAGE and VIDEO). Container FPS is playback only.
 6. **Run Metrics** — media-aware:
    - VIDEO: Template Tracking + Optical Flow (+ Toward Nucleus when nucleus set). **Not** orientation.
    - IMAGE: structural F-actin Orientation only (nucleus required).
-7. **Metric Analysis** inspects that persisted run only (no recompute). Modes follow media capabilities.
-8. **Analysis** aggregates by metric-capable samples. Right-click a Sample Details metric cell → **Show All Measurements** opens a modeless inspector bound to that analysis run.
+7. **Sample Results / Metric Analysis** inspect that persisted run only (no recompute). Modes follow media capabilities.
+8. **Analysis** aggregates by metric-capable samples (metric-specific `n`). Right-click a Sample Details metric cell → **Show All Measurements**.
 
-RectROI remains an **internal** computational crop derived from the Cell Boundary. Researchers no longer draw, confirm, clear, or suggest a rectangle.
+RectROI remains an **internal** computational crop derived from the CellRegion. Researchers no longer draw, confirm, clear, or suggest a rectangle.
 
-Workbench coordination (CLEAN2):
+See `docs/science/CURRENT_SCIENTIFIC_METHODS.md` and `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
 
-- `workflow_state.snapshot_from_live_inputs` is the canonical Run Metrics / Metric Analysis readiness path.
-- `sample_result_state` owns freshness flags, scientific-edit invalidation policy, and metric status classification.
-- Metric Analysis binds to one persisted `analysis_run_id` via `metric_analysis_ui.draft_analysis_run_id`; stale results cannot be inspected.
-- `crop_confirmed` is not used for product gating. Hidden OF/orientation overlay checkboxes were removed; inspection mode always shows the matching overlay.
+Timing provenance still stores playback FPS as provenance. Live analysis uses the sample's `acquisition_interval_s` and `microns_per_pixel`. Legacy samples without a CAL1 block keep 60 s/frame and 0.265 µm/pixel as compatibility fallbacks, not universal microscope constants.
 
-Timing provenance still stores `video_header` / `lab_default` / `custom` / `legacy_default` so a manual override UI can return later. The product UI currently uses detected video timing only.
+The current data are a mixture of lossy `.avi`/`.mp4` exports, static images, a small number of higher-value `.tif` files, and newly received Olympus `.oir` z-stack files. Until a given sample's calibration is entered, treat µm/s as only as good as that metadata.
 
-Primary Analysis columns are documented in `docs/science/LEGACY_METRICS_AUDIT.md` (ANALYSIS1). Historical image-direction metrics are optional.
-
-The current data are a mixture of lossy `.avi`/`.mp4` exports, a small number of higher-value `.tif` stacks, and newly received Olympus `.oir` z-stack files. Until the tracking method is validated and calibration metadata are confirmed, the practical plan is:
-
-1. Establish the **2D velocity-tracking pipeline first** using the currently available `.avi`, `.mp4`, and usable 2D views/projections from `.tif` files.
-2. Focus that 2D pipeline on the upper/central actin-rich tracking ROI shown by the A/B labels in `Picture1.jpg`; exclude the lower perinuclear/nucleus-adjacent C region from the primary tracking workflow.
-3. Implement and validate the bright-point tracker before adding learned segmentation or foundation-model workflows.
-4. Keep thickness, depth profiles, and other 3D metrics decoupled as a future module based on the `.tif` and `.oir` z-stacks.
-5. Treat the current Python desktop app as a prototype/workbench and build the final user-facing interface in R Shiny around validated CSV/JSON/QC outputs.
+The PyQt Workbench is the current researcher application. R Shiny remains an alternate review frontend over the same Python analysis core.
 
 The project should be thought of as two linked tracks:
 

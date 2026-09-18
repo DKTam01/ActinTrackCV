@@ -49,4 +49,7 @@ fields degrade to `—` / omitted without inventing values.
 - No statistical conclusions or genotype ranking claims beyond listing averages
 - No changes to R4–R8 scientific formulas
 - Structural angle is not trajectory/motion angle
-- Acquisition timing remains unresolved; µm/s values stay provisional for this corpus
+- Acquisition timing for the original V1 export corpus was unresolved at R9
+  time. CAL1 later made timing and µm/pixel **per-sample researcher metadata**;
+  see `CAL1_SCIENTIFIC_CALIBRATION.md`. µm/s remains only as calibrated as the
+  values the researcher enters.

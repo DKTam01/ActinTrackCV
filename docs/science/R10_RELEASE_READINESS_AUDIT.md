@@ -1,6 +1,10 @@
 # R10 Release-Readiness Audit
 
 **Audit date:** 2026-09-08  
+**Later note:** CAL1 (2026-09) made acquisition interval and µm/pixel
+per-sample researcher metadata. The "unresolved 0.2 vs 6 fps vs 30" blocker
+below describes this audit's corpus, not the current calibration UI.
+
 **Branch:** `phase-v1-measurement-fidelity`  
 **HEAD at audit:** `d69edcc` (Phase V2)  
 **Scope:** scientific completeness, product parity, packaging, documentation, hygiene  

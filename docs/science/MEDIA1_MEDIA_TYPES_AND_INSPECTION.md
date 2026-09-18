@@ -7,11 +7,16 @@ Post-v1.0.0 researcher workflow.
 | Media | Formats | Metrics |
 |-------|---------|---------|
 | **VIDEO** | `.avi`, `.mp4` | General Movement, Optical Flow, Toward Nucleus (nucleus required) |
-| **IMAGE** | `.jpg`, `.jpeg`, `.tif`, `.tiff` | F-actin Orientation only (nucleus required) |
+| **IMAGE** | `.jpg`, `.jpeg`, `.png`, `.tif`, `.tiff` | F-actin Orientation only (nucleus required) |
 
 F-actin Orientation is **structural** (0° radial · 90° tangential), not movement direction. It is not computed for video samples in the normal workflow (no silent first-frame orientation).
 
-Capability policy lives in `actintrack_app/media_capabilities.py`. Persist `media_type` at import.
+PNG was added to the canonical IMAGE set in PERF1 (`e84fbb4`) and is part of
+the current product. Capability policy lives in
+`actintrack_app/media_capabilities.py`. Persist `media_type` at import.
+
+Condition Groups may mix VIDEO and IMAGE samples. Analysis `n` is
+metric-specific. Do not infer group capability from the first sample.
 
 ## Import
 

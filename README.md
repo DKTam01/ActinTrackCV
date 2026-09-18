@@ -1,37 +1,60 @@
 # ActinTrackCV
 
-Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy: 2D time-lapse movies of elongated ovule / embryo-sac cells expressing **Lifeact** (F-actin) and **H2B** (nucleus) reporters. Organize **Data** by **Condition Group** and **Sample**, confirm the automatic **Cell Boundary**, set the **Measurement Cutoff**, optionally mark the **Nucleus**, run **Metrics**, inspect overlays in **Metric Analysis**, and aggregate saved results in **Analysis**. The **R Shiny** app (`shiny_app/`) provides the lab-facing review workflow; Python remains the analysis backend.
+Desktop app for **Arabidopsis** reproductive-cell fluorescence microscopy (Lifeact + H2B reporters). Organize **Data** by **Condition Group** and **Sample**, review the automatic **CellRegion**, set the **Measurement Cutoff**, place a **Nucleus** when required, set **per-sample scientific calibration**, run **Metrics**, inspect results, and compare Condition Groups in **Analysis**.
 
-**Experimental design (current dataset):** WT lines **218** and **550** (`FWApro::Lifeact-Venus` with H2B reporters) versus mutants **515** (`scar2` on #218) and **175** (`xig` on #218).
+The current tracker is traditional computer vision, not a trained model: it follows bright F-actin landmarks from the first usable frame and converts calibrated displacement into velocity. Numerical tracker validation is in [`docs/TRACKER_VALIDATION_PROTOCOL.md`](docs/TRACKER_VALIDATION_PROTOCOL.md). Scientific methods are summarized in [`docs/science/CURRENT_SCIENTIFIC_METHODS.md`](docs/science/CURRENT_SCIENTIFIC_METHODS.md).
 
-Current analysis direction: refine a traditional computer-vision tracker before using AI model training. The working method tracks the brightest actin points or small bright regions from the first frame, searches locally for corresponding bright points in each next frame, and converts calibrated frame-to-frame displacement into velocity.
+**Experimental design (current dataset):** WT lines **218** and **550** versus mutants **515** (`scar2`) and **175** (`xig`).
 
-Numerical tracker validation is documented in [`docs/TRACKER_VALIDATION_PROTOCOL.md`](docs/TRACKER_VALIDATION_PROTOCOL.md). Run the automated synthetic ground-truth gates locally with `scripts/run_validation_gates.sh`, or rely on the GitHub Actions workflow in [`.github/workflows/validation.yml`](.github/workflows/validation.yml) on push/PR to `main`. For **Layer 2** bead-slide validation, use [`examples/layer2_stage_calibration.manifest.example.json`](examples/layer2_stage_calibration.manifest.example.json) with `scripts/validate_stage_calibration.py`.
+## Supported media and metrics
 
-The current Python desktop app is a research prototype/workbench. The final user-facing application target is **R Shiny**, with the Python/OpenCV analysis code producing stable CSV/JSON/QC outputs for Shiny to display.
+Condition Groups are biological groups. They are **not** tied to one media type and may contain mixed VIDEO and IMAGE samples. Capability is per **Sample**.
 
-For a plain-language record of the project direction changes, see [`PROJECT_CHANGES_NATURAL_LANGUAGE.md`](PROJECT_CHANGES_NATURAL_LANGUAGE.md).
+| Sample type | Formats | Metrics |
+|-------------|---------|---------|
+| **VIDEO** | AVI, MP4 | General Movement, Optical Flow, Toward Nucleus (nucleus required) |
+| **IMAGE** | JPG, JPEG, PNG, TIF, TIFF | F-actin Orientation (nucleus required) |
 
-**Active Python workbench import formats:** AVI and MP4 only. Image sequences and 3D/raw microscopy analysis are postponed.
+Unsupported metrics display as **N/A / —**, never as zero. Do not infer a group's capabilities from its first sample.
 
-## Current dataset (`raw/`)
+F-actin Orientation is **structural** (not motion): **0° = radial** to the nucleus, **90° = tangential**.
 
-Local workspace data under `raw/` (gitignored) currently holds **21 media files** in four condition group folders:
+3D / raw microscopy stacks (`.oir`, multi-page depth analysis, etc.) are not part of the current 2D product path.
 
-| Folder | Files | Formats |
-|--------|------:|---------|
-| `1_WT_218` | 7 | 2× TIFF, 1× AVI, 1× JPG montage, 3× OIR |
-| `2_WT_550` | 5 | 5× AVI |
-| `3_Mutant_515` | 5 | 1× AVI, 4× MP4 |
-| `4_Mutant_175` | 4 | 4× AVI |
+## Researcher workflow
 
-**Naming:** `{WT\|MUT}{id}_{0001..}.{ext}` inside `{ordinal}_{WT\|Mutant}_{id}/` (e.g. `2_WT_550/WT550_0003.avi`).
+1. Create or open a project (workspace).
+2. Create a Condition Group.
+3. Import VIDEO and/or IMAGE samples.
+4. Review the automatic **CellRegion** (Tighter/Broader if needed).
+5. Set the **Measurement Cutoff**.
+6. Place a **Nucleus** when Toward Nucleus or Orientation is required.
+7. Configure **scientific calibration** for that sample.
+8. Click **Run Metrics**.
+9. Inspect Sample Results and individual measurements.
+10. Compare Condition Groups in **Analysis**.
 
-**Time-lapse exports:** 15 videos, each **15 frames**. Encoded playback is typically **6.0 fps**. AVI/MP4 FPS is playback metadata only. Scientific timing is the per-sample **acquisition interval** (seconds/frame), defaulting to **60 s/frame** for existing projects. 30 s/frame experiments are supported by setting that sample's interval. Spatial calibration is per-sample **µm/pixel** (legacy default 0.265). See [`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`](docs/science/CAL1_SCIENTIFIC_CALIBRATION.md).
+Nucleus is optional for General Movement and Optical Flow. It is required for Toward Nucleus and F-actin Orientation.
 
-**Higher-fidelity microscopy (`1_WT_218` only):** 16-bit ImageJ TIFF hyperstacks and Olympus **FV3000** OIR Z-stacks (60× water objective, EYFP/Lifeact channel).
+## Scientific calibration
 
-Legacy manifests such as `frames_index.csv` and the `raw_source/` archive use older filenames (`01.avi`, `03.avi`, etc.) that refer to the same movies.
+Calibration is **per sample**, persisted with the sample, and snapshotted into each analysis run. Historical results stay bound to the calibration used when they were computed.
+
+**Acquisition Interval** — the biological time between consecutive acquired frames, in seconds/frame. Shown for VIDEO samples. Presets: **30 s** and **60 s**. Custom positive values are valid. Samples without an explicit value keep the legacy fallback of **60 s/frame**.
+
+**Spatial Calibration** — the physical distance represented by one image pixel, in µm/pixel. Shown for IMAGE and VIDEO. Samples without an explicit value keep the legacy fallback of **0.265 µm/pixel**.
+
+Those fallbacks are compatibility defaults, not universal microscope constants. Lab examples have included approximately 0.265, 0.157836, and 0.138 µm/pixel depending on zoom and acquisition settings. Enter the scale that belongs to **that sample**.
+
+### Acquisition interval is not playback FPS
+
+AVI/MP4 FPS is export/playback metadata. It is **not** biological timing.
+
+A 15-frame biological series acquired every 60 seconds contains **14 biological intervals** = 840 seconds = **14 minutes**, whether the exported AVI plays at 1 FPS or 3 FPS. The same pixel motion at 30 s/frame yields twice the µm/s of 60 s/frame.
+
+The app does not infer calibration from FPS, DPI, filename, magnification, or a scale bar. Earlier ImageJ work sometimes used arbitrary units; ActinTrackCV µm/s values are **not** expected to match those historical numbers.
+
+Details: [`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`](docs/science/CAL1_SCIENTIFIC_CALIBRATION.md).
 
 ## Download for macOS
 
@@ -44,36 +67,31 @@ Most users do not need Python or the source code — download the prebuilt app f
    **System Settings → Privacy & Security**, scroll to the message that *"ActinTrackCV" was blocked*,
    and click **Open Anyway**. After the first approval, it opens normally.
 
-Notes for this build:
+Notes:
 
-- **Unsigned macOS (Apple Silicon) pre-release / internal test build** — not signed, notarized, or a polished installer. Apple Silicon only (no Intel/universal build yet), and no `.dmg` yet.
-- **AVI/MP4 loading still needs validation on clean Macs with real microscopy videos** — please report any playback issues.
-- Confirm the automatic **Cell Boundary**, set the **Measurement Cutoff**, then click **Run Metrics**. Nucleus is optional except for Toward Nucleus and F-actin Orientation.
-- Project/workspace data defaults to **`~/Documents/ActinTrackCV`** (created on first launch).
-- Your external AVI/MP4 **Data** files stay outside the app — they are never bundled or deleted.
+- Unsigned Apple Silicon pre-release / internal test build — not notarized; no Intel/universal `.dmg` yet.
+- Project data defaults to **`~/Documents/ActinTrackCV`**.
+- External media files stay outside the app.
+
+This source tree is preparing the next researcher build (**1.1.0**). Use Help → About to see the running version.
 
 ## Download for Windows
 
-A **Windows 10/11 x64** build ships as a one-folder zip (not an installer wizard yet) — same idea as Mac: download, unzip, double-click.
+A **Windows 10/11 x64** build ships as a one-folder zip (not an installer wizard).
 
 1. Download `ActinTrackCV-1.0.0-windows-x64-onefolder.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0).
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.
-5. **Keep the whole folder together** — do not move `ActinTrackCV.exe` out on its own (it needs the `_internal` folder next to it).
+5. **Keep the whole folder together** — do not move `ActinTrackCV.exe` out on its own.
 
-Notes for this build:
+Notes:
 
-- This is an **unsigned Windows pre-release / internal test build**. Windows SmartScreen may warn on first launch — click **More info → Run anyway**.
-- Project/workspace data defaults to **`Documents\ActinTrackCV`** under your user profile (created on first launch), not inside the app folder.
-- Your external AVI/MP4 **Data** files stay outside the app — they are never bundled or deleted.
+- Unsigned pre-release / internal test build. SmartScreen may warn: **More info → Run anyway**.
+- Project data defaults to **`Documents\ActinTrackCV`**.
 - A signed setup wizard is future work.
 
-Developers who want to run from source or build the app: see [Install dependencies](#install-dependencies) and [Build from source](#build-from-source) below.
-
-## Install dependencies
-
-From the project root:
+## Install from source
 
 ```bash
 python3 -m venv .venv
@@ -83,276 +101,69 @@ pip install -r requirements.txt
 
 Requirements: Python 3.10+, OpenCV, NumPy, pandas, PyQt6, tifffile.
 
-## Run the app
-
-Run `python run_app.py` from the project root with the virtual environment activated.
-
-On macOS/Linux:
-
 ```bash
-chmod +x run_app.sh    # once
-./run_app.sh
+python run_app.py                  # or: python -m actintrack_app.main
+./run_app.sh                       # macOS/Linux
+run_app.bat                        # Windows
 ```
 
-On Windows:
-
-```bat
-run_app.bat
-```
-
-The main entry point is `actintrack_app.main` → `actintrack_app.gui.run_app()`. Equivalent:
-
-```bash
-python run_app.py
-python -m actintrack_app.main
-```
-
-The launchers activate `.venv` or `venv` automatically when present.
-
-## Run the R Shiny app
-
-Install the R interface packages once, then run the application from the project root:
-
-```r
-install.packages(c(
-  "shiny", "bslib", "ggplot2", "jsonlite", "png",
-  "base64enc", "htmltools", "fontawesome"
-))
-shiny::runApp("shiny_app")
-```
-
-The Shiny app discovers source videos, supports interactive ROI selection, runs the traditional CV tracker, reviews QC outputs, compares completed runs, and inventories local z-stack files. See [`shiny_app/README.md`](shiny_app/README.md) for details.
+The R Shiny app (`shiny_app/`) remains an alternate review frontend over the same Python analysis core. See [`shiny_app/README.md`](shiny_app/README.md).
 
 ## Terminology
 
 | Term | Meaning |
 |------|---------|
-| **Condition Group** | Researcher-defined experimental grouping — a genotype, chemical treatment, control, mutant, environmental condition, or other setup you name when creating the workspace (e.g. `Control`, `LatB Treatment`, `Mutant + Chemical`) |
-| **Sample** | One imported AVI/MP4 **Data** file plus derived project state (orientation, ROI, metrics, analysis, notes) |
-| **Data** | User-facing term for an AVI/MP4 time-lapse file |
-| **ROI** | Rectangular region of interest around the usable actin-rich area; **autosaves** as you work (no Save ROI button) |
-| **Metric Analysis View** | Cropped ROI playback plus Template Tracking and Optical Flow metrics |
-| **Template Tracking Motion Index** | Sparse bright-feature / template tracking on cropped ROI frames |
-| **Optical Flow Motion Index** | Dense Farnebäck optical flow on cropped ROI frames |
-
-## Workflow
-
-1. **Open or create a workspace** — **File → New Workspace…** or **File → Open Workspace…**
-2. **Create a Condition Group** — **Workspace → New Condition Group…** (or **New Group** in the left panel) and enter a custom name such as `Control` or `LatB Treatment`
-3. **Add Sample** — **Sample → Add Sample…** (or right-click the sample list) and select one or more AVI/MP4 files. Each file becomes one Sample in the selected Condition Group.
-4. **Select Data** — choose a Sample in the left panel to load and inspect its Data. Selection and sample switching do **not** schedule or run metrics.
-5. **Orient and ROI** — rotate/flip the frame as needed, then draw a rectangle around the actin-rich region. The ROI **autosaves**; there is no Save ROI button and no Approve/Reject ROI workflow. ROI drag and autosave do **not** run metrics. If a Sample already has metric results, changing and saving ROI geometry may mark them **Stale**.
-6. **Metric Analysis View** — open from the preview toolbar to enter cropped ROI playback and metric review. Playback loops continuously; use the frame slider to scrub manually. Playback speeds: **0.25×, 0.5×, 1×, 1.5×, 2×**. You can switch Samples while staying in Metric Analysis View.
-7. **Metrics** — Template Tracking and Optical Flow Motion Index run **only when you ask**:
-   - **Run Metrics** (toolbar) computes the **currently displayed** Sample.
-   - Explorer right-click **Run Metrics** on a Sample row computes that Sample without selecting or loading it in the preview.
-   - Explorer multi-select: select multiple Samples within the **same Condition Group**, right-click one **selected** Sample, then choose **Run Metrics for Selected Samples**. Metrics run sequentially using current **Workbench metric settings**; progress appears in the bottom status bar. Every selected Sample must already have a saved ROI/Region — if any is missing, the action is disabled and the menu explains which Sample(s) need ROI. The app does not skip invalid Samples or run partial batches.
-   - Explorer Condition Group: right-click a **Condition Group**, then choose **Run Metrics for Condition Group** to compute metrics for **all child Samples** in that group sequentially. Empty Condition Groups do not offer Run Metrics. Every child Sample must already have a saved ROI/Region — if any is missing, the action is disabled and the menu explains which Sample(s) need ROI. No partial Condition Group batches are run. Progress appears in the bottom status bar.
-   - All Run Metrics paths use the current **Workbench metric settings** plus each Sample’s saved orientation and ROI on **cropped ROI frames**.
-   - A Sample with a saved ROI but no saved metric results yet shows **No Metrics** until you run metrics.
-   - After a saved ROI geometry change, existing results may show **Stale** until you run metrics again.
-8. **Analysis** — **Analysis → View Analysis…** for read-only aggregation by Condition Group and Sample from saved per-Sample results (does not re-run metrics).
-
-### Metric Analysis View
-
-Metric Analysis View replaces the older “preview cropped ROI only” workflow. It shows:
-
-- Cropped ROI playback with optional **Optical Flow overlay** (sampled flow arrows; default **on**)
-- **Template Tracking Motion Index** settings and results
-- **Optical Flow Motion Index** settings, QC readout, and results
-
-Switching Samples while in Metric Analysis View reloads that Sample’s cropped preview and clears in-memory metric display state for the previous Sample. Opening Metric Analysis View does **not** recompute metrics unless you use **Run Metrics**.
-
-### Running metrics
-
-Metric runs are explicit and researcher-controlled:
-
-| Action | What runs |
-|--------|-----------|
-| **Run Metrics** (toolbar) | Template Tracking + Optical Flow for the **currently displayed** Sample |
-| **Run Metrics** (Explorer right-click on a Sample) | Same metrics for the **targeted** Sample without changing preview selection |
-| **Run Metrics for Selected Samples** (Explorer right-click when multiple same-group Samples are selected) | Same metrics for **all selected Samples** in that Condition Group, one after another; progress in the bottom status bar |
-| **Run Metrics for Condition Group** (Explorer right-click on a Condition Group) | Same metrics for **all child Samples** in that Condition Group, one after another; progress in the bottom status bar. Not offered for empty groups |
-| Sample selection / switching | Inspect and navigate only — no metric compute |
-| ROI drag / autosave | Persists ROI only — no metric compute; may mark existing results **Stale** |
-| Workbench metric settings changes | Updates settings only — no automatic metric compute |
-
-**ROI requirement for batch runs:** every Sample in the target set must already have a saved ROI/Region. For **Run Metrics for Selected Samples** or **Run Metrics for Condition Group**, if any target Sample is missing ROI, the action is disabled and the menu lists which Sample(s) need ROI. No partial batches are run.
-
-**Target semantics:** toolbar **Run Metrics** always targets the currently displayed Sample. Right-clicking an **unselected** Sample runs only that Sample. Right-clicking **selected** Samples can run the full same-group selection. Right-clicking a **Condition Group** runs all child Samples in that group (empty groups offer no Run Metrics action).
-
-Status labels in the workbench:
-
-| Status | Meaning |
-|--------|---------|
-| **No Metrics** | Saved ROI exists, but no metric results have been generated yet |
-| **Stale** | Saved results exist but ROI geometry or settings changed since the last run |
-| **Analyzing** | A metric run is in progress for that Sample |
-| **Analyzed** | Saved Template Tracking and Optical Flow results are current |
-
-Settings changes alone do not re-run metrics. Run metrics again when you want updated results under the current Workbench settings.
-
-### Sparse Tracking Motion Index
-
-Sparse tracking of bright actin-associated features on cropped ROI frames:
-
-- Selects locally bright starting points on the first frame
-- Tracks features frame-to-frame (default: brightest-local search; template matching remains available)
-- Produces **General Movement** (absolute XY) and **Downward Motion** indices (µm/s)
-
-Current default tracking parameters (editable in Metric Analysis View): **10** starting points, **20** px minimum spacing, **8** px search radius, 11 px patch, 0.55 confidence, **0** lookahead frames, tracking method **brightest_local**. Spatial scale and acquisition interval are **per Sample** (legacy defaults **0.265 µm/pixel** and **60 s/frame**). Encoded playback FPS is **not** the biological acquisition interval; px/frame remains the timing-invariant movement measure. See `docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`.
-
-### Optical Flow Motion Index
-
-Dense **OpenCV Farnebäck** optical flow on consecutive cropped ROI frame pairs (separate from sparse tracking):
-
-- Masks to bright F-actin-associated pixels using a **mask percentile** on the previous frame (code default **65**)
-- Optional Gaussian blur (default kernel **3**)
-- Produces ROI-level metrics in µm/s and QC fractions:
-
-| Metric | Meaning |
-|--------|---------|
-| **General Movement** | Mean flow speed (magnitude) over valid bright pixels |
-| **Downward Motion** | Mean downward-only vertical flow component |
-| **Net Y Velocity** | Mean signed vertical flow (up and down combined) |
-| **Directionality Ratio** | Downward component ÷ total magnitude |
-| **Valid Pixel Fraction** | Fraction of ROI pixels used per frame pair |
-| **Saturated Pixel Fraction** | Fraction of valid pixels near saturation (QC) |
-
-Default Farnebäck settings: `pyr_scale=0.5`, `levels=3`, `winsize=15`, `iterations=3`, `poly_n=5`, `poly_sigma=1.2`. Scale/time conversion uses the same **microns_per_pixel** and **seconds_per_frame** as sparse tracking.
-
-The on-screen overlay shows **sampled flow vectors for visualization**, not individual filament trajectories.
-
-Sparse Tracking and Optical Flow are **complementary**: localized feature tracking vs. dense field motion. They answer related questions but should not be expected to match numerically. Do not treat either method as a correction for the other.
-
-### Analysis
-
-**Analysis → View Analysis…** loads saved per-Sample metrics and groups them by **Condition Group** and **Sample**:
-
-- Template Tracking and Optical Flow metrics are averaged **separately** at the Condition Group level
-- Samples without valid results are excluded from the corresponding averages
-- Missing values display as **—**
-- Opening Analysis does **not** recompute metrics
-
-### Scientific caveat
-
-All motion metrics are **draft ROI-level movement / index estimates**. They summarize apparent motion within the drawn ROI. They are **not** definitive individual filament tracking and should not be over-interpreted biologically without consistent ROI placement, imaging settings, and scale/time calibration.
-
-### Sample management
-
-Right-click a Sample or Data row in the left panel:
-
-| Action | Effect |
-|--------|--------|
-| **Run Metrics** | Compute Template Tracking and Optical Flow for that Sample (does not change which Sample is displayed in the preview) |
-| **Run Metrics for Selected Samples** | When multiple Samples in the same Condition Group are selected, compute metrics for all selected Samples sequentially (requires saved ROI on every selected Sample) |
-| **Rename Sample…** | Change the Sample display name |
-| **Replace Data…** | Select a new AVI/MP4 file; clears derived ROI, tracking, and analysis state |
-| **Delete Sample…** | Removes project state and derived results from the workspace; does **not** delete the original external Data file unless you opt to remove the project's internal copy |
-
-Right-click a **Condition Group** in the left panel:
-
-| Action | Effect |
-|--------|--------|
-| **Run Metrics for Condition Group** | Compute metrics for all child Samples in that Condition Group sequentially (requires saved ROI on every child Sample; not offered for empty groups) |
-| **Add Sample(s)…** | Import one or more AVI/MP4 files into the group |
-| **Rename Condition Group…** | Change the Condition Group display name |
-| **Delete Condition Group…** | Remove the group when empty |
-
-## Project layout
-
-The app creates these folders inside your workspace as you work:
-
-```text
-ActinTrackCV/                    ← project root (workspace)
-  raw/                           ← source media and optional internal import copies
-    <condition_group>/           e.g. 2_WT_550/
-      <PREFIX>_<NNNN>.<ext>      e.g. WT550_0003.avi
-  processed/                     ← cropped exports and motion-index outputs
-  metadata/                      ← runtime registry and annotations
-    data_files.csv
-    sample_registry.json
-    crop_metadata.json
-    draft_tracking/              ← per-Sample Template Tracking draft results
-    draft_optical_flow/            ← per-Sample Optical Flow draft results
-```
-
-Opening an older workspace automatically migrates legacy v1 metadata (`samples.csv`, `batches.json`) to the current v2 schema.
-
-## Application menu
-
-| Menu | Actions |
-|------|---------|
-| **File** | New/Open workspace, recent workspaces, exit |
-| **Workspace** | Refresh workspace, open folder, remove missing files, purge/cleanup |
-| **Sample** | Add Sample, Rename Sample |
-| **Analysis** | View Analysis |
-| **Help** | How to Run App, About |
-
-Context menu (right-click): **Condition Group** — Run Metrics for Condition Group (when the group has child Samples), Add Sample(s), Rename Condition Group, Delete Condition Group. **Sample or Data row** — Run Metrics, Run Metrics for Selected Samples (when multiple same-group Samples are selected), Rename Sample, Replace Data, Delete Sample.
+| **Condition Group** | Biological grouping you name (genotype, treatment, control, …) |
+| **Sample** | One imported VIDEO or IMAGE file plus derived project state |
+| **Data** | The imported media file |
+| **CellRegion** | Automatic cell outline used as the scientific region (intersected with the area above the Measurement Cutoff) |
+| **Measurement Cutoff** | Researcher-set boundary required for metrics |
+| **Nucleus** | Optional for General Movement / Optical Flow; required for Toward Nucleus / Orientation |
+| **General Movement** | Sparse-tracking absolute XY speed (µm/s) |
+| **Optical Flow** | Dense Farnebäck motion over valid pixels (µm/s) |
+| **Toward Nucleus** | Signed radial distance-change speed (µm/s; positive = toward) |
+| **F-actin Orientation** | Structural angle relative to the nucleus (°) |
 
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v
+python scripts/validate_tracker.py
+python scripts/validate_optical_flow.py
 ```
 
-## User documentation
+## User and science documentation
 
-See [`ActinTrackCV_User_Documentation_Refined.md`](ActinTrackCV_User_Documentation_Refined.md) for the full user guide.
+- Researcher guide: [`ActinTrackCV_User_Documentation_Refined.md`](ActinTrackCV_User_Documentation_Refined.md)
+- Current methods: [`docs/science/CURRENT_SCIENTIFIC_METHODS.md`](docs/science/CURRENT_SCIENTIFIC_METHODS.md)
+- Calibration: [`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`](docs/science/CAL1_SCIENTIFIC_CALIBRATION.md)
+- Packaging / researcher build: [`docs/BUILD2_RESEARCHER_BUILD.md`](docs/BUILD2_RESEARCHER_BUILD.md)
+- Developer notes: [`CLAUDE.md`](CLAUDE.md), [`CONTRIBUTING.md`](CONTRIBUTING.md)
 
 ## Build from source
 
-The frozen app never writes into its own bundle:
+The frozen app never writes into its own bundle. Default workspace: `~/Documents/ActinTrackCV`.
 
-- The default workspace is `~/Documents/ActinTrackCV`, created on first launch. Manually chosen workspaces still load.
-- External AVI/MP4 files and project folders (`raw/`, `processed/`, `previews/`, `metadata/`, `raw_source/`, `frames/`) are never bundled or deleted.
-
-**Build the macOS `.app` bundle** (debuggable build; not a signed/notarized installer):
+**macOS** (unsigned `.app`, Apple Silicon):
 
 ```bash
 python -m pip install -r requirements-build.txt
 bash packaging/macos/build_macos.sh
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.1.0-macos-arm64.zip
 ```
 
-Output: `dist/ActinTrackCV.app`. It is **unsigned** — Gatekeeper warns on first launch, so right-click → Open.
+See [`packaging/macos/README.md`](packaging/macos/README.md).
 
-Package the bundle into a release zip with `ditto` (preferred over plain `zip`, which can corrupt the `.app` bundle's symlinks/metadata):
-
-```bash
-ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.0.0-macos-arm64.zip
-```
-
-`.dmg`, code signing, and notarization are future work. See [`packaging/macos/README.md`](packaging/macos/README.md) and [`packaging/RESOURCES.md`](packaging/RESOURCES.md).
-
-**Build the Windows one-folder app** (must run on Windows 10/11 x64 — PyInstaller does not cross-compile):
+**Windows** (must run on Windows 10/11 x64, or GitHub Actions `windows-latest`):
 
 ```powershell
 python -m pip install -r requirements-build.txt
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.1.0-windows-x64-onefolder.zip -Force
 ```
 
-Output: `dist\ActinTrackCV\ActinTrackCV.exe` (one-folder, windowed). Package the **whole** folder into a release zip:
-
-```powershell
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-0.2.1-windows-x64-onefolder.zip -Force
-```
-
-The build is **unsigned** (SmartScreen warns; More info → Run anyway). An installer wizard and code signing are future work. See [`packaging/windows/README.md`](packaging/windows/README.md).
-
-## Not implemented
-
-- Image sequence import
-- 3D / raw microscopy format import (`.oib`, `.oir`, multi-page TIFF stacks, etc.)
-
-## Other scripts
-
-- `extract_2d_frames.py` — extract PNG frames from videos (legacy pipeline)
-- `preprocess_ab_regions.py` — CLI crop using actin-signal ROI detection
-- `python -m actintrack_app.main` — same GUI as `run_app.py`
-
-See `PROJECT_OVERVIEW.md` for broader project context.
+See [`packaging/windows/README.md`](packaging/windows/README.md).
 
 ## Related: SeedThermal (separate project)
 
-FLIR ONE Edge seed thermal phenotyping lives in **[`SeedThermal/`](SeedThermal/README.md)** — independent install, scripts, and outputs. It is not part of the ActinTrackCV microscopy or F-actin tracking pipeline.
+FLIR ONE Edge seed thermal phenotyping lives in **[`SeedThermal/`](SeedThermal/README.md)** and is not part of this pipeline.

@@ -113,15 +113,15 @@ Do not add a new permanent right inspector unless explicitly requested.
 Researchers do not draw or confirm a rectangle. Setup is:
 
 ```text
-automatic Cell Boundary
-→ optional sensitivity
+automatic CellRegion
+→ Tighter/Broader if needed
 → required Measurement Cutoff
-→ optional Nucleus
-→ detected video timing
+→ Nucleus when required
+→ per-sample scientific calibration
 → Run Metrics
 ```
 
-RectROI remains an internal computational crop derived from the Cell Boundary.
+RectROI remains an internal computational crop derived from the CellRegion.
 
 Canvas context menu (full preview):
 

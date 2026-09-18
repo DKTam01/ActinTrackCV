@@ -1,6 +1,10 @@
 # V1 Measurement Fidelity Audit
 
-**Status:** evidence report (not a calibration change)  
+**Status:** historical evidence report (not a calibration change). Current
+product timing/scale are per-sample (CAL1); see
+`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`. This audit's "production default
+30 s/frame" is no longer the live fallback (legacy fallback is 60 s/frame).
+
 **Branch / phase:** `phase-v1-measurement-fidelity`  
 **Corpus:** `testsamples/` (complete 15-video lab set); active `raw/` is incomplete and contains cross-condition duplicates  
 **Constraint:** no correction multipliers, no genotype-aware tuning, no production timing change without independent acquisition proof
