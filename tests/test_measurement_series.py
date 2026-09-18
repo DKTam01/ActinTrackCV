@@ -194,7 +194,13 @@ class PersistedSeriesTests(unittest.TestCase):
         series = load_orientation_series(self.root, self.sid)
         self.assertEqual(series.metric_id, MetricId.ORIENTATION)
         self.assertEqual(series.columns[0].label, "Measurement #")
-        self.assertEqual(series.notes, ("Sample result is the median of these angles.",))
+        self.assertEqual(
+            series.notes,
+            (
+                "0° = radial to the nucleus; 90° = tangential. "
+                "Sample result is the median of these angles.",
+            ),
+        )
         self.assertTrue(verify_series_matches_summary(series))
 
 

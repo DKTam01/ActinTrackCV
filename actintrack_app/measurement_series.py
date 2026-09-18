@@ -329,9 +329,11 @@ def load_optical_flow_series(
 
 COHERENCE_HEADER_TOOLTIP = (
     "Coherence (0–1)\n\n"
-    "Indicates how clearly the local F-actin signal has one dominant "
-    "orientation. Higher values indicate a more clearly defined direction; "
-    "lower values indicate a less clearly defined direction."
+    "Coherence is a 0–1 measure of how strongly the local image structure "
+    "has one dominant orientation. Higher values mean a more clearly defined "
+    "direction; lower values mean a less clearly defined direction. "
+    "It is not accuracy, confidence that the angle is correct, or a "
+    "radial/tangential score."
 )
 
 
@@ -396,6 +398,7 @@ def load_orientation_series(
         ],
         rows=rows,
         notes=(
+            "0° = radial to the nucleus; 90° = tangential. "
             "Sample result is the median of these angles.",
         ),
         available=bool(rows),

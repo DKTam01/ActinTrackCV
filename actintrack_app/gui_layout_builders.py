@@ -1094,7 +1094,7 @@ def build_timing_settings_section(window: MainWindow) -> QWidget:
     window.edit_acquisition_interval.setText("60")
     window.edit_acquisition_interval.setPlaceholderText("60")
     window.edit_acquisition_interval.setToolTip(
-        "Actual time between microscope acquisitions, in seconds per frame. "
+        "The biological time between consecutive acquired frames. "
         "AVI/MP4 playback FPS is export metadata and does not set this interval."
     )
     apply_inspector_field_style(window.edit_acquisition_interval)
@@ -1146,9 +1146,9 @@ def build_timing_settings_section(window: MainWindow) -> QWidget:
     window.edit_microns_per_pixel.setText("0.265")
     window.edit_microns_per_pixel.setPlaceholderText("0.265")
     window.edit_microns_per_pixel.setToolTip(
-        "Physical image scale in micrometres per pixel. "
-        "This is sample/acquisition metadata; do not infer it from playback FPS, "
-        "JPEG DPI, or objective magnification alone."
+        "The physical distance represented by one image pixel, in µm/pixel. "
+        "Enter the scale for this sample; do not infer it from playback FPS, "
+        "JPEG DPI, filename, or objective magnification."
     )
     apply_inspector_field_style(window.edit_microns_per_pixel)
     window.edit_microns_per_pixel.editingFinished.connect(

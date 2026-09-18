@@ -6904,10 +6904,14 @@ class MainWindow(QMainWindow):
         text = (
             "Typical workflow:\n\n"
             "1. Create or open a workspace (File menu).\n"
-            "2. Add a Condition Group and import AVI/MP4 samples.\n"
-            "3. Review the automatic Cell Boundary, select the nucleus, "
-            "and confirm analysis timing.\n"
-            "4. Run Metrics, then open Analysis for condition-group comparisons.\n"
+            "2. Create a Condition Group and import VIDEO (AVI/MP4) and/or "
+            "IMAGE (JPG/JPEG/PNG/TIF/TIFF) samples.\n"
+            "3. Review the CellRegion, set the Measurement Cutoff, and place "
+            "a Nucleus when Toward Nucleus or Orientation is required.\n"
+            "4. Set per-sample scientific calibration (acquisition interval "
+            "and µm/pixel). Playback FPS is not biological timing.\n"
+            "5. Run Metrics, inspect Sample Results, then compare Condition "
+            "Groups in Analysis.\n"
         )
         if readme.is_file():
             text += f"\nFor installation and setup, see:\n{readme}"
@@ -6918,12 +6922,14 @@ class MainWindow(QMainWindow):
             self,
             "About ActinTrackCV",
             f"ActinTrackCV {__version__}\n\n"
-            "ActinTrackCV — Arabidopsis reproductive-cell F-actin fluorescence microscopy: "
-            "2D time-lapse preprocessing, orientation, cell-boundary detection, template tracking, "
-            "optical-flow motion index, and cropped export for actin cable velocity analysis.\n\n"
-            "The Cell Boundary is detected automatically. Use Tighter/Broader to exclude "
-            "obvious background or retain dim cell signal, then select the nucleus and "
-            "confirm analysis timing before Run Metrics.",
+            "ActinTrackCV analyzes Arabidopsis reproductive-cell F-actin "
+            "fluorescence microscopy (VIDEO: AVI/MP4; IMAGE: JPG/JPEG/PNG/TIF/TIFF).\n\n"
+            "VIDEO metrics: General Movement, Optical Flow, and Toward Nucleus. "
+            "IMAGE metric: structural F-actin Orientation "
+            "(0° radial · 90° tangential).\n\n"
+            "Review the CellRegion, set the Measurement Cutoff, place a Nucleus "
+            "when required, and set per-sample scientific calibration before "
+            "Run Metrics. Playback FPS is not biological timing.",
         )
 
     def _confirm_project_root_if_source_folder(self, root: Path) -> Optional[Path]:

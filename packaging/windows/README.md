@@ -9,8 +9,9 @@ This is a **one-folder pre-release** (zip), **not** an installer wizard yet.
 > alone (Whisky/Wine is not supported for this PyQt6 + OpenCV stack).
 >
 > **From a Mac:** use **Actions → Package Windows → Run workflow**, optionally
-> set `release_tag` to `v1.0.0` (or later) so the zip attaches to that GitHub
-> Release. See `.github/workflows/package-windows.yml`.
+> set `release_tag` to an existing published tag (for example `v1.1.0`) so the
+> zip attaches to that GitHub Release. See `.github/workflows/package-windows.yml`.
+> Do not dispatch this during BUILD2 unless a release tag already exists.
 
 ## Prerequisites
 
@@ -52,7 +53,7 @@ Zip the **whole** one-folder app (the `.exe` needs the `_internal` folder and
 bundled files next to it — do not zip the `.exe` alone). From the repo root:
 
 ```powershell
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.0.0-windows-x64-onefolder.zip -Force
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.1.0-windows-x64-onefolder.zip -Force
 ```
 
 Verify the zip contains a top-level `ActinTrackCV\` folder with `ActinTrackCV.exe`
@@ -60,7 +61,7 @@ and `_internal\` inside it.
 
 ## End-user instructions (unsigned)
 
-1. Download `ActinTrackCV-1.0.0-windows-x64-onefolder.zip`.
+1. Download `ActinTrackCV-1.1.0-windows-x64-onefolder.zip`.
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.

@@ -11,17 +11,17 @@ class GuiStylesTests(unittest.TestCase):
     def test_tracking_result_group_title_no_sample(self) -> None:
         self.assertEqual(
             gui_styles.tracking_result_group_title(None),
-            "Tracking / Motion Index Results: No sample selected",
+            "Sample Results: No sample selected",
         )
         self.assertEqual(
             gui_styles.tracking_result_group_title(""),
-            "Tracking / Motion Index Results: No sample selected",
+            "Sample Results: No sample selected",
         )
 
     def test_tracking_result_group_title_with_sample(self) -> None:
         self.assertEqual(
             gui_styles.tracking_result_group_title("Control / clip.mp4"),
-            "Tracking / Motion Index Results: Control / clip.mp4",
+            "Sample Results: Control / clip.mp4",
         )
 
     def test_hint_and_status_styles_use_shared_font_sizes(self) -> None:

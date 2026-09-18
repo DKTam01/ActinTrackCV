@@ -460,7 +460,7 @@ STYLE_METRIC_STATUS_PANEL = (
 METRIC_STATUS_INNER_SPACING = 6
 METRIC_STATUS_LABEL_SPACING = 2
 
-TRACKING_RESULT_GROUP_PREFIX = "Tracking / Motion Index Results"
+TRACKING_RESULT_GROUP_PREFIX = "Sample Results"
 
 
 def tracking_result_group_title(sample_display: str | None = None) -> str:
