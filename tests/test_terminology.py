@@ -307,6 +307,14 @@ class UserFacingTerminologyTests(unittest.TestCase):
         # The legacy-terminology note still records the old name as legacy.
         self.assertIn("| Breed | Condition Group |", doc)
 
+    def test_user_doc_section_7_uses_acquisition_interval(self) -> None:
+        doc = _read("ActinTrackCV_User_Documentation_Refined.md")
+        section = doc.split("## 7.", 1)[1].split("## 8.", 1)[0]
+        self.assertNotIn("detected video FPS", section)
+        self.assertNotIn("global 30 s/frame", section)
+        self.assertIn("acquisition interval", section)
+        self.assertIn("Container playback FPS is not the biological clock.", section)
+
 
 if __name__ == "__main__":
     unittest.main()

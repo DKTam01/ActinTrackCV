@@ -224,7 +224,7 @@ The internal computational crop (RectROI) is derived from the Cell Boundary for 
 
 ### Why orientation matters
 
-Orientation affects how the frame is displayed and how scientific annotations are applied. Rotate or flip the full preview until the region is visually consistent with the analysis goal. Downward motion is interpreted internally as increasing y-coordinate in the image; this direction is fixed and is not shown as a GUI control. Current product timing uses detected video FPS, not a global 30 s/frame default.
+Orientation affects how the frame is displayed and how scientific annotations are applied. Rotate or flip the full preview until the region is visually consistent with the analysis goal. Downward motion is interpreted internally as increasing y-coordinate in the image; this direction is fixed and is not shown as a GUI control. Scientific timing uses each Sample's acquisition interval (seconds per frame). Container playback FPS is not the biological clock.
 
 ### Autosave
 

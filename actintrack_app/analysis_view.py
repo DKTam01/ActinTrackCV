@@ -39,6 +39,11 @@ ORIENTATION_HINT = (
     "Group values are means of samples that have that metric; n is shown "
     "under each value."
 )
+ORIENTATION_COLUMN_TOOLTIP = (
+    "Sample values are medians of contributing angles. "
+    "Condition Group values are means of capable sample medians."
+)
+SAMPLE_ORIENTATION_TOOLTIP = "Median of contributing angles."
 
 PRIMARY_SUMMARY_HEADERS = [
     "Condition Group",
@@ -94,6 +99,14 @@ def _fmt_float(value: Optional[float], *, places: int = 4) -> str:
     if value is None:
         return UNAVAILABLE
     return f"{value:.{places}f}"
+
+
+def orientation_group_tooltip(count: int) -> str:
+    """Condition Group Orientation is a mean of sample medians, not a median."""
+    n = int(count)
+    if n == 1:
+        return "Mean of 1 capable sample median"
+    return f"Mean of {n} capable sample medians"
 
 
 def _fmt_group_metric(
@@ -165,11 +178,17 @@ class AnalysisViewWidget(QWidget):
         body_layout = QVBoxLayout(body)
 
         self.tbl_breed_summary = self._make_table(PRIMARY_SUMMARY_HEADERS)
+        self._set_orientation_header_tooltip(
+            self.tbl_breed_summary, PRIMARY_SUMMARY_HEADERS
+        )
         body_layout.addWidget(
             self._wrap_group("Condition Group Summary", self.tbl_breed_summary)
         )
 
         self.tbl_sample_details = self._make_table(SAMPLE_DETAIL_HEADERS)
+        self._set_orientation_header_tooltip(
+            self.tbl_sample_details, SAMPLE_DETAIL_HEADERS
+        )
         self.tbl_sample_details.setContextMenuPolicy(
             Qt.ContextMenuPolicy.CustomContextMenu
         )
@@ -181,6 +200,7 @@ class AnalysisViewWidget(QWidget):
         )
 
         self.tbl_comparison = self._make_table(COMPARISON_HEADERS)
+        self._set_orientation_header_tooltip(self.tbl_comparison, COMPARISON_HEADERS)
         body_layout.addWidget(
             self._wrap_group("Condition Group Comparison", self.tbl_comparison)
         )
@@ -226,6 +246,17 @@ class AnalysisViewWidget(QWidget):
         box_layout = QVBoxLayout(box)
         box_layout.addWidget(table)
         return box
+
+    @staticmethod
+    def _set_orientation_header_tooltip(
+        table: QTableWidget, headers: list[str]
+    ) -> None:
+        label = "F-actin Orientation (°)"
+        if label not in headers:
+            return
+        item = table.horizontalHeaderItem(headers.index(label))
+        if item is not None:
+            item.setToolTip(ORIENTATION_COLUMN_TOOLTIP)
 
     @staticmethod
     def _make_table(headers: list[str]) -> QTableWidget:
@@ -276,6 +307,10 @@ class AnalysisViewWidget(QWidget):
                 places=2,
                 missing_tip=NUCLEUS_REQUIRED_TIP,
             )
+            if row.avg_orientation_median_deg is not None:
+                ori_tip = orientation_group_tooltip(
+                    row.samples_with_orientation_results
+                )
             values: list[tuple[str, Any, bool, str]] = [
                 (row.breed, row.breed, False, ""),
                 (str(row.sample_count), row.sample_count, True, ""),
@@ -334,7 +369,7 @@ class AnalysisViewWidget(QWidget):
                     _fmt_float(m.orientation_median_deg, places=2),
                     m.orientation_median_deg,
                     True,
-                    NUCLEUS_REQUIRED_TIP if ori_missing else "",
+                    NUCLEUS_REQUIRED_TIP if ori_missing else SAMPLE_ORIENTATION_TOOLTIP,
                 ),
             ]
             for c, (text, sort_value, numeric, tooltip) in enumerate(values):
@@ -439,7 +474,7 @@ class AnalysisViewWidget(QWidget):
                     True,
                     NUCLEUS_REQUIRED_TIP
                     if row.avg_orientation_median_deg is None
-                    else "",
+                    else ORIENTATION_COLUMN_TOOLTIP,
                 ),
             ]
             for c, (text, sort_value, numeric, tooltip) in enumerate(values):

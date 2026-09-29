@@ -323,7 +323,7 @@ def format_sample_results_summary(
             )
     if caps.supports_orientation:
         lines.append("")
-        lines.append("F-actin Orientation")
+        lines.append("F-actin Orientation (median)")
         if not has_nucleus:
             lines.append("Nucleus required")
         elif orientation_deg is None:

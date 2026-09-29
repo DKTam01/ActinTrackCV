@@ -18,9 +18,12 @@ from actintrack_app.analysis_view import (
     COMPARISON_HEADERS,
     HISTORICAL_SAMPLE_HEADERS,
     HISTORICAL_SUMMARY_HEADERS,
+    ORIENTATION_COLUMN_TOOLTIP,
     PRIMARY_SUMMARY_HEADERS,
     SAMPLE_DETAIL_HEADERS,
+    SAMPLE_ORIENTATION_TOOLTIP,
     AnalysisViewWidget,
+    orientation_group_tooltip,
 )
 
 
@@ -259,6 +262,53 @@ class AnalysisViewPrimaryTableTests(unittest.TestCase):
         self.assertIn("0.2200", self.widget.tbl_comparison.item(row, 3).text())
         self.assertIn("0.1100", self.widget.tbl_comparison.item(row, 4).text())
         self.assertIn("55.00", self.widget.tbl_comparison.item(row, 5).text())
+
+    def test_orientation_sample_median_is_not_applied_to_group_rows(self) -> None:
+        for table, headers in (
+            (self.widget.tbl_breed_summary, PRIMARY_SUMMARY_HEADERS),
+            (self.widget.tbl_sample_details, SAMPLE_DETAIL_HEADERS),
+            (self.widget.tbl_comparison, COMPARISON_HEADERS),
+        ):
+            labels = _headers(table)
+            self.assertIn("F-actin Orientation (°)", labels)
+            self.assertNotIn("Median F-actin Orientation", " ".join(labels))
+            tip = table.horizontalHeaderItem(headers.index("F-actin Orientation (°)")).toolTip()
+            self.assertEqual(tip, ORIENTATION_COLUMN_TOOLTIP)
+            self.assertIn("medians of contributing angles", tip)
+            self.assertIn("means of capable sample medians", tip)
+
+        group = self.widget.tbl_breed_summary.item(
+            _row_index(self.widget.tbl_breed_summary, 0, "Control"),
+            5,
+        )
+        self.assertEqual(group.toolTip(), orientation_group_tooltip(1))
+        self.assertIn("Mean of", group.toolTip())
+        self.assertNotIn("Median of contributing", group.toolTip())
+        movement = self.widget.tbl_breed_summary.item(
+            _row_index(self.widget.tbl_breed_summary, 0, "Control"),
+            2,
+        )
+        self.assertEqual(movement.toolTip(), "Mean of 2 samples")
+        self.assertEqual(orientation_group_tooltip(2), "Mean of 2 capable sample medians")
+
+        sample = self.widget.tbl_sample_details.item(
+            _row_index(self.widget.tbl_sample_details, 1, "Sample 1"),
+            6,
+        )
+        self.assertEqual(sample.toolTip(), SAMPLE_ORIENTATION_TOOLTIP)
+        missing = self.widget.tbl_sample_details.item(
+            _row_index(self.widget.tbl_sample_details, 1, "Sample 2"),
+            6,
+        )
+        self.assertIn("nucleus", missing.toolTip().lower())
+        self.assertNotIn("Median of contributing", missing.toolTip())
+
+        comparison = self.widget.tbl_comparison.item(
+            _row_index(self.widget.tbl_comparison, 1, "Control"),
+            5,
+        )
+        self.assertIn("means of capable sample medians", comparison.toolTip())
+        self.assertNotIn("Median F-actin", comparison.toolTip())
 
     def test_orientation_hint_is_structural(self) -> None:
         text = self.widget.lbl_metric_hint.text()

@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QLabel
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
 
+from actintrack_app.measurement_export import (
+    measurements_to_csv,
+    measurements_to_tsv,
+    serialize_measurement_value,
+)
 from actintrack_app.measurement_inspector_window import (
     MeasurementInspectorWindow,
     semantic_sort_value,
@@ -199,6 +206,60 @@ class OrientationInspectorTests(unittest.TestCase):
         self.assertEqual(radial_lines, [ORIENTATION_LEGEND_TEXT])
         self.assertEqual(ORIENTATION_LEGEND_TEXT, "0° = radial · 90° = tangential")
         self.assertTrue(any("median of these angles" in t for t in texts))
+
+    def test_copy_all_ignores_visual_sort_and_keeps_precision(self) -> None:
+        precise = 12.345678901234567
+        rows = [
+            {"n": 10, "angle_deg": precise, "x_px": 1.0, "y_px": 2.0, "coherence": None},
+            {"n": 2, "angle_deg": 0.5, "x_px": 3.0, "y_px": 4.0, "coherence": 0.2},
+        ]
+        series = MetricMeasurementSeries(
+            metric_id=MetricId.ORIENTATION,
+            sample_id="S1",
+            sample_label="Sample 1",
+            condition_group="WT",
+            analysis_run_id="run-o",
+            summary_value=precise,
+            summary_unit="°",
+            row_kind="orientation_sample",
+            columns=[
+                MeasurementColumn("n", "Measurement #", sort_kind="int"),
+                MeasurementColumn("angle_deg", "Angle (°)", sort_kind="float"),
+                MeasurementColumn("x_px", "x (px)", sort_kind="float"),
+                MeasurementColumn("y_px", "y (px)", sort_kind="float"),
+                MeasurementColumn("coherence", "Coherence", sort_kind="float"),
+            ],
+            rows=rows,
+        )
+        window = MeasurementInspectorWindow(series)
+        labels = {b.text() for b in window.findChildren(QPushButton)}
+        self.assertEqual(labels, {"Copy All", "Export CSV"})
+        _sort_column(window, 0, Qt.SortOrder.AscendingOrder)
+        self.assertEqual([int(v) for v in _column_texts(window, 0)], [2, 10])
+        self.assertEqual(window.table.item(1, 1).text(), f"{precise:.6g}")
+        copied = window.copy_all_measurements()
+        self.assertEqual(copied, measurements_to_tsv(series))
+        self.assertEqual(QApplication.clipboard().text(), copied)
+        data_lines = copied.split("\n")[1:]
+        self.assertEqual([line.split("\t")[0] for line in data_lines], ["10", "2"])
+        self.assertIn(serialize_measurement_value(precise), data_lines[0])
+        self.assertNotIn("local_orientation", copied)
+        window._btn_copy.click()
+        self.assertEqual(QApplication.clipboard().text(), copied)
+
+    def test_export_csv_cancel_is_noop_and_write_uses_series(self) -> None:
+        window = self._window()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            self.assertIsNone(window.export_measurements_csv(ask_path=lambda: ""))
+            self.assertEqual(list(folder.iterdir()), [])
+            destination = folder / "out"
+            written = window.export_measurements_csv(path=str(destination))
+            self.assertEqual(written, str(folder / "out.csv"))
+            text = (folder / "out.csv").read_text(encoding="utf-8")
+            self.assertEqual(text, measurements_to_csv(window._series))
+            self.assertIn("Angle (°)", text)
+            self.assertTrue(text.split("\n")[1].startswith("Sample 1,"))
 
 
 class TowardNucleusAndOpticalFlowSortTests(unittest.TestCase):

@@ -138,7 +138,8 @@ class MediaReadinessTests(unittest.TestCase):
             has_nucleus=True,
             media_type=SampleMediaType.IMAGE,
         )
-        self.assertIn("F-actin Orientation", text)
+        self.assertIn("F-actin Orientation (median)", text)
+        self.assertNotIn("F-actin Orientation\n", text)
         self.assertIn("42.5°", text)
         self.assertNotIn("General Movement", text)
         self.assertNotIn("Optical Flow", text)

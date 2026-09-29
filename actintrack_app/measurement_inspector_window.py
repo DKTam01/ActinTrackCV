@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -15,16 +19,16 @@ from PyQt6.QtWidgets import (
 )
 
 from actintrack_app.gui_styles import apply_body_label_style, apply_hint_italic_style
+from actintrack_app.measurement_export import (
+    ensure_csv_extension,
+    measurements_to_tsv,
+    metric_display_name,
+    suggested_measurements_csv_name,
+    write_measurements_csv,
+)
 from actintrack_app.measurement_series import MeasurementColumn, MetricMeasurementSeries
 from actintrack_app.media_capabilities import MetricId
 from actintrack_app.metric_analysis_ui import ORIENTATION_LEGEND_TEXT
-
-_METRIC_TITLES = {
-    MetricId.GENERAL_MOVEMENT: "General Movement",
-    MetricId.OPTICAL_FLOW: "Optical Flow",
-    MetricId.TOWARD_NUCLEUS: "Toward Nucleus",
-    MetricId.ORIENTATION: "F-actin Orientation",
-}
 
 
 class SemanticTableWidgetItem(QTableWidgetItem):
@@ -92,7 +96,7 @@ class MeasurementInspectorWindow(QMainWindow):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._series = series
-        title = _METRIC_TITLES.get(series.metric_id, series.metric_id.value)
+        title = metric_display_name(series.metric_id)
         self.setWindowTitle(f"Measurements — {title}")
         self.resize(720, 480)
 
@@ -133,6 +137,16 @@ class MeasurementInspectorWindow(QMainWindow):
             apply_hint_italic_style(note_lbl)
             layout.addWidget(note_lbl)
 
+        actions = QHBoxLayout()
+        self._btn_copy = QPushButton("Copy All", self)
+        self._btn_copy.clicked.connect(self.copy_all_measurements)
+        self._btn_export = QPushButton("Export CSV", self)
+        self._btn_export.clicked.connect(self._on_export_csv)
+        actions.addWidget(self._btn_copy)
+        actions.addWidget(self._btn_export)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
         table = QTableWidget(self)
         table.setColumnCount(len(series.columns))
         table.setHorizontalHeaderLabels([c.label for c in series.columns])
@@ -170,3 +184,42 @@ class MeasurementInspectorWindow(QMainWindow):
     @property
     def metric_id(self) -> MetricId:
         return self._series.metric_id
+
+    def copy_all_measurements(self) -> str:
+        """Copy persisted measurements as TSV, ignoring the current visual sort."""
+        text = measurements_to_tsv(self._series)
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(text)
+        self.statusBar().showMessage("Copied measurements.", 3000)
+        return text
+
+    def _on_export_csv(self) -> None:
+        self.export_measurements_csv()
+
+    def _ask_csv_path(self) -> str:
+        path, _selected = QFileDialog.getSaveFileName(
+            self,
+            "Export CSV",
+            suggested_measurements_csv_name(self._series),
+            "CSV files (*.csv)",
+        )
+        return path or ""
+
+    def export_measurements_csv(
+        self,
+        path: str | None = None,
+        ask_path: Callable[[], str] | None = None,
+    ) -> str | None:
+        """Write persisted measurements to CSV. An empty chosen path is a no-op."""
+        chosen = path if path is not None else (ask_path or self._ask_csv_path)()
+        destination = ensure_csv_extension(str(chosen or ""))
+        if not destination:
+            return None
+        try:
+            write_measurements_csv(self._series, destination)
+        except OSError:
+            self.statusBar().showMessage("Could not export CSV.", 4000)
+            return None
+        self.statusBar().showMessage("Exported measurements.", 3000)
+        return destination
