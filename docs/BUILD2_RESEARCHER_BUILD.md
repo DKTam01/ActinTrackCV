@@ -9,10 +9,9 @@ redesign science or the Workbench.
 Application version is the single string in `actintrack_app/__version__.py`.
 PyInstaller specs, About, and artifact names read that value.
 
-Published GitHub release **v1.0.0** (2026-09-15) is the last tagged public
-cut. This source tree is **1.1.0**: IMAGE analysis, mixed-media groups,
-Orientation, Toward Nucleus inspection, per-sample calibration, and the
-performance work after v1.0.0.
+Published GitHub release **v1.1.0** is the prior researcher cut. This
+source tree is **1.1.1**: measurement export and Orientation terminology
+clarifications on top of unchanged v1.1.0 scientific behavior.
 
 Do not reuse the `v1.0.0` artifact names for a new package. Do not tag or
 create a GitHub release until that step is explicitly requested.
@@ -37,7 +36,7 @@ From the repo root, with the same interpreter used for tests:
 ```bash
 python -m pip install -r requirements-build.txt
 bash packaging/macos/build_macos.sh
-ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.1.0-macos-arm64.zip
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.1.1-macos-arm64.zip
 ```
 
 `dist/` and `*.zip` are gitignored. Do not commit generated binaries.

@@ -60,7 +60,7 @@ Details: [`docs/science/CAL1_SCIENTIFIC_CALIBRATION.md`](docs/science/CAL1_SCIEN
 
 Most users do not need Python or the source code — download the prebuilt app from the [**Releases**](https://github.com/Sapkota-Lab/ActinTrackCV/releases) page.
 
-1. Download `ActinTrackCV-1.0.0-macos-arm64.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0) (macOS Apple Silicon).
+1. Download `ActinTrackCV-1.1.1-macos-arm64.zip` from the [`v1.1.1` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.1.1) (macOS Apple Silicon).
 2. Unzip it (double-click in Finder).
 3. Open `ActinTrackCV.app`.
 4. Because this build is **unsigned**, macOS may block the first launch. If so, open
@@ -73,13 +73,13 @@ Notes:
 - Project data defaults to **`~/Documents/ActinTrackCV`**.
 - External media files stay outside the app.
 
-This source tree is preparing the next researcher build (**1.1.0**). Use Help → About to see the running version.
+This source tree is the researcher build **1.1.1**. Use Help → About to see the running version.
 
 ## Download for Windows
 
 A **Windows 10/11 x64** build ships as a one-folder zip (not an installer wizard).
 
-1. Download `ActinTrackCV-1.0.0-windows-x64-onefolder.zip` from the [`v1.0.0` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.0.0).
+1. Download `ActinTrackCV-1.1.1-windows-x64.zip` from the [`v1.1.1` release](https://github.com/Sapkota-Lab/ActinTrackCV/releases/tag/v1.1.1).
 2. Unzip it.
 3. Open the `ActinTrackCV` folder.
 4. Double-click `ActinTrackCV.exe`.
@@ -149,7 +149,7 @@ The frozen app never writes into its own bundle. Default workspace: `~/Documents
 ```bash
 python -m pip install -r requirements-build.txt
 bash packaging/macos/build_macos.sh
-ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.1.0-macos-arm64.zip
+ditto -c -k --keepParent dist/ActinTrackCV.app ActinTrackCV-1.1.1-macos-arm64.zip
 ```
 
 See [`packaging/macos/README.md`](packaging/macos/README.md).
@@ -159,7 +159,7 @@ See [`packaging/macos/README.md`](packaging/macos/README.md).
 ```powershell
 python -m pip install -r requirements-build.txt
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_windows.ps1
-Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.1.0-windows-x64-onefolder.zip -Force
+Compress-Archive -Path dist\ActinTrackCV -DestinationPath ActinTrackCV-1.1.1-windows-x64-onefolder.zip -Force
 ```
 
 See [`packaging/windows/README.md`](packaging/windows/README.md).
